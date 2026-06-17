@@ -319,11 +319,11 @@ async function init() {
   render();
   try {
     await loadCatalogs();
-    await loadDashboard();
+    render(); // muestra la app navegable de inmediato, con el Resumen en estado "calculando"
+    loadDashboard().then(render).catch(err => toast('Error al calcular índices: ' + err.message, 'err'));
   } catch (err) {
     toast('Error al conectar: ' + err.message, 'err');
   }
-  render();
 }
 
 const NAV = [
