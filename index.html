@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cría — Agroganadera Los Médanos</title>
+<style>
+:root {
+  --bg: #faf8f4; --bg2: #f3efe6; --bg3: #ece5d6;
+  --text: #2b261f; --text2: #6b6357; --text3: #a39a89;
+  --border: rgba(43,38,31,0.1); --border2: rgba(43,38,31,0.18);
+  --green: #2f6b3f; --green-dark: #1f4d2b; --green-bg: #e6efe3; --green-text: #1f4d2b;
+  --clay: #a8512f; --clay-bg: #f6e8e0; --clay-text: #7a3a20;
+  --gold: #b8860b; --gold-bg: #f5edd8; --gold-text: #8a6508;
+  --red: #b3261e; --red-bg: #fbeae8; --red-text: #8c1d17;
+  --radius: 10px; --radius-lg: 16px;
+  --shadow: 0 1px 3px rgba(43,38,31,0.08), 0 1px 2px rgba(43,38,31,0.06);
+  --shadow-md: 0 4px 12px rgba(43,38,31,0.08);
+  --serif: 'Source Serif Pro', Georgia, 'Times New Roman', serif;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', 'SF Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+body { min-height: 100vh; }
+::selection { background: var(--gold-bg); }
+
+#root { min-height: 100vh; }
+.app-shell { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 240px; flex-shrink: 0; background: var(--text); color: #e8e4dc;
+  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+}
+.sidebar-brand { padding: 22px 20px 18px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.sidebar-brand .farm-icon { font-size: 22px; margin-bottom: 6px; display: block; }
+.sidebar-brand .farm-name { font-family: var(--serif); font-size: 17px; font-weight: 600; color: #fff; letter-spacing: -0.01em; }
+.sidebar-brand .farm-sub { font-size: 11px; color: #a39a89; margin-top: 2px; }
+
+.sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; }
+.nav-section-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #8a8174; padding: 14px 10px 6px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
+  color: #cfc9bd; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s;
+  margin-bottom: 1px; border: none; background: none; width: 100%; text-align: left;
+}
+.nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.nav-item.active { background: var(--green); color: #fff; }
+.nav-item .nav-icon { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+
+.sidebar-footer { padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: #8a8174; }
+.sidebar-footer .sync-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
+.sync-dot.ok { background: #5fb87a; } .sync-dot.bad { background: #d97757; } .sync-dot.busy { background: #d4b65f; animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.main { flex: 1; min-width: 0; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; padding: 16px 28px;
+  border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 5;
+}
+.topbar h1 { font-family: var(--serif); font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+.topbar .topbar-sub { font-size: 12.5px; color: var(--text2); margin-top: 1px; }
+.content { padding: 24px 28px 60px; max-width: 1280px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; border: 1px solid transparent; cursor: pointer; transition: all 0.15s;
+  font-family: var(--sans); white-space: nowrap;
+}
+.btn-primary { background: var(--green); color: #fff; }
+.btn-primary:hover { background: var(--green-dark); }
+.btn-secondary { background: var(--bg2); color: var(--text); border-color: var(--border2); }
+.btn-secondary:hover { background: var(--bg3); }
+.btn-danger { background: var(--red-bg); color: var(--red-text); }
+.btn-danger:hover { background: #f5d6d3; }
+.btn-ghost { background: transparent; color: var(--text2); padding: 6px 10px; }
+.btn-ghost:hover { background: var(--bg2); color: var(--text); }
+.btn-sm { padding: 5px 11px; font-size: 12px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.panel { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 18px; box-shadow: var(--shadow); }
+.panel-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.panel-title .count-badge { font-size: 11px; font-weight: 600; background: var(--bg2); color: var(--text2); padding: 1px 8px; border-radius: 100px; }
+
+.section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text3); margin: 26px 0 10px; }
+.section-label:first-child { margin-top: 0; }
+
+.fgrid { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 4px; }
+.fg { display: flex; flex-direction: column; gap: 5px; min-width: 160px; flex: 1; }
+.fg label { font-size: 11.5px; font-weight: 600; color: var(--text2); }
+.fg label .opt { font-weight: 400; color: var(--text3); }
+.fg input, .fg select, .fg textarea {
+  border: 1px solid var(--border2); border-radius: 8px; padding: 8px 11px; font-size: 13.5px;
+  font-family: var(--sans); background: var(--bg); color: var(--text); transition: border-color 0.15s, background 0.15s;
+}
+.fg input:focus, .fg select:focus, .fg textarea:focus { outline: none; border-color: var(--green); background: #fff; }
+.fg input::placeholder { color: var(--text3); }
+
+.radio-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.radio-pill {
+  padding: 7px 14px; border-radius: 100px; border: 1.5px solid var(--border2); font-size: 12.5px; font-weight: 600;
+  cursor: pointer; color: var(--text2); background: var(--bg); transition: all 0.15s; user-select: none;
+}
+.radio-pill.selected { background: var(--green); border-color: var(--green); color: #fff; }
+.radio-pill:hover:not(.selected) { border-color: var(--text3); }
+
+.helper-text { font-size: 11.5px; color: var(--text3); margin-top: 6px; line-height: 1.5; }
+.live-calc { font-size: 13px; font-weight: 600; margin-top: 8px; padding: 9px 13px; border-radius: 8px; }
+.live-calc.green { background: var(--green-bg); color: var(--green-text); }
+.live-calc.red { background: var(--red-bg); color: var(--red-text); }
+
+.tw { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+table.dt { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.dt th { text-align: left; padding: 10px 14px; background: var(--bg2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.dt th.tc, table.dt td.tc { text-align: center; }
+table.dt td { padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.dt tbody tr:hover { background: var(--bg2); }
+table.dt tbody tr:last-child td { border-bottom: none; }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.icon-btn { background: none; border: none; cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 5px; color: var(--text3); }
+.icon-btn:hover { background: var(--bg3); color: var(--text); }
+.icon-btn.danger:hover { background: var(--red-bg); color: var(--red-text); }
+
+.empty-state { text-align: center; padding: 48px 20px; color: var(--text3); }
+.empty-state .ico { font-size: 32px; display: block; margin-bottom: 10px; opacity: 0.6; }
+.empty-state .msg { font-size: 13.5px; }
+
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 100px; font-size: 11.5px; font-weight: 600; }
+.pill-green { background: var(--green-bg); color: var(--green-text); }
+.pill-clay { background: var(--clay-bg); color: var(--clay-text); }
+.pill-gold { background: var(--gold-bg); color: var(--gold-text); }
+.pill-red { background: var(--red-bg); color: var(--red-text); }
+.pill-gray { background: var(--bg3); color: var(--text2); }
+
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.kpi-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 18px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+.kpi-card .kpi-icon { font-size: 17px; margin-bottom: 8px; }
+.kpi-card .kpi-label { font-size: 11.5px; color: var(--text2); font-weight: 600; margin-bottom: 4px; }
+.kpi-card .kpi-value { font-family: var(--serif); font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.kpi-card .kpi-sub { font-size: 11px; color: var(--text3); margin-top: 3px; }
+.kpi-card.accent-green { border-top: 3px solid var(--green); }
+.kpi-card.accent-clay { border-top: 3px solid var(--clay); }
+.kpi-card.accent-gold { border-top: 3px solid var(--gold); }
+.kpi-card.accent-red { border-top: 3px solid var(--red); }
+.kpi-card.compact { padding: 10px 14px; }
+.kpi-card.compact .kpi-icon { font-size: 13px; margin-bottom: 4px; }
+.kpi-card.compact .kpi-label { font-size: 10.5px; margin-bottom: 2px; }
+.kpi-card.compact .kpi-value { font-size: 18px; }
+
+.rodeo-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 20px; }
+.rodeo-chip {
+  flex-shrink: 0; padding: 10px 16px; border-radius: 12px; border: 1.5px solid var(--border2);
+  background: #fff; cursor: pointer; transition: all 0.15s; min-width: 130px;
+}
+.rodeo-chip:hover { border-color: var(--green); }
+.rodeo-chip.active { border-color: var(--green); background: var(--green-bg); }
+.rodeo-chip .rc-name { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.rodeo-chip .rc-meta { font-size: 10.5px; color: var(--text3); margin-top: 2px; }
+.rodeo-chip.active .rc-name { color: var(--green-dark); }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(43,38,31,0.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.modal { background: #fff; border-radius: var(--radius-lg); width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-md); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.modal-header h3 { font-family: var(--serif); font-size: 17px; font-weight: 600; }
+.modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text3); padding: 4px; }
+.modal-body { padding: 20px 22px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 22px; border-top: 1px solid var(--border); }
+
+#toast-zone { position: fixed; bottom: 22px; right: 22px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+.toast { padding: 12px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow-md); animation: slideIn 0.25s ease-out; max-width: 360px; }
+.toast.ok { background: var(--green); color: #fff; }
+.toast.err { background: var(--red); color: #fff; }
+@keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+.loader { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px 20px; color: var(--text3); font-size: 13px; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--border2); border-top-color: var(--green); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.setup-wrap { max-width: 520px; margin: 80px auto; padding: 0 20px; }
+.setup-wrap .panel { padding: 32px; }
+
+@media (max-width: 860px) {
+  .sidebar { position: fixed; left: -240px; z-index: 50; transition: left 0.2s; box-shadow: var(--shadow-md); }
+  .sidebar.open { left: 0; }
+  .mobile-menu-btn { display: flex !important; }
+  .content { padding: 18px 16px 60px; }
+  .topbar { padding: 14px 16px; }
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+}
+.mobile-menu-btn { display: none; background: none; border: none; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+
+@media print {
+  .sidebar, .topbar, .btn { display: none !important; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="toast-zone"></div>
+<script>
+let S = {
+  apiUrl: localStorage.getItem('cria_api_url') || '',
+  apiToken: localStorage.getItem('cria_api_token') || '',
+  page: 'dashboard',
+  sidebarOpen: false,
+  loading: false,
+  syncStatus: 'idle',
+  catalogs: null,
+  selectedRodeoId: null,
+  selectedCampoId: null,
+  dashboard: null,
+  stock: null,
+  cache: {},
+  modal: null,
+};
+
+function save() {
+  localStorage.setItem('cria_api_url', S.apiUrl);
+  localStorage.setItem('cria_api_token', S.apiToken);
+}
+
+function apiConfigured() { return !!(S.apiUrl && S.apiToken); }
+
+async function apiCall(action, opts = {}) {
+  if (!apiConfigured()) throw new Error('API no configurada');
+  S.syncStatus = 'busy';
+  renderSyncDot();
+  try {
+    let url = S.apiUrl + '?action=' + action + '&token=' + encodeURIComponent(S.apiToken);
+    if (opts.params) {
+      Object.entries(opts.params).forEach(([k, v]) => { url += '&' + k + '=' + encodeURIComponent(v); });
+    }
+    const fetchOpts = { method: opts.body ? 'POST' : 'GET' };
+    if (opts.body) {
+      fetchOpts.body = JSON.stringify(opts.body);
+      fetchOpts.headers = { 'Content-Type': 'text/plain;charset=utf-8' };
+    }
+    const res = await fetch(url, fetchOpts);
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Error desconocido');
+    S.syncStatus = 'ok';
+    renderSyncDot();
+    return json.data;
+  } catch (err) {
+    S.syncStatus = 'bad';
+    renderSyncDot();
+    throw err;
+  }
+}
+
+function renderSyncDot() {
+  const el = document.getElementById('sync-dot');
+  if (!el) return;
+  el.className = 'sync-dot ' + (S.syncStatus === 'busy' ? 'busy' : S.syncStatus === 'bad' ? 'bad' : 'ok');
+}
+
+function toast(msg, type) {
+  type = type || 'ok';
+  const zone = document.getElementById('toast-zone');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  zone.appendChild(el);
+  setTimeout(() => el.remove(), 3800);
+}
+
+function today() { return new Date().toISOString().slice(0, 10); }
+function fd(dateStr) {
+  if (!dateStr) return '—';
+  const parts = String(dateStr).split('-');
+  if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0];
+  return dateStr;
+}
+function fn(n, dec) {
+  dec = dec || 0;
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return Number(n).toLocaleString('es-AR', { maximumFractionDigits: dec, minimumFractionDigits: dec });
+}
+function pct(n) { return n === null || n === undefined ? '—' : fn(n, 1) + '%'; }
+function gid() { return 'tmp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function rodeoNombre(rodeoId) {
+  const r = (S.catalogs && S.catalogs.rodeos || []).find(x => String(x.rodeo_id) === String(rodeoId));
+  return r ? r.nombre : '—';
+}
+function campoNombre(campoId) {
+  const c = (S.catalogs && S.catalogs.campos || []).find(x => String(x.campo_id) === String(campoId));
+  return c ? c.nombre : '—';
+}
+function rodeosCriaActivos() {
+  return (S.catalogs && S.catalogs.rodeos || []).filter(r => (r.categoria === 'vaca' || r.categoria === 'vaquillona'));
+}
+function rodeosTodos() {
+  return (S.catalogs && S.catalogs.rodeos || []);
+}
+function rodeosPorCampo(campoId) {
+  return rodeosTodos().filter(r => String(r.campo_id) === String(campoId));
+}
+function rodeoOptionsHtml(rodeosList) {
+  if (!rodeosList.length) return '<option value="">Sin rodeos en este campo</option>';
+  return rodeosList.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('');
+}
+
+async function loadCatalogs() {
+  S.catalogs = await apiCall('catalog');
+}
+async function loadEntity(entity, force) {
+  if (!force && S.cache[entity]) return S.cache[entity];
+  const data = await apiCall('list', { params: { entity } });
+  S.cache[entity] = data;
+  return data;
+}
+async function loadDashboard() {
+  S.dashboard = await apiCall('dashboard');
+}
+function invalidateCache(entity) { delete S.cache[entity]; }
+
+async function init() {
+  if (!apiConfigured()) { S.page = 'setup'; render(); return; }
+  render();
+  try {
+    await loadCatalogs();
+    await loadDashboard();
+  } catch (err) {
+    toast('Error al conectar: ' + err.message, 'err');
+  }
+  render();
+}
+
+const NAV = [
+  { section: 'Panel', items: [
+    { k: 'dashboard', icon: '◈', label: 'Resumen' },
+  ]},
+  { section: 'Ciclo de cría', items: [
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'mortandad', icon: '†', label: 'Mortandad' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ]},
+  { section: 'Stock', items: [
+    { k: 'movimientos', icon: '⇄', label: 'Movimientos' },
+  ]},
+  { section: 'Sistema', items: [
+    { k: 'config', icon: '⚙', label: 'Configuración' },
+  ]},
+];
+
+async function goto(page) {
+  S.page = page;
+  S.sidebarOpen = false;
+  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos' };
+  if (entityMap[page] && !S.cache[entityMap[page]]) {
+    S.loading = true; render();
+    try { await loadEntity(entityMap[page]); } catch (err) { toast(err.message, 'err'); }
+    S.loading = false;
+  }
+  if (page === 'movimientos' && !S.stock) {
+    try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
+  }
+  render();
+}
+
+function render() {
+  const root = document.getElementById('root');
+  if (S.page === 'setup') {
+    root.innerHTML = buildSetup();
+    attachSetupEvents();
+    return;
+  }
+  root.innerHTML = buildShell();
+  attachShellEvents();
+}
+
+function buildShell() {
+  const navHtml = NAV.map(sec => `
+    <div class="nav-section-label">${sec.section}</div>
+    ${sec.items.map(it => `
+      <button class="nav-item ${S.page === it.k ? 'active' : ''}" data-nav="${it.k}">
+        <span class="nav-icon">${it.icon}</span>${it.label}
+      </button>
+    `).join('')}
+  `).join('');
+
+  return `
+  <div class="app-shell">
+    <div class="sidebar ${S.sidebarOpen ? 'open' : ''}">
+      <div class="sidebar-brand">
+        <span class="farm-icon">⛭</span>
+        <div class="farm-name">Los Médanos</div>
+        <div class="farm-sub">Gestión de cría</div>
+      </div>
+      <div class="sidebar-nav">${navHtml}</div>
+      <div class="sidebar-footer">
+        <span class="sync-dot ${S.syncStatus === 'busy' ? 'busy' : S.syncStatus === 'bad' ? 'bad' : 'ok'}" id="sync-dot"></span>
+        ${S.syncStatus === 'bad' ? 'Sin conexión' : 'Conectado a Sheets'}
+      </div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="mobile-menu-btn" id="btn-menu">☰</button>
+          <div>
+            <h1>${pageTitle(S.page)}</h1>
+            <div class="topbar-sub">${pageSubtitle(S.page)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="content" id="content">${buildPage(S.page)}</div>
+    </div>
+  </div>
+  `;
+}
+
+function pageTitle(p) {
+  const titles = {
+    dashboard: 'Resumen de cría', servicios: 'Servicios', tactos: 'Tactos',
+    abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
+    destetes: 'Destetes', movimientos: 'Movimientos', config: 'Configuración',
+  };
+  return titles[p] || p;
+}
+function pageSubtitle(p) {
+  const subs = {
+    dashboard: 'Índices de preñez, parición y destete por rodeo',
+    servicios: 'IATF y servicio con toros a campo',
+    tactos: 'Resultado de tacto por rodeo',
+    abortos: 'Registro de gestaciones interrumpidas',
+    pariciones: 'Conteo de nacimientos por rodeo',
+    mortandad: 'Mortandad de terneros entre nacimiento y destete',
+    destetes: 'Terneros destetados, caravaneados al plantel',
+    movimientos: 'Transferencias de animales entre rodeos y saldo inicial',
+    config: 'Conexión con la planilla de datos',
+  };
+  return subs[p] || '';
+}
+
+function buildPage(page) {
+  if (S.loading) return '<div class="loader"><div class="spinner"></div>Cargando datos…</div>';
+  switch (page) {
+    case 'dashboard':  return buildDashboard();
+    case 'servicios':  return buildServicios();
+    case 'tactos':     return buildTactos();
+    case 'abortos':    return buildAbortos();
+    case 'pariciones': return buildPariciones();
+    case 'mortandad':  return buildMortandad();
+    case 'destetes':   return buildDestetes();
+    case 'movimientos': return buildMovimientos();
+    case 'config':     return buildConfig();
+    default: return '';
+  }
+}
+
+function buildSetup() {
+  return `
+  <div class="setup-wrap">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:28px;margin-bottom:8px">⛭</div>
+      <div style="font-family:var(--serif);font-size:22px;font-weight:600">Los Médanos</div>
+      <div style="font-size:13px;color:var(--text2);margin-top:2px">Configuración inicial — gestión de cría</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Conectar con la planilla de datos</div>
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:16px;line-height:1.6">
+        Pegá la URL de la API (Apps Script Web App) y el token de acceso. Estos datos quedan guardados solo en este navegador.
+      </p>
+      <div class="fgrid" style="flex-direction:column">
+        <div class="fg">
+          <label>URL de la API <span class="opt">(termina en /exec)</span></label>
+          <input type="text" id="su-url" placeholder="https://script.google.com/macros/s/.../exec" value="${S.apiUrl}">
+        </div>
+        <div class="fg">
+          <label>Token de acceso</label>
+          <input type="password" id="su-token" placeholder="Token configurado en el script" value="${S.apiToken}">
+        </div>
+      </div>
+      <div id="su-status" style="margin-top:10px;font-size:12.5px"></div>
+      <button class="btn btn-primary" id="su-save" style="margin-top:14px;width:100%;justify-content:center">Conectar</button>
+    </div>
+  </div>`;
+}
+function attachSetupEvents() {
+  document.getElementById('su-save').onclick = async () => {
+    const url = document.getElementById('su-url').value.trim();
+    const token = document.getElementById('su-token').value.trim();
+    const statusEl = document.getElementById('su-status');
+    if (!url || !token) { statusEl.textContent = 'Completá ambos campos.'; statusEl.style.color = 'var(--red)'; return; }
+    S.apiUrl = url; S.apiToken = token;
+    statusEl.textContent = 'Probando conexión…'; statusEl.style.color = 'var(--text2)';
+    try {
+      await loadCatalogs();
+      save();
+      toast('Conectado correctamente', 'ok');
+      S.page = 'dashboard';
+      await loadDashboard();
+      render();
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)';
+    }
+  };
+}
+
+function attachShellEvents() {
+  document.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => goto(b.dataset.nav));
+  const menuBtn = document.getElementById('btn-menu');
+  if (menuBtn) menuBtn.onclick = () => { S.sidebarOpen = !S.sidebarOpen; render(); };
+  attachPageEvents(S.page);
+}
+
+function attachPageEvents(page) {
+  const fns = {
+    dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
+    abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, config: attachConfigEvents,
+  };
+  if (fns[page]) fns[page]();
+}
+
+function buildDashboard() {
+  if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Calculando índices…</div>';
+  const g = S.dashboard.general;
+  const rodeosList = S.dashboard.rodeos || [];
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+
+  let h = '<div class="section-label">Establecimiento — todos los rodeos de cría</div>';
+  h += buildKpiRow(g);
+
+  h += '<div class="section-label">Filtrar por campo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedCampoId ? 'active' : ''}" data-campo="">
+          <div class="rc-name">Todos los campos</div></div>`;
+  campos.forEach(c => {
+    h += `<div class="rodeo-chip ${String(S.selectedCampoId) === String(c.campo_id) ? 'active' : ''}" data-campo="${c.campo_id}">
+      <div class="rc-name">${c.nombre}</div>
+    </div>`;
+  });
+  h += '</div>';
+
+  const rodeosFiltrados = S.selectedCampoId
+    ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
+    : rodeosList;
+
+  if (S.selectedCampoId) {
+    const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
+    h += `<div class="panel">
+      <div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>
+      ${buildKpiRow(aggregateKpis_(rodeosFiltrados))}
+    </div>`;
+  }
+
+  h += '<div class="section-label">Por rodeo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo="">
+          <div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
+  rodeosFiltrados.forEach(r => {
+    h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}">
+      <div class="rc-name">${r.rodeo.nombre}</div>
+      <div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div>
+    </div>`;
+  });
+  h += '</div>';
+
+  if (S.selectedRodeoId) {
+    const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
+    if (sel) {
+      h += `<div class="panel">
+        <div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>
+        ${buildKpiRow(sel.kpis)}
+      </div>`;
+    }
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Campo</th><th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th><th class="tc">Abortos</th><th class="tc">Mort. terneros</th>
+    </tr></thead><tbody>`;
+    rodeosFiltrados.forEach(r => {
+      const k = r.kpis;
+      h += `<tr>
+        <td><strong>${r.rodeo.nombre}</strong></td>
+        <td style="color:var(--text2)">${campoNombre(r.rodeo.campo_id)}</td>
+        <td class="tc">${pillForPct(k.servicio.indice_prenez)}</td>
+        <td class="tc">${pillForPct(k.paricion.indice_paricion)}</td>
+        <td class="tc">${pillForPct(k.destete.indice_destete)}</td>
+        <td class="tc">${k.gestacion.abortos > 0 ? '<span class="pill pill-clay">' + k.gestacion.abortos + '</span>' : '—'}</td>
+        <td class="tc">${k.destete.mortandad_terneros > 0 ? '<span class="pill pill-red">' + k.destete.mortandad_terneros + '</span>' : '—'}</td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  return h;
+}
+
+// Suma los valores crudos de KPIs de varios rodeos y recalcula los porcentajes agregados
+function aggregateKpis_(rodeosArr) {
+  let totServ = 0, prenIatf = 0, prenToro = 0, totPren = 0;
+  let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0;
+  rodeosArr.forEach(r => {
+    const k = r.kpis;
+    totServ += k.servicio.total_serviciadas || 0;
+    prenIatf += k.servicio.prenadas_iatf || 0;
+    prenToro += k.servicio.prenadas_toro || 0;
+    totPren += k.servicio.total_prenadas || 0;
+    nacVivos += k.paricion.nacidos_vivos || 0;
+    nacMuertos += k.paricion.nacidos_muertos || 0;
+    abortos += k.gestacion.abortos || 0;
+    totDest += k.destete.total_destetados || 0;
+    mortTerneros += k.destete.mortandad_terneros || 0;
+  });
+  return {
+    servicio: {
+      total_serviciadas: totServ, prenadas_iatf: prenIatf, prenadas_toro: prenToro, total_prenadas: totPren,
+      indice_prenez: totServ > 0 ? round1_(totPren / totServ * 100) : null,
+      indice_prenez_iatf: totServ > 0 ? round1_(prenIatf / totServ * 100) : null,
+      indice_prenez_toro: (totServ - prenIatf) > 0 ? round1_(prenToro / (totServ - prenIatf) * 100) : null,
+    },
+    gestacion: { abortos },
+    paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, indice_paricion: totPren > 0 ? round1_(nacVivos / totPren * 100) : null },
+    destete: { total_destetados: totDest, mortandad_terneros: mortTerneros, indice_destete: nacVivos > 0 ? round1_(totDest / nacVivos * 100) : null },
+  };
+}
+function round1_(n) { return n === null || n === undefined || isNaN(n) ? null : Math.round(n * 10) / 10; }
+
+function pillForPct(p) {
+  if (p === null || p === undefined) return '<span style="color:var(--text3)">—</span>';
+  const cls = p >= 85 ? 'pill-green' : p >= 65 ? 'pill-gold' : 'pill-red';
+  return `<span class="pill ${cls}">${fn(p,1)}%</span>`;
+}
+
+function buildKpiRow(k) {
+  return `<div class="kpi-row">
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">⚭</div><div class="kpi-label">Índice de preñez</div>
+      <div class="kpi-value">${pct(k.servicio.indice_prenez)}</div>
+      <div class="kpi-sub">${fn(k.servicio.total_prenadas)} de ${fn(k.servicio.total_serviciadas)} serviciadas</div>
+    </div>
+    <div class="kpi-card accent-gold">
+      <div class="kpi-icon">◔</div><div class="kpi-label">Preñez IATF</div>
+      <div class="kpi-value">${pct(k.servicio.indice_prenez_iatf)}</div>
+      <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} preñadas IATF</div>
+    </div>
+    <div class="kpi-card accent-clay">
+      <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
+      <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
+      <div class="kpi-sub">${fn(k.paricion.nacidos_vivos)} nacidos vivos</div>
+    </div>
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">⊞</div><div class="kpi-label">Índice de destete</div>
+      <div class="kpi-value">${pct(k.destete.indice_destete)}</div>
+      <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados</div>
+    </div>
+  </div>`;
+}
+
+function attachDashboardEvents() {
+  document.querySelectorAll('[data-campo]').forEach(el => el.onclick = () => {
+    S.selectedCampoId = el.dataset.campo || null;
+    S.selectedRodeoId = null;
+    render();
+  });
+  document.querySelectorAll('[data-rodeo]').forEach(el => el.onclick = () => {
+    S.selectedRodeoId = el.dataset.rodeo || null;
+    render();
+  });
+}
+
+function buildServicios() {
+  const items = S.cache.servicios || [];
+  const rodeosAptos = rodeosCriaActivos();
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar servicio</div>
+    <div class="fgrid">
+      <div class="fg" style="min-width:200px">
+        <label>Tipo de servicio</label>
+        <div class="radio-group" id="sv-tipo-group">
+          <div class="radio-pill selected" data-tipo="IATF">IATF</div>
+          <div class="radio-pill" data-tipo="Toros a campo">Toros a campo</div>
+        </div>
+      </div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="sv-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}"></div>
+      <div class="fg"><label>Fecha fin <span class="opt">(opcional)</span></label><input type="date" id="sv-fecha-fin"></div>
+      <div class="fg" id="sv-toro-wrap"><label>Identificación del toro <span class="opt">(nombre o caravana)</span></label><input type="text" id="sv-toro" placeholder="Ej: Don Pedro / 982000..."></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="sv-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="sv-save" style="margin-top:6px">Registrar servicio</button>
+  </div>`;
+
+  h += buildEntityTable(items, [
+    { key: 'fecha_inicio', label: 'Inicio', render: v => fd(v) },
+    { key: 'fecha_fin', label: 'Fin', render: v => v ? fd(v) : '—' },
+    { key: 'tipo', label: 'Tipo', render: v => `<span class="pill ${v === 'IATF' ? 'pill-gold' : 'pill-green'}">${v}</span>` },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'identificacion_toro', label: 'Toro', render: v => v || '—' },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+  ], 'servicios', 'servicio_id');
+
+  return h;
+}
+
+function attachServiciosEvents() {
+  document.querySelectorAll('#sv-tipo-group .radio-pill').forEach(p => p.onclick = () => {
+    document.querySelectorAll('#sv-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
+    p.classList.add('selected');
+    document.getElementById('sv-toro-wrap').style.display = p.dataset.tipo === 'IATF' ? 'flex' : 'none';
+  });
+  const save = document.getElementById('sv-save');
+  if (save) save.onclick = async () => {
+    const tipo = document.querySelector('#sv-tipo-group .selected').dataset.tipo;
+    const data = {
+      tipo,
+      rodeo_id: document.getElementById('sv-rodeo').value,
+      fecha_inicio: document.getElementById('sv-fecha-ini').value,
+      fecha_fin: document.getElementById('sv-fecha-fin').value,
+      identificacion_toro: tipo === 'IATF' ? document.getElementById('sv-toro').value.trim() : '',
+      observacion: document.getElementById('sv-obs').value.trim(),
+    };
+    if (!data.fecha_inicio || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'servicios', data } });
+      invalidateCache('servicios');
+      toast('Servicio registrado', 'ok');
+      await loadEntity('servicios', true);
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('servicios', 'servicio_id');
+}
+
+function buildTactos() {
+  const items = S.cache.tactos || [];
+  const rodeosAptos = rodeosCriaActivos();
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar tacto</div>
+    <p class="helper-text" style="margin-bottom:14px">Registrá el total por rodeo. En el tacto IATF cargá las preñadas por IATF; en el tacto final, el total de preñadas (la diferencia con el IATF se calcula como preñadas por toro).</p>
+    <div class="fgrid">
+      <div class="fg" style="min-width:200px"><label>Tipo de tacto</label>
+        <div class="radio-group" id="tc-tipo-group">
+          <div class="radio-pill selected" data-tipo="Tacto IATF">Tacto IATF</div>
+          <div class="radio-pill" data-tipo="Tacto final">Tacto final</div>
+        </div>
+      </div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="tc-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Fecha</label><input type="date" id="tc-fecha" value="${today()}"></div>
+      <div class="fg"><label>Total tacteadas</label><input type="number" id="tc-total" placeholder="Ej: 320" min="0" oninput="updateTactoCalc()"></div>
+      <div class="fg"><label>Preñadas</label><input type="number" id="tc-prenadas" placeholder="Ej: 280" min="0" oninput="updateTactoCalc()"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="tc-obs" placeholder="Opcional"></div>
+    </div>
+    <div id="tc-calc"></div>
+    <button class="btn btn-primary" id="tc-save" style="margin-top:6px">Registrar tacto</button>
+  </div>`;
+
+  h += buildEntityTable(items, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'tipo_tacto', label: 'Tipo', render: v => `<span class="pill ${v === 'Tacto IATF' ? 'pill-gold' : 'pill-green'}">${v}</span>` },
+    { key: 'total_tacteadas', label: 'Tacteadas', render: v => fn(v) },
+    { key: 'prenadas', label: 'Preñadas', render: v => fn(v) },
+    { key: 'vacias', label: 'Vacías', render: v => fn(v) },
+  ], 'tactos', 'tacto_id');
+
+  return h;
+}
+window.updateTactoCalc = function() {
+  const total = Number(document.getElementById('tc-total') && document.getElementById('tc-total').value) || 0;
+  const pren = Number(document.getElementById('tc-prenadas') && document.getElementById('tc-prenadas').value) || 0;
+  const calcEl = document.getElementById('tc-calc');
+  if (!calcEl) return;
+  if (total > 0) {
+    const vacias = total - pren;
+    if (vacias < 0) { calcEl.innerHTML = '<div class="live-calc red">Las preñadas no pueden superar el total tacteadas.</div>'; return; }
+    const indice = (pren / total * 100).toFixed(1);
+    calcEl.innerHTML = '<div class="live-calc green">→ Vacías: ' + vacias + ' · Índice de preñez de este tacto: ' + indice + '%</div>';
+  } else { calcEl.innerHTML = ''; }
+};
+function attachTactosEvents() {
+  document.querySelectorAll('#tc-tipo-group .radio-pill').forEach(p => p.onclick = () => {
+    document.querySelectorAll('#tc-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
+    p.classList.add('selected');
+  });
+  const save = document.getElementById('tc-save');
+  if (save) save.onclick = async () => {
+    const tipo = document.querySelector('#tc-tipo-group .selected').dataset.tipo;
+    const total = Number(document.getElementById('tc-total').value) || 0;
+    const pren = Number(document.getElementById('tc-prenadas').value) || 0;
+    if (!total) { toast('Ingresá el total tacteadas.', 'err'); return; }
+    if (pren > total) { toast('Las preñadas no pueden superar el total.', 'err'); return; }
+    const data = {
+      tipo_tacto: tipo,
+      rodeo_id: document.getElementById('tc-rodeo').value,
+      fecha: document.getElementById('tc-fecha').value,
+      total_tacteadas: total, prenadas: pren, vacias: total - pren,
+      observacion: document.getElementById('tc-obs').value.trim(),
+    };
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'tactos', data } });
+      invalidateCache('tactos');
+      toast('Tacto registrado — ' + pren + ' preñadas, ' + (total - pren) + ' vacías', 'ok');
+      await loadEntity('tactos', true);
+      await loadDashboard();
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('tactos', 'tacto_id');
+}
+
+function buildAbortos() {
+  const items = S.cache.abortos || [];
+  const rodeosAptos = rodeosCriaActivos();
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar aborto</div>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="ab-fecha" value="${today()}"></div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="ab-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Caravana <span class="opt">(opcional)</span></label><input type="text" id="ab-caravana" placeholder="Si se identificó"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ab-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="ab-save" style="margin-top:6px">Registrar aborto</button>
+  </div>`;
+  h += buildEntityTable(items, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'caravana_vaca', label: 'Caravana', render: v => v || '—' },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+  ], 'abortos', 'aborto_id');
+  return h;
+}
+function attachAbortosEvents() {
+  const save = document.getElementById('ab-save');
+  if (save) save.onclick = async () => {
+    const data = {
+      fecha: document.getElementById('ab-fecha').value,
+      rodeo_id: document.getElementById('ab-rodeo').value,
+      caravana_vaca: document.getElementById('ab-caravana').value.trim(),
+      observacion: document.getElementById('ab-obs').value.trim(),
+    };
+    if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'abortos', data } });
+      invalidateCache('abortos');
+      toast('Aborto registrado', 'ok');
+      await loadEntity('abortos', true);
+      await loadDashboard();
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('abortos', 'aborto_id');
+}
+
+function buildPariciones() {
+  const items = S.cache.pariciones || [];
+  const rodeosAptos = rodeosCriaActivos();
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar parición</div>
+    <p class="helper-text" style="margin-bottom:14px">Conteo por rodeo, sin identificar qué vaca parió cada ternero.</p>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="pa-fecha" value="${today()}"></div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="pa-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Nacidos vivos</label><input type="number" id="pa-vivos" placeholder="Ej: 12" min="0"></div>
+      <div class="fg"><label>Nacidos muertos</label><input type="number" id="pa-muertos" placeholder="Ej: 0" min="0" value="0"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="pa-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
+  </div>`;
+  h += buildEntityTable(items, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'nacidos_vivos', label: 'Vivos', render: v => fn(v) },
+    { key: 'nacidos_muertos', label: 'Muertos', render: v => fn(v) },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+  ], 'pariciones', 'paricion_id');
+  return h;
+}
+function attachParicionesEvents() {
+  const save = document.getElementById('pa-save');
+  if (save) save.onclick = async () => {
+    const data = {
+      fecha: document.getElementById('pa-fecha').value,
+      rodeo_id: document.getElementById('pa-rodeo').value,
+      nacidos_vivos: Number(document.getElementById('pa-vivos').value) || 0,
+      nacidos_muertos: Number(document.getElementById('pa-muertos').value) || 0,
+      observacion: document.getElementById('pa-obs').value.trim(),
+    };
+    if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'pariciones', data } });
+      invalidateCache('pariciones');
+      toast('Parición registrada', 'ok');
+      await loadEntity('pariciones', true);
+      await loadDashboard();
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('pariciones', 'paricion_id');
+}
+
+function buildMortandad() {
+  const items = S.cache.mortandad || [];
+  const rodeosTodosL = rodeosTodos();
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar mortandad</div>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="mo-fecha" value="${today()}"></div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="mo-rodeo">${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Caravana <span class="opt">(si tenía)</span></label><input type="text" id="mo-caravana" placeholder="Opcional"></div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="mo-cantidad" value="1" min="1"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="mo-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="mo-save" style="margin-top:6px">Registrar mortandad</button>
+  </div>`;
+  h += buildEntityTable(items, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'caravana_ternero', label: 'Caravana', render: v => v || '—' },
+    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+  ], 'mortandad', 'mortandad_id');
+  return h;
+}
+function attachMortandadEvents() {
+  const save = document.getElementById('mo-save');
+  if (save) save.onclick = async () => {
+    const data = {
+      fecha: document.getElementById('mo-fecha').value,
+      rodeo_id: document.getElementById('mo-rodeo').value,
+      caravana_ternero: document.getElementById('mo-caravana').value.trim(),
+      cantidad: Number(document.getElementById('mo-cantidad').value) || 1,
+      observacion: document.getElementById('mo-obs').value.trim(),
+    };
+    if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'mortandad', data } });
+      invalidateCache('mortandad');
+      toast('Mortandad registrada', 'ok');
+      await loadEntity('mortandad', true);
+      await loadDashboard();
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('mortandad', 'mortandad_id');
+}
+
+function buildDestetes() {
+  const items = S.cache.destetes || [];
+  const rodeosAptos = rodeosCriaActivos();
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar destete</div>
+    <p class="helper-text" style="margin-bottom:14px">Conteo por rodeo. Las caravanas individuales se incorporan luego desde la planilla de Animales cuando estén disponibles.</p>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="de-fecha" value="${today()}"></div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="de-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Machos</label><input type="number" id="de-machos" placeholder="Ej: 60" min="0"></div>
+      <div class="fg"><label>Hembras</label><input type="number" id="de-hembras" placeholder="Ej: 58" min="0"></div>
+      <div class="fg"><label>Peso promedio (kg) <span class="opt">(opcional)</span></label><input type="number" id="de-peso" placeholder="Ej: 180" min="0"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="de-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="de-save" style="margin-top:6px">Registrar destete</button>
+  </div>`;
+  h += buildEntityTable(items, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'machos', label: 'Machos', render: v => fn(v) },
+    { key: 'hembras', label: 'Hembras', render: v => fn(v) },
+    { key: 'total', label: 'Total', render: v => `<strong>${fn(v)}</strong>` },
+    { key: 'peso_prom_kg', label: 'Peso prom.', render: v => v ? fn(v) + ' kg' : '—' },
+  ], 'destetes', 'destete_id');
+  return h;
+}
+function attachDestetesEvents() {
+  const save = document.getElementById('de-save');
+  if (save) save.onclick = async () => {
+    const machos = Number(document.getElementById('de-machos').value) || 0;
+    const hembras = Number(document.getElementById('de-hembras').value) || 0;
+    if (machos === 0 && hembras === 0) { toast('Ingresá machos o hembras destetados.', 'err'); return; }
+    const data = {
+      fecha: document.getElementById('de-fecha').value,
+      rodeo_id: document.getElementById('de-rodeo').value,
+      machos, hembras, total: machos + hembras,
+      peso_prom_kg: Number(document.getElementById('de-peso').value) || '',
+      observacion: document.getElementById('de-obs').value.trim(),
+    };
+    if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'destetes', data } });
+      invalidateCache('destetes');
+      toast('Destete registrado — ' + data.total + ' terneros', 'ok');
+      await loadEntity('destetes', true);
+      await loadDashboard();
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('destetes', 'destete_id');
+}
+
+function buildStockTable_(stockList, campoFiltro) {
+  const filtrado = campoFiltro ? stockList.filter(s => String(s.campo_id) === String(campoFiltro)) : stockList;
+  if (!stockList.length) {
+    return `<div class="empty-state"><span class="ico">◌</span><div class="msg">Cargando stock…</div></div>`;
+  }
+  const totalGeneral = filtrado.reduce((s, x) => s + (Number(x.stock) || 0), 0);
+  const porCategoria = {};
+  filtrado.forEach(s => { porCategoria[s.categoria] = (porCategoria[s.categoria] || 0) + (Number(s.stock) || 0); });
+
+  let h = `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+    <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:700;white-space:nowrap">
+      ⛭ Total: ${fn(totalGeneral)}
+    </div>
+    ${Object.entries(porCategoria).map(([cat, tot]) => `
+      <div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
+        ${cat}: <strong style="color:var(--text)">${fn(tot)}</strong>
+      </div>
+    `).join('')}
+  </div>`;
+  h += `<div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock</th></tr></thead><tbody>`;
+  filtrado.forEach(s => {
+    h += `<tr><td><strong>${s.nombre}</strong></td><td style="color:var(--text2)">${campoNombre(s.campo_id)}</td>
+      <td><span class="pill pill-gray">${s.categoria}</span></td>
+      <td class="tc"><strong>${fn(s.stock)}</strong></td></tr>`;
+  });
+  h += `</tbody></table></div>`;
+  return h;
+}
+window.renderStockFiltrado = function(campoId) {
+  const el = document.getElementById('mv-stock-tabla');
+  if (el) el.innerHTML = buildStockTable_(S.stock || [], campoId);
+};
+
+function buildMovimientos() {
+  const items = S.cache.movimientos || [];
+  const rodeosTodosL = rodeosTodos();
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const stockList = S.stock || [];
+
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar movimiento</div>
+    <div class="fgrid">
+      <div class="fg" style="min-width:300px"><label>Tipo de movimiento</label>
+        <div class="radio-group" id="mv-tipo-group">
+          <div class="radio-pill selected" data-tipo="Saldo inicial">Saldo inicial</div>
+          <div class="radio-pill" data-tipo="Traslado en bloque">Traslado en bloque</div>
+          <div class="radio-pill" data-tipo="Traslado individual">Traslado individual</div>
+        </div>
+      </div>
+      <div class="fg"><label>Fecha</label><input type="date" id="mv-fecha" value="${today()}"></div>
+    </div>
+    <div class="fgrid">
+      <div class="fg" id="mv-campo-origen-wrap" style="display:none"><label>Campo origen</label>
+        <select id="mv-campo-origen" onchange="document.getElementById('mv-origen').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg" id="mv-origen-wrap" style="display:none"><label>Rodeo origen</label>
+        <select id="mv-origen">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+      </div>
+      <div class="fg" id="mv-campo-destino-wrap"><label>Campo destino</label>
+        <select id="mv-campo-destino" onchange="document.getElementById('mv-destino').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label id="mv-destino-label">Rodeo</label>
+        <select id="mv-destino">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+      </div>
+    </div>
+    <div class="fgrid">
+      <div class="fg" id="mv-caravana-wrap" style="display:none"><label>Caravana</label><input type="text" id="mv-caravana" placeholder="Ej: 982000..."></div>
+      <div class="fg" id="mv-cantidad-wrap"><label>Cantidad</label><input type="number" id="mv-cantidad" placeholder="Ej: 50" min="1"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="mv-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="mv-save" style="margin-top:6px">Registrar movimiento</button>
+  </div>`;
+
+  h += `<div class="section-label">Stock actual por rodeo</div>
+  <div class="fgrid" style="margin-bottom:10px;max-width:320px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="mv-stock-filtro-campo" onchange="renderStockFiltrado(this.value)">
+        <option value="">Todos los campos</option>
+        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="mv-stock-tabla">${buildStockTable_(stockList, '')}</div>`;
+
+  h += `<div class="section-label">Historial de movimientos</div>
+  <div class="fgrid" style="margin-bottom:10px;max-width:480px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="mv-hist-filtro-campo" onchange="document.getElementById('mv-hist-filtro-rodeo').innerHTML = '<option value=\\'\\'>Todos los rodeos</option>' + rodeoOptionsHtml(rodeosPorCampo(this.value)); renderHistorialFiltrado()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="mv-hist-filtro-rodeo" onchange="renderHistorialFiltrado()">
+        <option value="">Todos los rodeos</option>
+        ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, '', '')}</div>`;
+
+  return h;
+}
+function buildMovimientosHistorial_(items, campoId, rodeoId) {
+  let filtrado = items;
+  if (campoId) filtrado = filtrado.filter(m => String(m.campo_origen_id) === String(campoId) || String(m.campo_destino_id) === String(campoId));
+  if (rodeoId) filtrado = filtrado.filter(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
+  return buildEntityTable(filtrado, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'tipo', label: 'Tipo', render: v => `<span class="pill ${v === 'Saldo inicial' ? 'pill-gold' : v === 'Traslado individual' ? 'pill-clay' : 'pill-green'}">${v}</span>` },
+    { key: 'caravana', label: 'Caravana', render: v => v || '—' },
+    { key: 'campo_origen_id', label: 'Campo origen', render: v => v ? campoNombre(v) : '—' },
+    { key: 'rodeo_origen_id', label: 'Rodeo origen', render: v => v ? rodeoNombre(v) : '—' },
+    { key: 'campo_destino_id', label: 'Campo destino', render: v => campoNombre(v) },
+    { key: 'rodeo_destino_id', label: 'Rodeo destino', render: v => rodeoNombre(v) },
+    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+    { key: 'observaciones', label: 'Obs.', render: v => v || '—' },
+  ], 'movimientos', 'movimiento_id');
+}
+window.renderHistorialFiltrado = function() {
+  const campoId = document.getElementById('mv-hist-filtro-campo')?.value || '';
+  const rodeoId = document.getElementById('mv-hist-filtro-rodeo')?.value || '';
+  const el = document.getElementById('mv-historial-tabla');
+  if (el) {
+    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], campoId, rodeoId);
+    attachTableDeleteEvents('movimientos', 'movimiento_id');
+  }
+};
+async function loadStock() {
+  S.stock = await apiCall('stock');
+}
+function attachMovimientosEvents() {
+  function applyTipoUI(tipo) {
+    const esSaldoInicial = tipo === 'Saldo inicial';
+    const esIndividual = tipo === 'Traslado individual';
+    const esBloque = tipo === 'Traslado en bloque';
+    document.getElementById('mv-campo-origen-wrap').style.display = (esIndividual || esBloque) ? 'flex' : 'none';
+    document.getElementById('mv-origen-wrap').style.display = (esIndividual || esBloque) ? 'flex' : 'none';
+    document.getElementById('mv-caravana-wrap').style.display = esIndividual ? 'flex' : 'none';
+    document.getElementById('mv-cantidad-wrap').style.display = esIndividual ? 'none' : 'flex';
+    document.getElementById('mv-destino-label').textContent = esSaldoInicial ? 'Rodeo' : 'Rodeo destino';
+  }
+  document.querySelectorAll('#mv-tipo-group .radio-pill').forEach(p => p.onclick = () => {
+    document.querySelectorAll('#mv-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
+    p.classList.add('selected');
+    applyTipoUI(p.dataset.tipo);
+  });
+  const save = document.getElementById('mv-save');
+  if (save) save.onclick = async () => {
+    const tipo = document.querySelector('#mv-tipo-group .selected').dataset.tipo;
+    const esIndividual = tipo === 'Traslado individual';
+    const esSaldoInicial = tipo === 'Saldo inicial';
+    const data = {
+      tipo,
+      caravana: esIndividual ? document.getElementById('mv-caravana').value.trim() : '',
+      fecha: document.getElementById('mv-fecha').value,
+      campo_origen_id: !esSaldoInicial ? document.getElementById('mv-campo-origen').value : '',
+      campo_destino_id: document.getElementById('mv-campo-destino').value,
+      rodeo_origen_id: !esSaldoInicial ? document.getElementById('mv-origen').value : '',
+      rodeo_destino_id: document.getElementById('mv-destino').value,
+      cantidad: esIndividual ? 1 : (Number(document.getElementById('mv-cantidad').value) || 0),
+      observaciones: document.getElementById('mv-obs').value.trim(),
+    };
+    if (!data.fecha || !data.rodeo_destino_id) { toast('Completá fecha y rodeo destino.', 'err'); return; }
+    if (esIndividual && !data.caravana) { toast('Ingresá la caravana del animal.', 'err'); return; }
+    if (!esIndividual && !data.cantidad) { toast('Ingresá la cantidad.', 'err'); return; }
+    if (!esSaldoInicial && data.rodeo_origen_id === data.rodeo_destino_id) { toast('El rodeo de origen y destino no pueden ser el mismo.', 'err'); return; }
+    // Validación de coherencia: el rodeo elegido debe pertenecer realmente al campo elegido
+    const rodeoDestObj = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_destino_id));
+    if (!rodeoDestObj || String(rodeoDestObj.campo_id) !== String(data.campo_destino_id)) {
+      toast('El rodeo destino no corresponde al campo elegido. Volvé a seleccionar el campo y esperá que se actualice la lista de rodeos.', 'err');
+      return;
+    }
+    if (!esSaldoInicial) {
+      const rodeoOrigObj = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_origen_id));
+      if (!rodeoOrigObj || String(rodeoOrigObj.campo_id) !== String(data.campo_origen_id)) {
+        toast('El rodeo origen no corresponde al campo elegido. Volvé a seleccionar el campo y esperá que se actualice la lista de rodeos.', 'err');
+        return;
+      }
+    }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'movimientos', data } });
+      invalidateCache('movimientos');
+      toast('Movimiento registrado', 'ok');
+      await loadEntity('movimientos', true);
+      S.stock = null;
+      await loadStock();
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('movimientos', 'movimiento_id');
+}
+
+function buildConfig() {
+  return `
+  <div class="panel">
+    <div class="panel-title">Conexión con la planilla</div>
+    <div class="fgrid">
+      <div class="fg"><label>URL de la API</label><input type="text" id="cf-url" value="${S.apiUrl}"></div>
+      <div class="fg"><label>Token de acceso</label><input type="password" id="cf-token" value="${S.apiToken}"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-primary" id="cf-save">Guardar y reconectar</button>
+      <button class="btn btn-secondary" id="cf-test">Probar conexión</button>
+    </div>
+    <div id="cf-status" style="margin-top:10px;font-size:12.5px"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Catálogos cargados</div>
+    <p class="helper-text">Rodeos: ${(S.catalogs && S.catalogs.rodeos || []).length} · Campos: ${(S.catalogs && S.catalogs.campos || []).length} · Compradores: ${(S.catalogs && S.catalogs.compradores || []).length}</p>
+  </div>`;
+}
+function attachConfigEvents() {
+  document.getElementById('cf-save').onclick = async () => {
+    S.apiUrl = document.getElementById('cf-url').value.trim();
+    S.apiToken = document.getElementById('cf-token').value.trim();
+    save();
+    const statusEl = document.getElementById('cf-status');
+    statusEl.textContent = 'Reconectando…';
+    try {
+      await loadCatalogs(); await loadDashboard();
+      S.cache = {};
+      statusEl.textContent = 'Conectado correctamente.'; statusEl.style.color = 'var(--green)';
+      render();
+    } catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
+  };
+  document.getElementById('cf-test').onclick = async () => {
+    const statusEl = document.getElementById('cf-status');
+    statusEl.textContent = 'Probando…';
+    try { await apiCall('catalog'); statusEl.textContent = 'Conexión exitosa.'; statusEl.style.color = 'var(--green)'; }
+    catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
+  };
+}
+
+function buildEntityTable(items, cols, entity, idCol) {
+  if (!items.length) {
+    return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay registros. Cargá el primero arriba.</div></div>';
+  }
+  let h = `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${items.length}</span></div>
+  <div class="tw"><table class="dt"><thead><tr>`;
+  cols.forEach(c => h += `<th>${c.label}</th>`);
+  h += '<th></th></tr></thead><tbody>';
+  items.forEach(item => {
+    h += '<tr>';
+    cols.forEach(c => h += `<td>${c.render ? c.render(item[c.key]) : (item[c.key] != null ? item[c.key] : '—')}</td>`);
+    h += `<td><div class="row-actions">
+      <button class="icon-btn" data-edit="${item[idCol]}" data-entity="${entity}" data-idcol="${idCol}" title="Editar">✎</button>
+      <button class="icon-btn danger" data-del="${item[idCol]}" data-entity="${entity}" data-idcol="${idCol}" title="Eliminar">✕</button>
+    </div></td>`;
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+function attachTableDeleteEvents(entity, idCol) {
+  document.querySelectorAll('[data-del][data-entity="' + entity + '"]').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('¿Eliminar este registro?')) return;
+      try {
+        await apiCall('delete', { body: { entity, id: btn.dataset.del } });
+        invalidateCache(entity);
+        toast('Registro eliminado', 'ok');
+        await loadEntity(entity, true);
+        await loadDashboard();
+        if (entity === 'movimientos') { S.stock = null; await loadStock(); }
+        render();
+      } catch (err) { toast(err.message, 'err'); }
+    };
+  });
+  document.querySelectorAll('[data-edit][data-entity="' + entity + '"]').forEach(btn => {
+    btn.onclick = () => openEditModal(entity, idCol, btn.dataset.edit);
+  });
+}
+
+// ── EDICIÓN GENÉRICA DE REGISTROS ───────────────────────────────────────
+// Construye un modal de edición a partir del item crudo en S.cache[entity],
+// infiriendo el tipo de campo por el nombre/valor de la clave.
+function fieldInputType_(key, value) {
+  if (key.includes('fecha')) return 'date';
+  if (key === 'rodeo_id' || key === 'rodeo_origen_id' || key === 'rodeo_destino_id') return 'rodeo';
+  if (key === 'campo_id' || key === 'campo_origen_id' || key === 'campo_destino_id') return 'campo';
+  if (key === 'tipo' || key === 'tipo_tacto' || key === 'tipo_venta' || key === 'estado') return 'text';
+  if (typeof value === 'number' || (!isNaN(value) && value !== '' && value !== null)) return 'number';
+  return 'text';
+}
+function openEditModal(entity, idCol, id) {
+  const items = S.cache[entity] || [];
+  const item = items.find(i => String(i[idCol]) === String(id));
+  if (!item) { toast('No se encontró el registro.', 'err'); return; }
+  const keys = Object.keys(item).filter(k => k !== idCol);
+  const rodeosL = rodeosTodos();
+  const camposL = (S.catalogs && S.catalogs.campos) || [];
+
+  let fieldsHtml = '';
+  keys.forEach(k => {
+    const type = fieldInputType_(k, item[k]);
+    const fid = 'edit-' + k;
+    if (type === 'rodeo') {
+      fieldsHtml += `<div class="fg"><label>${k}</label>
+        <select id="${fid}">${rodeosL.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(item[k])?'selected':''}>${r.nombre}</option>`).join('')}</select></div>`;
+    } else if (type === 'campo') {
+      fieldsHtml += `<div class="fg"><label>${k}</label>
+        <select id="${fid}">${camposL.map(c => `<option value="${c.campo_id}" ${String(c.campo_id)===String(item[k])?'selected':''}>${c.nombre}</option>`).join('')}</select></div>`;
+    } else if (type === 'date') {
+      fieldsHtml += `<div class="fg"><label>${k}</label><input type="date" id="${fid}" value="${item[k]||''}"></div>`;
+    } else if (type === 'number') {
+      fieldsHtml += `<div class="fg"><label>${k}</label><input type="number" id="${fid}" value="${item[k]!=null?item[k]:''}"></div>`;
+    } else {
+      fieldsHtml += `<div class="fg"><label>${k}</label><input type="text" id="${fid}" value="${(item[k]!=null?item[k]:'').toString().replace(/"/g,'&quot;')}"></div>`;
+    }
+  });
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay" id="edit-modal-overlay">
+      <div class="modal">
+        <div class="modal-header"><h3>Editar registro</h3><button class="modal-close" id="edit-modal-close">✕</button></div>
+        <div class="modal-body"><div class="fgrid">${fieldsHtml}</div></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="edit-modal-cancel">Cancelar</button>
+          <button class="btn btn-primary" id="edit-modal-save">Guardar cambios</button>
+        </div>
+      </div>
+    </div>`);
+
+  const closeModal = () => document.getElementById('edit-modal-overlay')?.remove();
+  document.getElementById('edit-modal-close').onclick = closeModal;
+  document.getElementById('edit-modal-cancel').onclick = closeModal;
+  document.getElementById('edit-modal-save').onclick = async () => {
+    const data = {};
+    keys.forEach(k => {
+      const el = document.getElementById('edit-' + k);
+      if (!el) return;
+      data[k] = el.tagName === 'SELECT' ? el.value : (el.type === 'number' ? Number(el.value) : el.value.trim());
+    });
+    const saveBtn = document.getElementById('edit-modal-save');
+    saveBtn.disabled = true;
+    try {
+      await apiCall('update', { body: { entity, id, data } });
+      invalidateCache(entity);
+      toast('Registro actualizado', 'ok');
+      await loadEntity(entity, true);
+      await loadDashboard();
+      if (entity === 'movimientos') { S.stock = null; await loadStock(); }
+      closeModal();
+      render();
+    } catch (err) { toast(err.message, 'err'); saveBtn.disabled = false; }
+  };
+}
+
+init();
+</script>
+</body></html>
