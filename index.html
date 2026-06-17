@@ -847,7 +847,7 @@ function attachAbortosEvents() {
       invalidateCache('abortos');
       toast('Aborto registrado', 'ok');
       await loadEntity('abortos', true);
-      await loadDashboard();
+      S.dashboard = null; // invalida — se recalcula al visitar el Resumen
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -897,7 +897,7 @@ function attachParicionesEvents() {
       invalidateCache('pariciones');
       toast('Parición registrada', 'ok');
       await loadEntity('pariciones', true);
-      await loadDashboard();
+      S.dashboard = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -946,7 +946,7 @@ function attachMortandadEvents() {
       invalidateCache('mortandad');
       toast('Mortandad registrada', 'ok');
       await loadEntity('mortandad', true);
-      await loadDashboard();
+      S.dashboard = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -1001,7 +1001,7 @@ function attachDestetesEvents() {
       invalidateCache('destetes');
       toast('Destete registrado — ' + data.total + ' terneros', 'ok');
       await loadEntity('destetes', true);
-      await loadDashboard();
+      S.dashboard = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
