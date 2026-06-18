@@ -319,8 +319,8 @@ async function init() {
   render();
   try {
     await loadCatalogs();
-    render(); // muestra la app navegable de inmediato, con el Resumen en estado "calculando"
-    loadDashboard().then(render).catch(err => toast('Error al calcular índices: ' + err.message, 'err'));
+    render(); // app navegable de inmediato; el Resumen calcula sus índices solo al visitarlo
+    loadDashboard().then(render).catch(() => {}); // precarga silenciosa en segundo plano, sin bloquear ni avisar error si tarda
   } catch (err) {
     toast('Error al conectar: ' + err.message, 'err');
   }
