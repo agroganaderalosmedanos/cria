@@ -35,8 +35,8 @@ body { min-height: 100vh; }
 .sidebar-brand .farm-icon { font-size: 22px; margin-bottom: 6px; display: block; }
 .sidebar-brand .farm-name { font-family: var(--serif); font-size: 17px; font-weight: 600; color: #fff; letter-spacing: -0.01em; line-height: 1.25; }
 .sidebar-brand .farm-sub { font-size: 11px; color: #a39a89; margin-top: 2px; }
-.btn-inicio-sidebar { display: inline-block; margin-top: 14px; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none; background: var(--green); border: none; border-radius: 20px; padding: 8px 18px; transition: all .15s; letter-spacing: .01em; }
-.btn-inicio-sidebar:hover { background: var(--green-dark); }
+.btn-inicio-sidebar { display: inline-block; margin-top: 12px; font-size: 11px; font-weight: 600; color: #a39a89; text-decoration: none; border: 1px solid rgba(255,255,255,0.15); border-radius: 20px; padding: 4px 11px; transition: all .15s; }
+.btn-inicio-sidebar:hover { color: #fff; border-color: rgba(255,255,255,0.4); }
 
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; }
 .nav-section-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #8a8174; padding: 14px 10px 6px; }
@@ -200,8 +200,8 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 <div id="toast-zone"></div>
 <script>
 let S = {
-  apiUrl: localStorage.getItem('cria_api_url') || '',
-  apiToken: localStorage.getItem('cria_api_token') || '',
+  apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
+  apiToken: localStorage.getItem('cria_api_token') || 'LosMedanos2026Cria',
   page: 'dashboard',
   sidebarOpen: false,
   loading: false,
@@ -683,18 +683,67 @@ function buildServicios() {
       </div>
       <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}"></div>
       <div class="fg"><label>Fecha fin <span class="opt">(opcional)</span></label><input type="date" id="sv-fecha-fin"></div>
-      <div class="fg" id="sv-toro-wrap"><label>Identificación del toro <span class="opt">(nombre o caravana)</span></label><input type="text" id="sv-toro" placeholder="Ej: Don Pedro / 982000..."></div>
-      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="sv-obs" placeholder="Opcional"></div>
     </div>
-    <button class="btn btn-primary" id="sv-save" style="margin-top:6px">Registrar servicio</button>
+
+    <!-- IATF: múltiples toros con cantidad -->
+    <div id="sv-iatf-wrap">
+      <div style="margin:12px 0 6px;font-size:13px;font-weight:600;color:var(--text)">
+        Toros / semen utilizado
+        <span class="opt" style="font-weight:400;margin-left:6px">Cargá uno o más toros con su cantidad de vacas</span>
+      </div>
+      <div id="sv-toros-list">
+        <div class="sv-toro-row" data-idx="0" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <input type="number" class="sv-cant" placeholder="Cant. vacas" min="1" style="width:120px;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:13px;background:var(--bg)">
+          <input type="text" class="sv-toro-id" placeholder="Identificación toro (nombre o caravana)" style="flex:1;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:13px;background:var(--bg)">
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;margin-top:4px">
+        <button class="btn" id="sv-add-toro" style="padding:5px 14px;font-size:12px;background:var(--bg2);color:var(--text)">+ Agregar otro toro</button>
+        <span id="sv-total-label" style="font-size:12.5px;color:var(--text2)"></span>
+      </div>
+    </div>
+
+    <!-- Toros a campo: un solo toro, sin cantidad -->
+    <div id="sv-toro-wrap" style="display:none;margin-top:12px">
+      <div class="fg"><label>Identificación del toro <span class="opt">(nombre o caravana)</span></label>
+        <input type="text" id="sv-toro" placeholder="Ej: Don Pedro / 982000...">
+      </div>
+    </div>
+
+    <div class="fg" style="margin-top:12px;max-width:400px">
+      <label>Observación <span class="opt">(opcional)</span></label>
+      <input type="text" id="sv-obs" placeholder="Opcional">
+    </div>
+    <button class="btn btn-primary" id="sv-save" style="margin-top:10px">Registrar servicio</button>
   </div>`;
 
-  h += buildEntityTable(items, [
+  // Historial — agrupar filas IATF del mismo rodeo/fecha para mostrarlas juntas
+  const grupos = [];
+  const vistos = new Set();
+  items.forEach(item => {
+    if (item.tipo === 'IATF') {
+      const key = item.rodeo_id + '|' + item.fecha_inicio;
+      if (!vistos.has(key)) {
+        vistos.add(key);
+        const grupo = items.filter(i => i.tipo === 'IATF' && i.rodeo_id === item.rodeo_id && i.fecha_inicio === item.fecha_inicio);
+        grupos.push({ ...item, _grupo: grupo });
+      }
+    } else {
+      grupos.push({ ...item, _grupo: null });
+    }
+  });
+
+  h += buildEntityTable(grupos, [
     { key: 'fecha_inicio', label: 'Inicio', render: v => fd(v) },
     { key: 'fecha_fin', label: 'Fin', render: v => v ? fd(v) : '—' },
     { key: 'tipo', label: 'Tipo', render: v => `<span class="pill ${v === 'IATF' ? 'pill-gold' : 'pill-green'}">${v}</span>` },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-    { key: 'identificacion_toro', label: 'Toro', render: v => v || '—' },
+    { key: '_grupo', label: 'Toro / Cantidad', render: (grupo, item) => {
+      if (grupo && grupo.length > 0) {
+        return grupo.map(g => `${g.identificacion_toro || '—'}${g.cantidad ? ' <span style="color:var(--text2);font-size:11px">('+g.cantidad+' vacas)</span>' : ''}`).join('<br>');
+      }
+      return item.identificacion_toro || '—';
+    }},
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'servicios', 'servicio_id');
 
@@ -702,32 +751,97 @@ function buildServicios() {
 }
 
 function attachServiciosEvents() {
+  // Toggle IATF vs Toros a campo
   document.querySelectorAll('#sv-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#sv-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
     p.classList.add('selected');
-    document.getElementById('sv-toro-wrap').style.display = p.dataset.tipo === 'IATF' ? 'flex' : 'none';
+    const esIATF = p.dataset.tipo === 'IATF';
+    document.getElementById('sv-iatf-wrap').style.display = esIATF ? 'block' : 'none';
+    document.getElementById('sv-toro-wrap').style.display = esIATF ? 'none' : 'block';
   });
+
+  // Actualizar total de vacas IATF
+  function actualizarTotal() {
+    const filas = document.querySelectorAll('.sv-cant');
+    let total = 0;
+    filas.forEach(f => { const v = parseInt(f.value); if (!isNaN(v) && v > 0) total += v; });
+    const lbl = document.getElementById('sv-total-label');
+    if (lbl) lbl.textContent = total > 0 ? `Total: ${total} vacas` : '';
+  }
+
+  // Agregar fila de toro
+  document.getElementById('sv-add-toro').onclick = () => {
+    const list = document.getElementById('sv-toros-list');
+    const idx = list.children.length;
+    const div = document.createElement('div');
+    div.className = 'sv-toro-row';
+    div.dataset.idx = idx;
+    div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
+    div.innerHTML = `
+      <input type="number" class="sv-cant" placeholder="Cant. vacas" min="1" style="width:120px;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:13px;background:var(--bg)">
+      <input type="text" class="sv-toro-id" placeholder="Identificación toro" style="flex:1;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:13px;background:var(--bg)">
+      <button class="sv-del-row btn" style="padding:5px 10px;font-size:12px;background:var(--bg2);color:var(--red)" title="Quitar fila">✕</button>`;
+    div.querySelector('.sv-del-row').onclick = () => { div.remove(); actualizarTotal(); };
+    div.querySelector('.sv-cant').oninput = actualizarTotal;
+    list.appendChild(div);
+    div.querySelector('.sv-cant').focus();
+  };
+
+  // Escuchar cambios en la primera fila de cantidad
+  document.querySelectorAll('.sv-cant').forEach(el => el.oninput = actualizarTotal);
+
+  // Guardar
   const save = document.getElementById('sv-save');
   if (save) save.onclick = async () => {
     const tipo = document.querySelector('#sv-tipo-group .selected').dataset.tipo;
-    const data = {
-      tipo,
-      rodeo_id: document.getElementById('sv-rodeo').value,
-      fecha_inicio: document.getElementById('sv-fecha-ini').value,
-      fecha_fin: document.getElementById('sv-fecha-fin').value,
-      identificacion_toro: tipo === 'IATF' ? document.getElementById('sv-toro').value.trim() : '',
-      observacion: document.getElementById('sv-obs').value.trim(),
-    };
-    if (!data.fecha_inicio || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
-    save.disabled = true;
-    try {
-      await apiCall('create', { body: { entity: 'servicios', data } });
-      invalidateCache('servicios');
-      toast('Servicio registrado', 'ok');
-      await loadEntity('servicios', true);
-      render();
-    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+    const rodeo_id = document.getElementById('sv-rodeo').value;
+    const fecha_inicio = document.getElementById('sv-fecha-ini').value;
+    const fecha_fin = document.getElementById('sv-fecha-fin').value;
+    const observacion = document.getElementById('sv-obs').value.trim();
+    if (!fecha_inicio || !rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+
+    if (tipo === 'IATF') {
+      // Recolectar filas de toros
+      const filas = [];
+      document.querySelectorAll('.sv-toro-row').forEach(row => {
+        const cant = parseInt(row.querySelector('.sv-cant').value);
+        const toro = row.querySelector('.sv-toro-id').value.trim();
+        if (toro && cant > 0) filas.push({ cantidad: cant, identificacion_toro: toro });
+      });
+      if (filas.length === 0) { toast('Completá al menos un toro con cantidad.', 'err'); return; }
+      save.disabled = true;
+      try {
+        // Una llamada a la API por cada toro
+        for (const fila of filas) {
+          await apiCall('create', { body: { entity: 'servicios', data: {
+            tipo, rodeo_id, fecha_inicio, fecha_fin, observacion,
+            identificacion_toro: fila.identificacion_toro,
+            cantidad: fila.cantidad,
+          }}});
+        }
+        invalidateCache('servicios');
+        toast(`Servicio IATF registrado — ${filas.length} toro${filas.length > 1 ? 's' : ''}`, 'ok');
+        await loadEntity('servicios', true);
+        render();
+      } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+
+    } else {
+      // Toros a campo — una sola fila, sin cantidad
+      const data = {
+        tipo, rodeo_id, fecha_inicio, fecha_fin, observacion,
+        identificacion_toro: document.getElementById('sv-toro').value.trim(),
+      };
+      save.disabled = true;
+      try {
+        await apiCall('create', { body: { entity: 'servicios', data } });
+        invalidateCache('servicios');
+        toast('Servicio registrado', 'ok');
+        await loadEntity('servicios', true);
+        render();
+      } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+    }
   };
+
   attachTableDeleteEvents('servicios', 'servicio_id');
 }
 
