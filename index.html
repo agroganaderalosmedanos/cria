@@ -1482,6 +1482,69 @@ function openEditModal(entity, idCol, id) {
   };
 }
 
-init();
+
+const LOGIN_API_URL = 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec';
+const LOGIN_TOKEN   = 'LosMedanos2026Cria';
+
+function loginGetSession() {
+  try { return JSON.parse(localStorage.getItem('lm_session') || 'null'); } catch(e) { return null; }
+}
+function loginSetSession(data) { localStorage.setItem('lm_session', JSON.stringify(data)); }
+function loginClear() { localStorage.removeItem('lm_session'); location.reload(); }
+
+function loginRequired(onSuccess) {
+  const session = loginGetSession();
+  if (session) { onSuccess(session); return; }
+  showLoginScreen(onSuccess);
+}
+
+function showLoginScreen(onSuccess) {
+  const overlay = document.createElement('div');
+  overlay.className = 'login-overlay';
+  overlay.innerHTML = `
+    <div class="login-box">
+      <div class="login-icon">🐄</div>
+      <div class="login-title">Agroganadera Los Médanos</div>
+      <div class="login-sub">Ingresá tus credenciales para continuar</div>
+      <div class="login-field"><label>Usuario</label>
+        <input type="text" id="li-user" placeholder="tu usuario" autocomplete="username">
+      </div>
+      <div class="login-field"><label>Contraseña</label>
+        <input type="password" id="li-pass" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <button class="login-btn" id="li-btn">Ingresar</button>
+      <div class="login-error" id="li-err"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const btn = document.getElementById('li-btn');
+  const userEl = document.getElementById('li-user');
+  const passEl = document.getElementById('li-pass');
+  const errEl  = document.getElementById('li-err');
+  async function doLogin() {
+    const usuario = userEl.value.trim();
+    const password = passEl.value;
+    if (!usuario || !password) { errEl.textContent = 'Completá usuario y contraseña.'; return; }
+    btn.disabled = true; btn.textContent = 'Verificando…'; errEl.textContent = '';
+    try {
+      const url = LOGIN_API_URL + '?action=login&token=' + encodeURIComponent(LOGIN_TOKEN);
+      const res = await fetch(url, { method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ usuario, password }) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Error al conectar');
+      loginSetSession(json.data);
+      overlay.remove();
+      onSuccess(json.data);
+    } catch(err) {
+      errEl.textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Ingresar';
+    }
+  }
+  btn.onclick = doLogin;
+  passEl.onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+  userEl.onkeydown = e => { if (e.key === 'Enter') passEl.focus(); };
+  setTimeout(() => userEl.focus(), 100);
+}
+loginRequired(session => { window.__lmSession = session; init(); });
 </script>
 </body></html>
