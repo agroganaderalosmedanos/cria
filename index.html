@@ -235,7 +235,10 @@ async function apiCall(action, opts = {}) {
     }
     const fetchOpts = { method: opts.body ? 'POST' : 'GET' };
     if (opts.body) {
-      fetchOpts.body = JSON.stringify(opts.body);
+      // Inyectar usuario de sesión automáticamente en todos los POST
+      const session = window.__lmSession || {};
+      const bodyConUsuario = { ...opts.body, usuario: session.usuario || 'sistema' };
+      fetchOpts.body = JSON.stringify(bodyConUsuario);
       fetchOpts.headers = { 'Content-Type': 'text/plain;charset=utf-8' };
     }
     const res = await fetch(url, fetchOpts);
@@ -1544,10 +1547,4 @@ function showLoginScreen(onSuccess) {
     }
   }
   btn.onclick = doLogin;
-  passEl.onkeydown = e => { if (e.key === 'Enter') doLogin(); };
-  userEl.onkeydown = e => { if (e.key === 'Enter') passEl.focus(); };
-  setTimeout(() => userEl.focus(), 100);
-}
-loginRequired(session => { window.__lmSession = session; init(); });
-</script>
-</body></html>
+  passEl.onkeydown = e => { if (e.key === 'Enter') doLogin(); }
