@@ -308,6 +308,11 @@ function campoNombre(campoId) {
 function rodeosCriaActivos() {
   return (S.catalogs && S.catalogs.rodeos || []).filter(r => (r.categoria === 'vaca' || r.categoria === 'vaquillona'));
 }
+function rodeosConServicio() {
+  const servicios = S.cache.servicios || [];
+  const idsConServicio = new Set(servicios.map(s => String(s.rodeo_id)));
+  return rodeosCriaActivos().filter(r => idsConServicio.has(String(r.rodeo_id)));
+}
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
 }
@@ -373,6 +378,10 @@ async function goto(page) {
     S.loading = true; render();
     try { await loadEntity(entityMap[page]); } catch (err) { toast(err.message, 'err'); }
     S.loading = false;
+  }
+  // Tactos y Abortos necesitan la caché de Servicios para filtrar rodeos con servicio registrado
+  if ((page === 'tactos' || page === 'abortos') && !S.cache.servicios) {
+    try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
   }
   if (page === 'movimientos' && !S.stock) {
     try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
@@ -877,10 +886,11 @@ function attachServiciosEvents() {
 
 function buildTactos() {
   const items = S.cache.tactos || [];
-  const rodeosAptos = rodeosCriaActivos();
+  const rodeosAptos = rodeosConServicio();
   let h = `<div class="panel">
     <div class="panel-title">Registrar tacto</div>
     <p class="helper-text" style="margin-bottom:14px">Registrá el total por rodeo. En el tacto IATF cargá las preñadas por IATF; en el tacto final, el total de preñadas (la diferencia con el IATF se calcula como preñadas por toro).</p>
+    ${rodeosAptos.length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
     <div class="fgrid">
       <div class="fg" style="min-width:200px"><label>Tipo de tacto</label>
         <div class="radio-group" id="tc-tipo-group">
@@ -957,9 +967,10 @@ function attachTactosEvents() {
 
 function buildAbortos() {
   const items = S.cache.abortos || [];
-  const rodeosAptos = rodeosCriaActivos();
+  const rodeosAptos = rodeosConServicio();
   let h = `<div class="panel">
     <div class="panel-title">Registrar aborto</div>
+    ${rodeosAptos.length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía.</p>' : ''}
     <div class="fgrid">
       <div class="fg"><label>Fecha</label><input type="date" id="ab-fecha" value="${today()}"></div>
       <div class="fg"><label>Rodeo</label>
@@ -1554,27 +1565,4 @@ function showLoginScreen(onSuccess) {
     if (!usuario || !password) { errEl.textContent = 'Completá usuario y contraseña.'; return; }
     btn.disabled = true; btn.textContent = 'Verificando…'; errEl.textContent = '';
     try {
-      const url = LOGIN_API_URL + '?action=login&token=' + encodeURIComponent(LOGIN_TOKEN);
-      const res = await fetch(url, { method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ usuario, password }) });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Error al conectar');
-      loginSetSession(json.data);
-      overlay.remove();
-      onSuccess(json.data);
-    } catch(err) {
-      errEl.textContent = err.message;
-      btn.disabled = false; btn.textContent = 'Ingresar';
-    }
-  }
-  btn.onclick = doLogin;
-  passEl.onkeydown = e => { if (e.key === 'Enter') doLogin(); }
-
-  userEl.onkeydown = e => { if (e.key === 'Enter') passEl.focus(); }
-  setTimeout(() => userEl.focus(), 100);
-}
-loginRequired(session => { window.__lmSession = session; init(); });
-</script>
-</body>
-</html>
+      
