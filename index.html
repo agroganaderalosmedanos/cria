@@ -726,10 +726,10 @@ function buildServicios() {
       if (!vistos.has(key)) {
         vistos.add(key);
         const grupo = items.filter(i => i.tipo === 'IATF' && i.rodeo_id === item.rodeo_id && i.fecha_inicio === item.fecha_inicio);
-        grupos.push({ ...item, _grupo: grupo });
+        grupos.push({ ...item, _toros: grupo.map(g => `${g.identificacion_toro || '—'}${g.cantidad ? ' ('+g.cantidad+' vacas)' : ''}`).join(' / ') });
       }
     } else {
-      grupos.push({ ...item, _grupo: null });
+      grupos.push({ ...item, _toros: item.identificacion_toro || '—' });
     }
   });
 
@@ -738,12 +738,7 @@ function buildServicios() {
     { key: 'fecha_fin', label: 'Fin', render: v => v ? fd(v) : '—' },
     { key: 'tipo', label: 'Tipo', render: v => `<span class="pill ${v === 'IATF' ? 'pill-gold' : 'pill-green'}">${v}</span>` },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-    { key: '_grupo', label: 'Toro / Cantidad', render: (grupo, item) => {
-      if (grupo && grupo.length > 0) {
-        return grupo.map(g => `${g.identificacion_toro || '—'}${g.cantidad ? ' <span style="color:var(--text2);font-size:11px">('+g.cantidad+' vacas)</span>' : ''}`).join('<br>');
-      }
-      return item.identificacion_toro || '—';
-    }},
+    { key: '_toros', label: 'Toro / Cantidad', render: v => v || '—' },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'servicios', 'servicio_id');
 
@@ -751,13 +746,18 @@ function buildServicios() {
 }
 
 function attachServiciosEvents() {
+  // Guard: si los elementos no están en el DOM no hacer nada
+  if (!document.getElementById('sv-save')) return;
+
   // Toggle IATF vs Toros a campo
   document.querySelectorAll('#sv-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#sv-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
     p.classList.add('selected');
     const esIATF = p.dataset.tipo === 'IATF';
-    document.getElementById('sv-iatf-wrap').style.display = esIATF ? 'block' : 'none';
-    document.getElementById('sv-toro-wrap').style.display = esIATF ? 'none' : 'block';
+    const iatfWrap = document.getElementById('sv-iatf-wrap');
+    const toroWrap = document.getElementById('sv-toro-wrap');
+    if (iatfWrap) iatfWrap.style.display = esIATF ? 'block' : 'none';
+    if (toroWrap) toroWrap.style.display = esIATF ? 'none' : 'block';
   });
 
   // Actualizar total de vacas IATF
@@ -773,10 +773,9 @@ function attachServiciosEvents() {
   const addToroBtn = document.getElementById('sv-add-toro');
   if (addToroBtn) addToroBtn.onclick = () => {
     const list = document.getElementById('sv-toros-list');
-    const idx = list.children.length;
+    if (!list) return;
     const div = document.createElement('div');
     div.className = 'sv-toro-row';
-    div.dataset.idx = idx;
     div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
     div.innerHTML = `
       <input type="number" class="sv-cant" placeholder="Cant. vacas" min="1" style="width:120px;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:13px;background:var(--bg)">
@@ -793,26 +792,33 @@ function attachServiciosEvents() {
 
   // Guardar
   const save = document.getElementById('sv-save');
-  if (save) save.onclick = async () => {
-    const tipo = document.querySelector('#sv-tipo-group .selected').dataset.tipo;
-    const rodeo_id = document.getElementById('sv-rodeo').value;
-    const fecha_inicio = document.getElementById('sv-fecha-ini').value;
-    const fecha_fin = document.getElementById('sv-fecha-fin').value;
-    const observacion = document.getElementById('sv-obs').value.trim();
+  save.onclick = async () => {
+    const tipoEl = document.querySelector('#sv-tipo-group .selected');
+    if (!tipoEl) return;
+    const tipo = tipoEl.dataset.tipo;
+    const rodeoEl = document.getElementById('sv-rodeo');
+    const fechaIniEl = document.getElementById('sv-fecha-ini');
+    const fechaFinEl = document.getElementById('sv-fecha-fin');
+    const obsEl = document.getElementById('sv-obs');
+    const rodeo_id = rodeoEl ? rodeoEl.value : '';
+    const fecha_inicio = fechaIniEl ? fechaIniEl.value : '';
+    const fecha_fin = fechaFinEl ? fechaFinEl.value : '';
+    const observacion = obsEl ? obsEl.value.trim() : '';
     if (!fecha_inicio || !rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
 
     if (tipo === 'IATF') {
-      // Recolectar filas de toros
       const filas = [];
       document.querySelectorAll('.sv-toro-row').forEach(row => {
-        const cant = parseInt(row.querySelector('.sv-cant').value);
-        const toro = row.querySelector('.sv-toro-id').value.trim();
+        const cantEl = row.querySelector('.sv-cant');
+        const toroEl = row.querySelector('.sv-toro-id');
+        if (!cantEl || !toroEl) return;
+        const cant = parseInt(cantEl.value);
+        const toro = toroEl.value.trim();
         if (toro && cant > 0) filas.push({ cantidad: cant, identificacion_toro: toro });
       });
       if (filas.length === 0) { toast('Completá al menos un toro con cantidad.', 'err'); return; }
       save.disabled = true;
       try {
-        // Una llamada a la API por cada toro
         for (const fila of filas) {
           await apiCall('create', { body: { entity: 'servicios', data: {
             tipo, rodeo_id, fecha_inicio, fecha_fin, observacion,
@@ -827,10 +833,10 @@ function attachServiciosEvents() {
       } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
 
     } else {
-      // Toros a campo — una sola fila, sin cantidad
+      const toroEl = document.getElementById('sv-toro');
       const data = {
         tipo, rodeo_id, fecha_inicio, fecha_fin, observacion,
-        identificacion_toro: document.getElementById('sv-toro').value.trim(),
+        identificacion_toro: toroEl ? toroEl.value.trim() : '',
       };
       save.disabled = true;
       try {
