@@ -770,7 +770,8 @@ function attachServiciosEvents() {
   }
 
   // Agregar fila de toro
-  document.getElementById('sv-add-toro').onclick = () => {
+  const addToroBtn = document.getElementById('sv-add-toro');
+  if (addToroBtn) addToroBtn.onclick = () => {
     const list = document.getElementById('sv-toros-list');
     const idx = list.children.length;
     const div = document.createElement('div');
