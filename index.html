@@ -632,6 +632,7 @@ function buildDashboard() {
 // Suma los valores crudos de KPIs de varios rodeos y recalcula los porcentajes agregados
 function aggregateKpis_(rodeosArr) {
   let totServ = 0, prenIatf = 0, prenToro = 0, totPren = 0;
+  let totTacteadasIatf = 0, totTacteadasToro = 0;
   let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0;
   rodeosArr.forEach(r => {
     const k = r.kpis;
@@ -639,6 +640,8 @@ function aggregateKpis_(rodeosArr) {
     prenIatf += k.servicio.prenadas_iatf || 0;
     prenToro += k.servicio.prenadas_toro || 0;
     totPren += k.servicio.total_prenadas || 0;
+    totTacteadasIatf += k.servicio.total_tacteadas_iatf || 0;
+    totTacteadasToro += k.servicio.total_tacteadas_toro || 0;
     nacVivos += k.paricion.nacidos_vivos || 0;
     nacMuertos += k.paricion.nacidos_muertos || 0;
     abortos += k.gestacion.abortos || 0;
@@ -648,9 +651,10 @@ function aggregateKpis_(rodeosArr) {
   return {
     servicio: {
       total_serviciadas: totServ, prenadas_iatf: prenIatf, prenadas_toro: prenToro, total_prenadas: totPren,
+      total_tacteadas_iatf: totTacteadasIatf, total_tacteadas_toro: totTacteadasToro,
       indice_prenez: totServ > 0 ? round1_(totPren / totServ * 100) : null,
-      indice_prenez_iatf: totServ > 0 ? round1_(prenIatf / totServ * 100) : null,
-      indice_prenez_toro: (totServ - prenIatf) > 0 ? round1_(prenToro / (totServ - prenIatf) * 100) : null,
+      indice_prenez_iatf: totTacteadasIatf > 0 ? round1_(prenIatf / totTacteadasIatf * 100) : null,
+      indice_prenez_toro: totTacteadasToro > 0 ? round1_(prenToro / totTacteadasToro * 100) : null,
     },
     gestacion: { abortos },
     paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, indice_paricion: totPren > 0 ? round1_(nacVivos / totPren * 100) : null },
@@ -676,7 +680,7 @@ function buildKpiRow(k) {
     <div class="kpi-card accent-gold">
       <div class="kpi-icon">◔</div><div class="kpi-label">Preñez IATF</div>
       <div class="kpi-value">${pct(k.servicio.indice_prenez_iatf)}</div>
-      <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} de ${fn(k.servicio.total_serviciadas)} vacas (IATF)</div>
+      <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} de ${fn(k.servicio.total_tacteadas_iatf)} vacas (IATF)</div>
     </div>
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
