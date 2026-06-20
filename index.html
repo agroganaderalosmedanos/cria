@@ -383,6 +383,11 @@ async function goto(page) {
   if ((page === 'tactos' || page === 'abortos') && !S.cache.servicios) {
     try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
   }
+  // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
+  // se recarga automáticamente al volver a visitarlo.
+  if (page === 'dashboard' && !S.dashboard) {
+    loadDashboard().then(render).catch(() => {});
+  }
   if (page === 'movimientos' && !S.stock) {
     try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
   }
@@ -612,9 +617,9 @@ function buildDashboard() {
       h += `<tr>
         <td><strong>${r.rodeo.nombre}</strong></td>
         <td style="color:var(--text2)">${campoNombre(r.rodeo.campo_id)}</td>
-        <td class="tc">${pillForPct(k.servicio.indice_prenez)}</td>
-        <td class="tc">${pillForPct(k.paricion.indice_paricion)}</td>
-        <td class="tc">${pillForPct(k.destete.indice_destete)}</td>
+        <td class="tc">${pillForPct(k.servicio.indice_prenez, fn(k.servicio.total_prenadas)+'/'+fn(k.servicio.total_serviciadas))}</td>
+        <td class="tc">${pillForPct(k.paricion.indice_paricion, fn(k.paricion.nacidos_vivos)+'/'+fn(k.servicio.total_prenadas))}</td>
+        <td class="tc">${pillForPct(k.destete.indice_destete, fn(k.destete.total_destetados)+'/'+fn(k.paricion.nacidos_vivos))}</td>
         <td class="tc">${k.gestacion.abortos > 0 ? '<span class="pill pill-clay">' + k.gestacion.abortos + '</span>' : '—'}</td>
         <td class="tc">${k.destete.mortandad_terneros > 0 ? '<span class="pill pill-red">' + k.destete.mortandad_terneros + '</span>' : '—'}</td>
       </tr>`;
@@ -654,10 +659,11 @@ function aggregateKpis_(rodeosArr) {
 }
 function round1_(n) { return n === null || n === undefined || isNaN(n) ? null : Math.round(n * 10) / 10; }
 
-function pillForPct(p) {
-  if (p === null || p === undefined) return '<span style="color:var(--text3)">—</span>';
+function pillForPct(p, detalle) {
+  const det = detalle ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${detalle}</div>` : '';
+  if (p === null || p === undefined) return `<span style="color:var(--text3)">—</span>${det}`;
   const cls = p >= 85 ? 'pill-green' : p >= 65 ? 'pill-gold' : 'pill-red';
-  return `<span class="pill ${cls}">${fn(p,1)}%</span>`;
+  return `<span class="pill ${cls}">${fn(p,1)}%</span>${det}`;
 }
 
 function buildKpiRow(k) {
@@ -665,22 +671,22 @@ function buildKpiRow(k) {
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⚭</div><div class="kpi-label">Índice de preñez</div>
       <div class="kpi-value">${pct(k.servicio.indice_prenez)}</div>
-      <div class="kpi-sub">${fn(k.servicio.total_prenadas)} de ${fn(k.servicio.total_serviciadas)} serviciadas</div>
+      <div class="kpi-sub">${fn(k.servicio.total_prenadas)} de ${fn(k.servicio.total_serviciadas)} vacas preñadas</div>
     </div>
     <div class="kpi-card accent-gold">
       <div class="kpi-icon">◔</div><div class="kpi-label">Preñez IATF</div>
       <div class="kpi-value">${pct(k.servicio.indice_prenez_iatf)}</div>
-      <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} preñadas IATF</div>
+      <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} de ${fn(k.servicio.total_serviciadas)} vacas (IATF)</div>
     </div>
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
       <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
-      <div class="kpi-sub">${fn(k.paricion.nacidos_vivos)} nacidos vivos</div>
+      <div class="kpi-sub">${fn(k.paricion.nacidos_vivos)} de ${fn(k.servicio.total_prenadas)} vacas parieron</div>
     </div>
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⊞</div><div class="kpi-label">Índice de destete</div>
       <div class="kpi-value">${pct(k.destete.indice_destete)}</div>
-      <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados</div>
+      <div class="kpi-sub">${fn(k.destete.total_destetados)} de ${fn(k.paricion.nacidos_vivos)} terneros destetados</div>
     </div>
   </div>`;
 }
