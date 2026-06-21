@@ -2026,12 +2026,14 @@ window.toggleNuevoProducto = function() {
 function attachInsumosEvents() {
   function applyInsumoTipoUI(tipo) {
     const esCompra = tipo === 'Compra';
-    document.getElementById('in-costo-wrap').style.display = esCompra ? 'flex' : 'none';
-    document.getElementById('in-proveedor-wrap').style.display = esCompra ? 'flex' : 'none';
-    document.getElementById('in-campo-wrap').style.display = esCompra ? 'none' : 'flex';
-    document.getElementById('in-rodeo-wrap').style.display = esCompra ? 'none' : 'flex';
+    const cw = document.getElementById('in-costo-wrap'), pw = document.getElementById('in-proveedor-wrap');
+    const kw = document.getElementById('in-campo-wrap'), rw = document.getElementById('in-rodeo-wrap');
+    if (!cw || !pw || !kw || !rw) return; // todavía no está el formulario en pantalla (ej: durante el spinner de carga)
+    cw.style.display = esCompra ? 'flex' : 'none';
+    pw.style.display = esCompra ? 'flex' : 'none';
+    kw.style.display = esCompra ? 'none' : 'flex';
+    rw.style.display = esCompra ? 'none' : 'flex';
   }
-  applyInsumoTipoUI('Compra');
   document.querySelectorAll('#in-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#in-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
     p.classList.add('selected');
