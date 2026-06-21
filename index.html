@@ -357,6 +357,13 @@ function rodeosTodosConActividad_() {
 function rodeosConActividadPorCampo_(campoId) {
   return rodeosPorCampo(campoId).filter(r => rodeoTieneActividad_(r.rodeo_id));
 }
+// Para registrar consumo de insumos: solo rodeos con animales AHORA (no tiene sentido cargar consumo en un rodeo vacío)
+function rodeosConStockPorCampo_(campoId) {
+  return rodeosPorCampo(campoId).filter(r => {
+    const row = (S.stock || []).find(s => String(s.rodeo_id) === String(r.rodeo_id));
+    return row && Number(row.stock) > 0;
+  });
+}
 
 async function loadCatalogs() {
   S.catalogs = await apiCall('catalog');
@@ -436,6 +443,9 @@ async function goto(page) {
   }
   if (page === 'movimientos' && S.corralesStock === undefined) {
     loadCorralesStock().then(render).catch(() => {});
+  }
+  if (page === 'insumos' && !S.stock) {
+    try { await loadStock(); } catch (err) { /* silencioso */ }
   }
   if (page === 'insumos' && !S.cache.compras_insumos) {
     try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ }
@@ -1866,10 +1876,10 @@ function buildInsumos() {
       <div class="fg" id="in-costo-wrap"><label>Costo total</label><input type="number" id="in-costo" placeholder="Ej: 150000" min="0" step="0.01"></div>
       <div class="fg" id="in-proveedor-wrap"><label>Proveedor <span class="opt">(opcional)</span></label><input type="text" id="in-proveedor" placeholder="Nombre del proveedor"></div>
       <div class="fg" id="in-campo-wrap" style="display:none"><label>Campo</label>
-        <select id="in-campo" onchange="document.getElementById('in-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="in-campo" onchange="document.getElementById('in-rodeo').innerHTML = rodeoOptionsHtml(rodeosConStockPorCampo_(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg" id="in-rodeo-wrap" style="display:none"><label>Rodeo</label>
-        <select id="in-rodeo">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+        <select id="in-rodeo">${rodeoOptionsHtml(rodeosConStockPorCampo_(campos[0]?.campo_id))}</select>
       </div>
       <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
     </div>
@@ -1899,7 +1909,7 @@ function buildInsumos() {
 
   const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
   h += `<div class="section-label">Historial de insumos</div>
-  <div class="fgrid" style="margin-bottom:10px;max-width:480px">
+  <div class="fgrid" style="margin-bottom:10px;max-width:680px">
     <div class="fg"><label>Filtrar por producto</label>
       <select id="in-hist-filtro-producto" onchange="renderInsumosHistorialFiltrado()">
         <option value="">Todos los productos</option>
@@ -1912,6 +1922,9 @@ function buildInsumos() {
         ${categoriasIns.map(c => `<option value="${c}">${c}</option>`).join('')}
       </select>
     </div>
+    <div class="fg"><label>Desde</label><input type="date" id="in-hist-desde" onchange="renderInsumosHistorialFiltrado()"></div>
+    <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
+  </div>
   </div>
   <div id="in-stock-seleccionado">${buildStockSeleccionado_('')}</div>
   <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '')}</div>`;
@@ -1919,7 +1932,7 @@ function buildInsumos() {
   return h;
 }
 
-function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro) {
+function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta) {
   const productosMap = {};
   ((S.catalogs && S.catalogs.productos) || []).forEach(p => { productosMap[p.producto_id] = p; });
 
@@ -1933,6 +1946,8 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
     comprasF = comprasF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
     consumosF = consumosF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
   }
+  if (desde) { comprasF = comprasF.filter(c => String(c.fecha || '') >= desde); consumosF = consumosF.filter(c => String(c.fecha || '') >= desde); }
+  if (hasta) { comprasF = comprasF.filter(c => String(c.fecha || '') <= hasta); consumosF = consumosF.filter(c => String(c.fecha || '') <= hasta); }
 
   let filas = [
     ...comprasF.map(c => {
@@ -2016,14 +2031,86 @@ function buildStockSeleccionado_(productoFiltro) {
   const esVet = row.categoria === 'Veterinaria';
   return `<div style="background:${esVet ? 'var(--blue-bg)' : 'var(--green-bg)'};color:${esVet ? 'var(--blue-text)' : 'var(--green-text)'};border-radius:9px;padding:10px 16px;font-size:16px;font-weight:700;display:inline-block;margin-bottom:12px">Stock actual de ${row.nombre}: ${fn(row.stock)} ${row.unidad || ''}</div>`;
 }
+function buildInsumosKardex_(compras, consumos, productoId, desde, hasta) {
+  const p = ((S.catalogs && S.catalogs.productos) || []).find(x => String(x.producto_id) === String(productoId));
+  if (!p) return '';
+
+  const comprasP = (compras || []).filter(c => String(c.producto_id) === String(productoId));
+  const consumosP = (consumos || []).filter(c => String(c.producto_id) === String(productoId));
+
+  // Saldo inicial: resultado de todo lo anterior a la fecha "Desde" (si no hay fecha "Desde", arranca en 0 desde el principio de todo)
+  let saldoInicial = 0;
+  if (desde) {
+    comprasP.forEach(c => { if (String(c.fecha || '') < desde) saldoInicial += Number(c.cantidad) || 0; });
+    consumosP.forEach(c => { if (String(c.fecha || '') < desde) saldoInicial -= Number(c.cantidad) || 0; });
+  }
+
+  let movs = [
+    ...comprasP.map(c => ({
+      fecha: c.fecha || '', tipoLabel: 'Compra', tipoClass: 'pill-green', entrada: Number(c.cantidad) || 0, salida: 0,
+      detalle: [c.costo_total ? 'Costo: ' + fn(c.costo_total) : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
+      entity: 'compras_insumos', idCol: 'compra_id', id: c.compra_id,
+    })),
+    ...consumosP.map(c => ({
+      fecha: c.fecha || '', tipoLabel: 'Consumo', tipoClass: 'pill-clay', entrada: 0, salida: Number(c.cantidad) || 0,
+      detalle: [c.campo_id ? campoNombre(c.campo_id) : '', c.rodeo_id ? rodeoNombre(c.rodeo_id) : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
+      entity: 'consumos_insumos', idCol: 'consumo_id', id: c.consumo_id,
+    })),
+  ];
+  if (desde) movs = movs.filter(m => String(m.fecha) >= desde);
+  if (hasta) movs = movs.filter(m => String(m.fecha) <= hasta);
+  movs.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha))); // ascendente: el saldo corrido solo tiene sentido en orden cronológico
+
+  let saldo = saldoInicial;
+  const filas = movs.map(m => { saldo += m.entrada - m.salida; return { ...m, saldoCorrido: saldo }; });
+  const saldoFinal = saldo;
+
+  let h = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px 16px;font-size:14px;font-weight:600;margin-bottom:10px">
+    Saldo inicial${desde ? ' al ' + fd(desde) : ''}: <strong>${fn(saldoInicial)} ${p.unidad || ''}</strong>
+  </div>`;
+
+  if (!filas.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay movimientos de este producto en el rango elegido.</div></div>';
+    return h;
+  }
+
+  h += `<div class="tw"><table class="dt"><thead><tr>
+    <th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="tc">Entrada</th><th class="tc">Salida</th><th class="tc">Saldo</th><th></th>
+  </tr></thead><tbody>`;
+  filas.forEach(f => {
+    h += `<tr>
+      <td>${fd(f.fecha)}</td>
+      <td><span class="pill ${f.tipoClass}">${f.tipoLabel}</span></td>
+      <td>${f.detalle}</td>
+      <td class="tc">${f.entrada ? fn(f.entrada) : '—'}</td>
+      <td class="tc">${f.salida ? fn(f.salida) : '—'}</td>
+      <td class="tc"><strong>${fn(f.saldoCorrido)}</strong></td>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-edit="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Editar">✎</button>
+        <button class="icon-btn danger" data-del="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Eliminar">✕</button>
+      </div></td>
+    </tr>`;
+  });
+  h += `</tbody></table></div>
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px 16px;font-size:14px;font-weight:600;margin-top:10px">
+    Saldo final${hasta ? ' al ' + fd(hasta) : ''}: <strong>${fn(saldoFinal)} ${p.unidad || ''}</strong>
+  </div>`;
+  return h;
+}
 window.renderInsumosHistorialFiltrado = function() {
   const productoFiltro = document.getElementById('in-hist-filtro-producto')?.value || '';
   const categoriaFiltro = document.getElementById('in-hist-filtro-categoria')?.value || '';
+  const desde = document.getElementById('in-hist-desde')?.value || '';
+  const hasta = document.getElementById('in-hist-hasta')?.value || '';
   const stockEl = document.getElementById('in-stock-seleccionado');
   if (stockEl) stockEl.innerHTML = buildStockSeleccionado_(productoFiltro);
   const el = document.getElementById('in-historial-tabla');
   if (el) {
-    el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro);
+    if (productoFiltro) {
+      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta);
+    } else {
+      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta);
+    }
     attachTableDeleteEvents('compras_insumos', 'compra_id');
     attachTableDeleteEvents('consumos_insumos', 'consumo_id');
   }
