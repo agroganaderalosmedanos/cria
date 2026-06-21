@@ -381,7 +381,7 @@ const NAV = [
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ]},
   { section: 'Stock', items: [
-    { k: 'movimientos', icon: '⇄', label: 'Movimientos' },
+    { k: 'movimientos', icon: '⇄', label: 'Movimientos/Stock' },
   ]},
   { section: 'Sistema', items: [
     { k: 'config', icon: '⚙', label: 'Configuración' },
@@ -478,7 +478,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resumen de cría', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos', config: 'Configuración',
+    destetes: 'Destetes', movimientos: 'Movimientos/Stock', config: 'Configuración',
   };
   return titles[p] || p;
 }
@@ -1279,12 +1279,16 @@ function actividadPorCategoria_(categoria) {
   const mapa = {
     'vaca': 'Cría',
     'vacas': 'Cría',
+    'vaca venta': 'Venta',
+    'vacas venta': 'Venta',
     'vaquillona': 'Cría',
     'vaquillonas': 'Cría',
     'vaquillona próximo servicio': 'Recría',
     'vaquillonas próximo servicio': 'Recría',
-    'vaquillona para venta': 'Recría',
-    'vaquillonas para venta': 'Recría',
+    'vaquillona venta': 'Venta',
+    'vaquillonas venta': 'Venta',
+    'vaquillona para venta': 'Venta',
+    'vaquillonas para venta': 'Venta',
     'novillito': 'Recría',
     'novillitos': 'Recría',
     'ternero': 'Recría',
@@ -1310,7 +1314,7 @@ function buildStockTable_(stockList, campoFiltro) {
     const nombreCampo = campoNombre(s.campo_id);
     porCampo[nombreCampo] = (porCampo[nombreCampo] || 0) + (Number(s.stock) || 0);
   });
-  const ordenActividad = ['Cría', 'Recría', 'Engorde', 'Otra'];
+  const ordenActividad = ['Cría', 'Recría', 'Engorde', 'Venta', 'Otra'];
   const porActividad = {};
   filtrado.forEach(s => {
     const act = actividadPorCategoria_(s.categoria);
