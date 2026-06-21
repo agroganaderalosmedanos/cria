@@ -1351,7 +1351,7 @@ function buildStockTable_(stockList, campoFiltro) {
   if (corralesDisponible) {
     porActividad['Engorde'] = (porActividad['Engorde'] || 0) + corralesEnEsteFiltro;
   }
-  const porActividadOrdenado = ordenActividad.filter(a => porActividad[a] !== undefined);
+  const porActividadOrdenado = ordenActividad.filter(a => porActividad[a]);
   const notaCorrales = S.corralesStock === undefined
     ? '<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">Cargando stock de Corrales…</div>'
     : (S.corralesStock === null
@@ -1371,16 +1371,23 @@ function buildStockTable_(stockList, campoFiltro) {
       `).join('')}
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-      ${Object.entries(porCategoria).map(([cat, tot]) => `
+      ${Object.entries(porCategoria).filter(([cat, tot]) => tot).map(([cat, tot]) => `
         <div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
           ${cat}: <strong style="color:var(--text)">${fn(tot)}</strong>
         </div>
       `).join('')}
     </div>
-    ${!campoFiltro ? `<div style="display:flex;flex-wrap:wrap;gap:8px">
-      ${Object.entries(porCampo).map(([campo, tot]) => `
+    ${!campoFiltro ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      ${Object.entries(porCampo).filter(([campo, tot]) => tot).map(([campo, tot]) => `
         <div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
           📍 ${campo}: <strong style="color:var(--text)">${fn(tot)}</strong>
+        </div>
+      `).join('')}
+    </div>` : ''}
+    ${corralesFilas.filter(c => c.stock).length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${corralesFilas.filter(c => c.stock).map(c => `
+        <div style="background:var(--gold-bg);color:var(--gold-text);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
+          🐂 ${c.nombre}: <strong>${fn(c.stock)}</strong>
         </div>
       `).join('')}
     </div>` : ''}
