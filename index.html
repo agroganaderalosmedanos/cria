@@ -399,6 +399,7 @@ const NAV = [
   { section: 'Stock', items: [
     { k: 'movimientos', icon: '⇄', label: 'Movimientos/Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
+    { k: 'insumos', icon: '🌿', label: 'Insumos' },
   ]},
   { section: 'Sistema', items: [
     { k: 'config', icon: '⚙', label: 'Configuración' },
@@ -408,7 +409,7 @@ const NAV = [
 async function goto(page) {
   S.page = page;
   S.sidebarOpen = false;
-  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos', ventas: 'ventas' };
+  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos', ventas: 'ventas', insumos: 'consumos_insumos' };
   if (entityMap[page] && !S.cache[entityMap[page]]) {
     S.loading = true; render();
     try { await loadEntity(entityMap[page]); } catch (err) { toast(err.message, 'err'); }
@@ -435,6 +436,12 @@ async function goto(page) {
   }
   if (page === 'movimientos' && S.corralesStock === undefined) {
     loadCorralesStock().then(render).catch(() => {});
+  }
+  if (page === 'insumos' && !S.cache.compras_insumos) {
+    try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ }
+  }
+  if (page === 'insumos' && !S.stockProductos) {
+    try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
   }
   render();
 }
@@ -501,7 +508,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resumen de cría', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', config: 'Configuración',
+    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', insumos: 'Insumos', config: 'Configuración',
   };
   return titles[p] || p;
 }
@@ -516,6 +523,7 @@ function pageSubtitle(p) {
     destetes: 'Terneros destetados, caravaneados al plantel',
     movimientos: 'Transferencias de animales entre rodeos y saldo inicial',
     ventas: 'Registro de ventas y baja de stock',
+    insumos: 'Compras y consumos de alimentación y veterinaria',
     config: 'Conexión con la planilla de datos',
   };
   return subs[p] || '';
@@ -533,6 +541,7 @@ function buildPage(page) {
     case 'destetes':   return buildDestetes();
     case 'movimientos': return buildMovimientos();
     case 'ventas':      return buildVentas();
+    case 'insumos':     return buildInsumos();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -598,7 +607,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -1415,20 +1424,43 @@ function buildStockTable_(stockList, campoFiltro, categoriaFiltro) {
       `).join('')}
     </div>` : ''}
   </div>`;
-  h += `<div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock</th></tr></thead><tbody>`;
-  filtrado.filter(s => (Number(s.stock) || 0) !== 0).forEach(s => {
-    h += `<tr><td><strong>${s.nombre}</strong></td><td style="color:var(--text2)">${campoNombre(s.campo_id)}</td>
-      <td><span class="pill pill-gray">${s.categoria}</span></td>
-      <td class="tc"><strong>${fn(s.stock)}</strong></td></tr>`;
+  let filasStock = [
+    ...filtrado.filter(s => (Number(s.stock) || 0) !== 0).map(s => ({ nombre: s.nombre, campo: campoNombre(s.campo_id), categoria: s.categoria, stock: Number(s.stock) || 0, esCorral: false })),
+    ...corralesFilas.filter(c => (Number(c.stock) || 0) !== 0).map(c => ({ nombre: c.nombre, campo: c.campo, categoria: c.categoria, stock: Number(c.stock) || 0, esCorral: true })),
+  ];
+  if (!S.sort) S.sort = {};
+  const sortStateStock = S.sort.stockRodeos || { key: 'stock', dir: 'desc' };
+  filasStock = [...filasStock].sort((a, b) => {
+    let va = a[sortStateStock.key], vb = b[sortStateStock.key];
+    if (va == null) va = ''; if (vb == null) vb = '';
+    const na = Number(va), nb = Number(vb);
+    const numeric = va !== '' && vb !== '' && !isNaN(na) && !isNaN(nb);
+    const cmp = numeric ? (na - nb) : String(va).localeCompare(String(vb), 'es', { sensitivity: 'base' });
+    return sortStateStock.dir === 'asc' ? cmp : -cmp;
   });
-  corralesFilas.filter(c => (Number(c.stock) || 0) !== 0).forEach(c => {
-    h += `<tr><td><strong>${c.nombre}</strong></td><td style="color:var(--text2)">${c.campo}</td>
-      <td><span class="pill pill-gold">${c.categoria}</span></td>
-      <td class="tc"><strong>${fn(c.stock)}</strong></td></tr>`;
+  const colsStock = [{ key: 'nombre', label: 'Rodeo' }, { key: 'campo', label: 'Campo' }, { key: 'categoria', label: 'Categoría' }, { key: 'stock', label: 'Stock' }];
+  h += `<div class="tw"><table class="dt"><thead><tr>`;
+  colsStock.forEach(c => {
+    const activo = sortStateStock.key === c.key;
+    const flecha = activo ? (sortStateStock.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    h += `<th class="sortable-th${c.key === 'stock' ? ' tc' : ''}" style="cursor:pointer;user-select:none" onclick="sortStockRodeos('${c.key}')" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
+  });
+  h += `</tr></thead><tbody>`;
+  filasStock.forEach(s => {
+    h += `<tr><td><strong>${s.nombre}</strong></td><td style="color:var(--text2)">${s.campo}</td>
+      <td><span class="pill ${s.esCorral ? 'pill-gold' : 'pill-gray'}">${s.categoria}</span></td>
+      <td class="tc"><strong>${fn(s.stock)}</strong></td></tr>`;
   });
   h += `</tbody></table></div>`;
   return h;
 }
+window.sortStockRodeos = function(key) {
+  if (!S.sort) S.sort = {};
+  const current = S.sort.stockRodeos;
+  if (current && current.key === key) { current.dir = current.dir === 'asc' ? 'desc' : 'asc'; }
+  else { S.sort.stockRodeos = { key, dir: 'asc' }; }
+  window.renderStockFiltrado ? window.renderStockFiltrado() : render();
+};
 window.renderStockFiltrado = function() {
   const el = document.getElementById('mv-stock-tabla');
   const campoEl = document.getElementById('mv-stock-filtro-campo');
@@ -1641,6 +1673,9 @@ window.renderHistorialFiltrado = function() {
 async function loadStock() {
   S.stock = await apiCall('stock');
 }
+async function loadStockProductos() {
+  S.stockProductos = await apiCall('stockProductos');
+}
 async function loadCorralesStock() {
   try {
     const res = await fetch('https://raw.githubusercontent.com/agroganaderalosmedanos/corrales/main/datos.json');
@@ -1800,6 +1835,275 @@ function attachVentasEvents() {
   attachTableDeleteEvents('ventas', 'venta_id');
 }
 
+function productoOptionsHtml(productosList) {
+  if (!productosList.length) return '<option value="">Sin productos cargados — creá uno con "+ nuevo producto"</option>';
+  return productosList.map(p => `<option value="${p.producto_id}">${p.nombre} (${p.unidad || 'sin unidad'})</option>`).join('');
+}
+
+function buildInsumos() {
+  const productos = (S.catalogs && S.catalogs.productos) || [];
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const stockProductos = S.stockProductos || [];
+  const compras = S.cache.compras_insumos || [];
+  const consumos = S.cache.consumos_insumos || [];
+
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar movimiento de insumos</div>
+    <div class="fgrid">
+      <div class="fg" style="min-width:280px"><label>Tipo</label>
+        <div class="radio-group" id="in-tipo-group">
+          <div class="radio-pill selected" data-tipo="Compra">Compra (entra stock)</div>
+          <div class="radio-pill" data-tipo="Consumo">Consumo (sale stock)</div>
+        </div>
+      </div>
+      <div class="fg"><label>Fecha</label><input type="date" id="in-fecha" value="${today()}"></div>
+    </div>
+    <div class="fgrid">
+      <div class="fg" style="min-width:240px"><label>Producto <a href="javascript:void(0)" onclick="toggleNuevoProducto()" style="font-size:11px;margin-left:8px;font-weight:600">+ nuevo producto</a></label>
+        <select id="in-producto">${productoOptionsHtml(productos)}</select>
+      </div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="in-cantidad" placeholder="Ej: 500" min="0.01" step="0.01"></div>
+      <div class="fg" id="in-costo-wrap"><label>Costo total</label><input type="number" id="in-costo" placeholder="Ej: 150000" min="0" step="0.01"></div>
+      <div class="fg" id="in-proveedor-wrap"><label>Proveedor <span class="opt">(opcional)</span></label><input type="text" id="in-proveedor" placeholder="Nombre del proveedor"></div>
+      <div class="fg" id="in-campo-wrap" style="display:none"><label>Campo</label>
+        <select id="in-campo" onchange="document.getElementById('in-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg" id="in-rodeo-wrap" style="display:none"><label>Rodeo</label>
+        <select id="in-rodeo">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+      </div>
+      <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
+    </div>
+    <div id="in-nuevo-producto-panel" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:4px;margin-bottom:10px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">Nuevo producto</div>
+      <div class="fgrid">
+        <div class="fg"><label>Nombre</label><input type="text" id="np-nombre" placeholder="Ej: Núcleo proteico"></div>
+        <div class="fg"><label>Categoría</label>
+          <select id="np-categoria"><option value="Alimentación">Alimentación</option><option value="Veterinaria">Veterinaria</option></select>
+        </div>
+        <div class="fg"><label>Unidad</label><input type="text" id="np-unidad" placeholder="Ej: kg, litros, frascos, dosis"></div>
+      </div>
+      <button class="btn btn-secondary" id="np-save" style="margin-top:4px">Crear producto</button>
+    </div>
+    <button class="btn btn-primary" id="in-save" style="margin-top:6px">Registrar</button>
+  </div>`;
+
+  h += `<div class="section-label">Stock actual de insumos</div>`;
+  if (!stockProductos.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no cargaste ningún producto. Usá "+ nuevo producto" arriba.</div></div>';
+  } else {
+    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">' + stockProductos.map(p => {
+      const esVet = p.categoria === 'Veterinaria';
+      return `<div style="background:${esVet ? 'var(--blue-bg)' : 'var(--green-bg)'};color:${esVet ? 'var(--blue-text)' : 'var(--green-text)'};border-radius:9px;padding:8px 15px;font-size:14px;font-weight:700;white-space:nowrap">${p.nombre}: ${fn(p.stock)} ${p.unidad || ''}</div>`;
+    }).join('') + '</div>';
+  }
+
+  const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
+  h += `<div class="section-label">Historial de insumos</div>
+  <div class="fgrid" style="margin-bottom:10px;max-width:480px">
+    <div class="fg"><label>Filtrar por producto</label>
+      <select id="in-hist-filtro-producto" onchange="renderInsumosHistorialFiltrado()">
+        <option value="">Todos los productos</option>
+        ${productos.map(p => `<option value="${p.producto_id}">${p.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por categoría</label>
+      <select id="in-hist-filtro-categoria" onchange="renderInsumosHistorialFiltrado()">
+        <option value="">Todas las categorías</option>
+        ${categoriasIns.map(c => `<option value="${c}">${c}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '')}</div>`;
+
+  return h;
+}
+
+function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro) {
+  const productosMap = {};
+  ((S.catalogs && S.catalogs.productos) || []).forEach(p => { productosMap[p.producto_id] = p; });
+
+  let comprasF = compras || [];
+  let consumosF = consumos || [];
+  if (productoFiltro) {
+    comprasF = comprasF.filter(c => String(c.producto_id) === String(productoFiltro));
+    consumosF = consumosF.filter(c => String(c.producto_id) === String(productoFiltro));
+  }
+  if (categoriaFiltro) {
+    comprasF = comprasF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
+    consumosF = consumosF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
+  }
+
+  let filas = [
+    ...comprasF.map(c => {
+      const p = productosMap[c.producto_id] || {};
+      const detalle = [c.costo_total ? 'Costo: ' + fn(c.costo_total) : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
+      return {
+        fecha: c.fecha || '', tipoLabel: 'Compra', tipoClass: 'pill-green',
+        producto: p.nombre || '(producto eliminado)', campo: '—', rodeo: '—',
+        cantidad: Number(c.cantidad) || 0, unidad: p.unidad || '', detalle,
+        entity: 'compras_insumos', idCol: 'compra_id', id: c.compra_id,
+      };
+    }),
+    ...consumosF.map(c => {
+      const p = productosMap[c.producto_id] || {};
+      return {
+        fecha: c.fecha || '', tipoLabel: 'Consumo', tipoClass: 'pill-clay',
+        producto: p.nombre || '(producto eliminado)',
+        campo: c.campo_id ? campoNombre(c.campo_id) : '—', rodeo: c.rodeo_id ? rodeoNombre(c.rodeo_id) : '—',
+        cantidad: Number(c.cantidad) || 0, unidad: p.unidad || '', detalle: c.observaciones || '—',
+        entity: 'consumos_insumos', idCol: 'consumo_id', id: c.consumo_id,
+      };
+    }),
+  ];
+
+  if (!filas.length) {
+    return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay registros. Cargá el primero arriba.</div></div>';
+  }
+
+  if (!S.sort) S.sort = {};
+  const sortState = S.sort.historialInsumos || { key: 'fecha', dir: 'desc' };
+  filas = [...filas].sort((a, b) => {
+    let va = a[sortState.key], vb = b[sortState.key];
+    if (va == null) va = ''; if (vb == null) vb = '';
+    const na = Number(va), nb = Number(vb);
+    const numeric = va !== '' && vb !== '' && !isNaN(na) && !isNaN(nb);
+    const cmp = numeric ? (na - nb) : String(va).localeCompare(String(vb), 'es', { sensitivity: 'base' });
+    return sortState.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const cols = [
+    { key: 'fecha', label: 'Fecha' }, { key: 'tipoLabel', label: 'Tipo' }, { key: 'producto', label: 'Producto' },
+    { key: 'campo', label: 'Campo' }, { key: 'rodeo', label: 'Rodeo' }, { key: 'cantidad', label: 'Cantidad' }, { key: 'detalle', label: 'Detalle' },
+  ];
+  let h = `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${filas.length}</span></div>
+  <div class="tw"><table class="dt"><thead><tr>`;
+  cols.forEach(c => {
+    const activo = sortState.key === c.key;
+    const flecha = activo ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    h += `<th class="sortable-th" onclick="sortHistorialInsumos('${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
+  });
+  h += '<th></th></tr></thead><tbody>';
+  filas.forEach(f => {
+    h += `<tr>
+      <td>${fd(f.fecha)}</td>
+      <td><span class="pill ${f.tipoClass}">${f.tipoLabel}</span></td>
+      <td>${f.producto}</td>
+      <td>${f.campo}</td>
+      <td>${f.rodeo}</td>
+      <td>${fn(f.cantidad)} ${f.unidad}</td>
+      <td>${f.detalle}</td>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-edit="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Editar">✎</button>
+        <button class="icon-btn danger" data-del="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Eliminar">✕</button>
+      </div></td>
+    </tr>`;
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+window.sortHistorialInsumos = function(key) {
+  if (!S.sort) S.sort = {};
+  const current = S.sort.historialInsumos;
+  if (current && current.key === key) { current.dir = current.dir === 'asc' ? 'desc' : 'asc'; }
+  else { S.sort.historialInsumos = { key, dir: 'asc' }; }
+  window.renderInsumosHistorialFiltrado ? window.renderInsumosHistorialFiltrado() : render();
+};
+window.renderInsumosHistorialFiltrado = function() {
+  const productoFiltro = document.getElementById('in-hist-filtro-producto')?.value || '';
+  const categoriaFiltro = document.getElementById('in-hist-filtro-categoria')?.value || '';
+  const el = document.getElementById('in-historial-tabla');
+  if (el) {
+    el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro);
+    attachTableDeleteEvents('compras_insumos', 'compra_id');
+    attachTableDeleteEvents('consumos_insumos', 'consumo_id');
+  }
+};
+window.toggleNuevoProducto = function() {
+  const panel = document.getElementById('in-nuevo-producto-panel');
+  if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+};
+
+function attachInsumosEvents() {
+  function applyInsumoTipoUI(tipo) {
+    const esCompra = tipo === 'Compra';
+    document.getElementById('in-costo-wrap').style.display = esCompra ? 'flex' : 'none';
+    document.getElementById('in-proveedor-wrap').style.display = esCompra ? 'flex' : 'none';
+    document.getElementById('in-campo-wrap').style.display = esCompra ? 'none' : 'flex';
+    document.getElementById('in-rodeo-wrap').style.display = esCompra ? 'none' : 'flex';
+  }
+  applyInsumoTipoUI('Compra');
+  document.querySelectorAll('#in-tipo-group .radio-pill').forEach(p => p.onclick = () => {
+    document.querySelectorAll('#in-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
+    p.classList.add('selected');
+    applyInsumoTipoUI(p.dataset.tipo);
+  });
+
+  const npSave = document.getElementById('np-save');
+  if (npSave) npSave.onclick = async () => {
+    const nombre = document.getElementById('np-nombre').value.trim();
+    const categoria = document.getElementById('np-categoria').value;
+    const unidad = document.getElementById('np-unidad').value.trim();
+    if (!nombre || !unidad) { toast('Completá nombre y unidad del producto.', 'err'); return; }
+    npSave.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'productos', data: { nombre, categoria, unidad, activo: true } } });
+      await loadCatalogs();
+      const sel = document.getElementById('in-producto');
+      if (sel) {
+        sel.innerHTML = productoOptionsHtml(S.catalogs.productos || []);
+        const nuevo = (S.catalogs.productos || []).find(p => p.nombre === nombre);
+        if (nuevo) sel.value = nuevo.producto_id;
+      }
+      document.getElementById('np-nombre').value = '';
+      document.getElementById('np-unidad').value = '';
+      document.getElementById('in-nuevo-producto-panel').style.display = 'none';
+      toast('Producto creado: ' + nombre, 'ok');
+    } catch (err) { toast(err.message, 'err'); } finally { npSave.disabled = false; }
+  };
+
+  const save = document.getElementById('in-save');
+  if (save) save.onclick = async () => {
+    const tipo = document.querySelector('#in-tipo-group .selected').dataset.tipo;
+    const esCompra = tipo === 'Compra';
+    const productoId = document.getElementById('in-producto').value;
+    if (!productoId) { toast('Creá o seleccioná un producto primero.', 'err'); return; }
+    const cantidad = Number(document.getElementById('in-cantidad').value) || 0;
+    const fecha = document.getElementById('in-fecha').value;
+    if (!fecha || !cantidad) { toast('Completá fecha y cantidad.', 'err'); return; }
+    save.disabled = true;
+    try {
+      if (esCompra) {
+        const data = {
+          fecha, producto_id: productoId, cantidad,
+          costo_total: Number(document.getElementById('in-costo').value) || '',
+          proveedor: document.getElementById('in-proveedor').value.trim(),
+          observaciones: document.getElementById('in-obs').value.trim(),
+        };
+        await apiCall('create', { body: { entity: 'compras_insumos', data } });
+        invalidateCache('compras_insumos');
+      } else {
+        const rodeoId = document.getElementById('in-rodeo').value;
+        if (!rodeoId) { toast('Seleccioná el rodeo que consume.', 'err'); save.disabled = false; return; }
+        const data = {
+          fecha, producto_id: productoId,
+          campo_id: document.getElementById('in-campo').value, rodeo_id: rodeoId,
+          cantidad, observaciones: document.getElementById('in-obs').value.trim(),
+        };
+        await apiCall('create', { body: { entity: 'consumos_insumos', data } });
+        invalidateCache('consumos_insumos');
+      }
+      S.stockProductos = null;
+      await loadStockProductos();
+      toast((esCompra ? 'Compra' : 'Consumo') + ' registrado', 'ok');
+      await loadEntity(esCompra ? 'compras_insumos' : 'consumos_insumos', true);
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+
+  attachTableDeleteEvents('compras_insumos', 'compra_id');
+  attachTableDeleteEvents('consumos_insumos', 'consumo_id');
+}
+
 function buildConfig() {
   return `
   <div class="panel">
@@ -1901,6 +2205,7 @@ function attachTableDeleteEvents(entity, idCol) {
         await loadEntity(entity, true);
         await loadDashboard();
         if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
+        if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
         render();
       } catch (err) { toast(err.message, 'err'); }
     };
