@@ -1914,6 +1914,10 @@ function buildInsumos() {
       <div class="fg" id="in-rodeo-wrap" style="display:none"><label>Rodeo</label>
         <select id="in-rodeo">${rodeoOptionsHtml(rodeosConStockPorCampo_(campos[0]?.campo_id))}</select>
       </div>
+      <div class="fg" id="in-campana-wrap" style="display:none;min-width:220px"><label>Campaña <span class="opt">(opcional — gasto para un servicio futuro)</span></label>
+        <input type="text" id="in-campana" placeholder="Ej: Servicio 2026/2027" list="in-campana-list">
+        <datalist id="in-campana-list">${[...new Set((S.cache.consumos_insumos || []).map(c => c.campana).filter(Boolean))].map(c => `<option value="${c}">`).join('')}</datalist>
+      </div>
       <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
     </div>
     <div id="in-nuevo-producto-panel" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:4px;margin-bottom:10px">
@@ -1921,7 +1925,7 @@ function buildInsumos() {
       <div class="fgrid">
         <div class="fg"><label>Nombre</label><input type="text" id="np-nombre" placeholder="Ej: Núcleo proteico"></div>
         <div class="fg"><label>Categoría</label>
-          <select id="np-categoria"><option value="Alimentación">Alimentación</option><option value="Veterinaria">Veterinaria</option></select>
+          <select id="np-categoria"><option value="Alimentación">Alimentación</option><option value="Veterinaria">Veterinaria</option><option value="Reproducción">Reproducción</option></select>
         </div>
         <div class="fg"><label>Unidad</label><input type="text" id="np-unidad" placeholder="Ej: kg, litros, frascos, dosis"></div>
       </div>
@@ -1935,8 +1939,10 @@ function buildInsumos() {
     h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no cargaste ningún producto. Usá "+ nuevo producto" arriba.</div></div>';
   } else {
     h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">' + stockProductos.map(p => {
-      const esVet = p.categoria === 'Veterinaria';
-      return `<div style="background:${esVet ? 'var(--blue-bg)' : 'var(--green-bg)'};color:${esVet ? 'var(--blue-text)' : 'var(--green-text)'};border-radius:9px;padding:8px 15px;font-size:14px;font-weight:700;white-space:nowrap">${p.nombre}: ${fn(p.stock)} ${p.unidad || ''}</div>`;
+      const colores = p.categoria === 'Veterinaria' ? ['var(--blue-bg)', 'var(--blue-text)']
+        : p.categoria === 'Reproducción' ? ['var(--gold-bg)', 'var(--gold-text)']
+        : ['var(--green-bg)', 'var(--green-text)'];
+      return `<div style="background:${colores[0]};color:${colores[1]};border-radius:9px;padding:8px 15px;font-size:14px;font-weight:700;white-space:nowrap">${p.nombre}: ${fn(p.stock)} ${p.unidad || ''}</div>`;
     }).join('') + '</div>';
   }
 
@@ -1992,11 +1998,12 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
     }),
     ...consumosF.map(c => {
       const p = productosMap[c.producto_id] || {};
+      const detalle = (c.campana ? '<span class="pill pill-gold" style="margin-right:6px">' + c.campana + '</span>' : '') + (c.observaciones || (c.campana ? '' : '—'));
       return {
         fecha: c.fecha || '', tipoLabel: 'Consumo', tipoClass: 'pill-clay',
         producto: p.nombre || '(producto eliminado)',
         campo: c.campo_id ? campoNombre(c.campo_id) : '—', rodeo: c.rodeo_id ? rodeoNombre(c.rodeo_id) : '—',
-        cantidad: Number(c.cantidad) || 0, unidad: p.unidad || '', detalle: c.observaciones || '—',
+        cantidad: Number(c.cantidad) || 0, unidad: p.unidad || '', detalle: detalle || '—',
         entity: 'consumos_insumos', idCol: 'consumo_id', id: c.consumo_id,
       };
     }),
@@ -2155,11 +2162,13 @@ function attachInsumosEvents() {
     const esCompra = tipo === 'Compra';
     const cw = document.getElementById('in-costo-wrap'), pw = document.getElementById('in-proveedor-wrap');
     const kw = document.getElementById('in-campo-wrap'), rw = document.getElementById('in-rodeo-wrap');
+    const cnw = document.getElementById('in-campana-wrap');
     if (!cw || !pw || !kw || !rw) return; // todavía no está el formulario en pantalla (ej: durante el spinner de carga)
     cw.style.display = esCompra ? 'flex' : 'none';
     pw.style.display = esCompra ? 'flex' : 'none';
     kw.style.display = esCompra ? 'none' : 'flex';
     rw.style.display = esCompra ? 'none' : 'flex';
+    if (cnw) cnw.style.display = esCompra ? 'none' : 'flex';
   }
   document.querySelectorAll('#in-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#in-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
@@ -2217,9 +2226,11 @@ function attachInsumosEvents() {
           fecha, producto_id: productoId,
           campo_id: document.getElementById('in-campo').value, rodeo_id: rodeoId,
           cantidad, observaciones: document.getElementById('in-obs').value.trim(),
+          campana: document.getElementById('in-campana').value.trim(),
         };
         await apiCall('create', { body: { entity: 'consumos_insumos', data } });
         invalidateCache('consumos_insumos');
+        S.margenBruto = null;
       }
       S.stockProductos = null;
       await loadStockProductos();
@@ -2303,6 +2314,7 @@ function buildMargenBruto() {
   if (mb && mb.egresos) {
     mb.egresos.detalle_por_producto = mb.egresos.detalle_por_producto || [];
     mb.egresos.detalle_consumos = mb.egresos.detalle_consumos || [];
+    mb.egresos.diferidos_proxima_campana = mb.egresos.diferidos_proxima_campana || [];
   }
 
   let h = `<div class="panel">
@@ -2454,6 +2466,26 @@ function buildMargenBruto() {
       h += `<tr><td>${p.producto}</td><td class="tc">${simb}${fn(p.costo, dec)}</td></tr>`;
     });
     h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  h += `<div class="panel">
+    <div class="panel-title">Costos diferidos — próxima campaña</div>
+    <p class="helper-text" style="margin-bottom:14px">Gastos ya cargados en Insumos pero etiquetados con una campaña futura (ej. semen, sincronización para el próximo servicio) — no entran en el margen de este período, quedan acá hasta que los imputes al servicio al que corresponden. Siempre en pesos.</p>`;
+  const diferidos = mb.egresos.diferidos_proxima_campana;
+  if (!diferidos.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay gastos diferidos cargados.</div></div>';
+  } else {
+    diferidos.forEach(d => {
+      h += `<div style="margin-bottom:16px">
+        <div style="font-weight:700;font-size:14.5px;margin-bottom:4px">${d.campana} <span class="pill pill-gold" style="margin-left:6px">${d.cant_items} ítem${d.cant_items === 1 ? '' : 's'}</span></div>
+        <div style="font-size:17px;font-weight:600;margin-bottom:6px">$ ${fn(d.total)}</div>
+        <div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Producto</th><th class="tc">Cantidad</th><th class="tc">Costo</th></tr></thead><tbody>`;
+      d.detalle.forEach(it => {
+        h += `<tr><td>${fd(it.fecha)}</td><td>${it.producto}</td><td class="tc">${fn(it.cantidad)}</td><td class="tc">$ ${fn(it.costo)}</td></tr>`;
+      });
+      h += '</tbody></table></div></div>';
+    });
   }
   h += '</div>';
 
