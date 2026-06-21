@@ -460,6 +460,9 @@ async function goto(page) {
     if (!S.cache.precios_internos) {
       try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ }
     }
+    if (S.corralesTipoCambio === undefined) {
+      try { await loadCorralesStock(); } catch (err) { /* silencioso */ }
+    }
     if (!S.margenBruto) {
       if (!S.margenBrutoPeriodo) S.margenBrutoPeriodo = periodoPreset_('anio');
       try { await calcularMargenBruto_(); } catch (err) { toast(err.message, 'err'); }
@@ -1712,10 +1715,19 @@ async function loadCorralesStock() {
     (data.ventas || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) - (Number(x.cant) || 0); });
     S.corralesStock = porCorral; // { cid: stock_actual }
     S.corralesVentas = data.ventas || []; // detalle de ventas/bajas para mostrarlas en el historial de Movimientos
+    S.corralesTipoCambio = data.tipoCambio || []; // cotización BNA por fecha, cargada en Corrales
   } catch (err) {
     S.corralesStock = null; // si falla la consulta, no se muestra el dato pero no rompe la página
     S.corralesVentas = null;
+    S.corralesTipoCambio = null;
   }
+}
+// Busca la cotización BNA vigente a una fecha (la última cargada en Corrales con fecha <= fecha dada)
+function tipoCambioVigente_(fecha) {
+  const lista = (S.corralesTipoCambio || [])
+    .filter(t => t.fecha && String(t.fecha) <= String(fecha))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  return lista.length ? lista[lista.length - 1] : null;
 }
 // Mapeo de cada corral al campo donde está físicamente ubicado.
 // Si se agrega un corral nuevo, avisar para sumarlo acá.
@@ -2247,11 +2259,11 @@ function buildMargenBruto() {
 
   let h = `<div class="panel">
     <div class="panel-title">Precio de transferencia interno</div>
-    <p class="helper-text" style="margin-bottom:14px">Valor del kg vivo usado para valorizar la cesión de terneros destetados hacia Recría. Cada destete usa el precio vigente a su fecha — cargá uno nuevo cuando cambie, no edites los anteriores.</p>
+    <p class="helper-text" style="margin-bottom:14px">Valor del kg vivo usado para valorizar la cesión de terneros destetados hacia Recría. Cada destete usa el precio vigente a su fecha — cargá uno nuevo cuando cambie, no edites los anteriores. El equivalente en dólares se calcula solo con la cotización BNA que ya cargás en Corrales.</p>
     <div class="fgrid">
-      <div class="fg"><label>Vigente desde</label><input type="date" id="pi-fecha" value="${today()}"></div>
-      <div class="fg"><label>Precio $/kg (ARS)</label><input type="number" id="pi-ars" placeholder="Ej: 1800" min="0" step="0.01"></div>
-      <div class="fg"><label>Precio U$D/kg</label><input type="number" id="pi-usd" placeholder="Ej: 1.6" min="0" step="0.01"></div>
+      <div class="fg"><label>Vigente desde</label><input type="date" id="pi-fecha" value="${today()}" onchange="actualizarPreviewUsd_()"></div>
+      <div class="fg"><label>Precio $/kg (ARS)</label><input type="number" id="pi-ars" placeholder="Ej: 1800" min="0" step="0.01" oninput="actualizarPreviewUsd_()"></div>
+      <div class="fg"><label>Equivalente U$D/kg</label><div id="pi-usd-preview" style="font-size:15px;font-weight:600;padding:9px 0;color:var(--text2)">—</div></div>
       <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="pi-obs" placeholder="Opcional"></div>
     </div>
     <button class="btn btn-primary" id="pi-save" style="margin-top:6px">Guardar precio</button>
@@ -2315,6 +2327,47 @@ function buildMargenBruto() {
   </div>`;
 
   h += `<div class="panel">
+    <div class="panel-title">Detalle de ventas reales</div>`;
+  if (!mb.ingresos.detalle_ventas.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin ventas en este período.</div></div>';
+  } else {
+    h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th>Comprador</th><th class="tc">Cantidad</th><th class="tc">Precio/animal</th><th class="tc">Importe</th></tr></thead><tbody>';
+    mb.ingresos.detalle_ventas.forEach(v => {
+      h += `<tr>
+        <td>${fd(v.fecha)}</td>
+        <td>${rodeoNombre(v.rodeo_id)}</td>
+        <td>${v.comprador || '—'}</td>
+        <td class="tc">${fn(v.cant_animales)}</td>
+        <td class="tc">${v.precio_pactado ? '$ ' + fn(v.precio_pactado) : '<span class="pill pill-clay">sin precio</span>'}</td>
+        <td class="tc"><strong>$ ${fn(v.importe)}</strong></td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  h += `<div class="panel">
+    <div class="panel-title">Detalle de cesiones por destete</div>`;
+  if (!mb.ingresos.detalle_destetes.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin destetes en este período.</div></div>';
+  } else {
+    h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cant.</th><th class="tc">Peso prom.</th><th class="tc">Kg totales</th><th class="tc">$/kg usado</th><th class="tc">Valor</th></tr></thead><tbody>';
+    mb.ingresos.detalle_destetes.forEach(d => {
+      h += `<tr>
+        <td>${fd(d.fecha)}</td>
+        <td>${rodeoNombre(d.rodeo_id)}</td>
+        <td class="tc">${fn(d.total)}</td>
+        <td class="tc">${fn(d.peso_prom_kg)} kg</td>
+        <td class="tc">${fn(d.kg_total)} kg</td>
+        <td class="tc">${d.sin_precio ? '<span class="pill pill-clay">sin precio vigente</span>' : '$ ' + fn(d.precio_ars_kg_usado, 2)}</td>
+        <td class="tc"><strong>${d.sin_precio ? '—' : '$ ' + fn(d.valor_ars)}</strong></td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  h += `<div class="panel">
     <div class="panel-title">Detalle de egresos por producto</div>`;
   if (!mb.egresos.detalle_por_producto.length) {
     h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin consumos de insumos en este período.</div></div>';
@@ -2330,15 +2383,38 @@ function buildMargenBruto() {
   return h;
 }
 
+function actualizarPreviewUsd_() {
+  const preview = document.getElementById('pi-usd-preview');
+  if (!preview) return;
+  const fecha = document.getElementById('pi-fecha').value;
+  const ars = Number(document.getElementById('pi-ars').value) || 0;
+  if (!fecha || !ars) { preview.textContent = '—'; preview.style.color = 'var(--text2)'; return; }
+  const tc = tipoCambioVigente_(fecha);
+  if (!tc) {
+    preview.textContent = 'Sin cotización en Corrales para esa fecha';
+    preview.style.color = 'var(--clay-text)';
+    return;
+  }
+  const usd = ars / Number(tc.valor);
+  preview.innerHTML = `U$D ${fn(usd, 2)} <span style="font-size:11px;font-weight:400;color:var(--text3)">(cotización $${fn(tc.valor)} del ${fd(tc.fecha)})</span>`;
+  preview.style.color = 'var(--text)';
+}
+
 function attachMargenBrutoEvents() {
   const save = document.getElementById('pi-save');
   if (save) save.onclick = async () => {
     const fecha = document.getElementById('pi-fecha').value;
     const ars = Number(document.getElementById('pi-ars').value) || 0;
-    const usd = Number(document.getElementById('pi-usd').value) || 0;
-    if (!fecha || (!ars && !usd)) { toast('Completá la fecha y al menos un precio.', 'err'); return; }
+    if (!fecha || !ars) { toast('Completá la fecha y el precio en pesos.', 'err'); return; }
+    const tc = tipoCambioVigente_(fecha);
+    let usd = '';
+    if (tc) {
+      usd = Math.round((ars / Number(tc.valor)) * 100) / 100;
+    } else {
+      toast('No hay cotización de dólar cargada en Corrales para esa fecha — se guarda solo en pesos.', 'err');
+    }
     const data = {
-      fecha_desde: fecha, precio_ars_kg: ars || '', precio_usd_kg: usd || '',
+      fecha_desde: fecha, precio_ars_kg: ars, precio_usd_kg: usd,
       observacion: document.getElementById('pi-obs').value.trim(),
     };
     save.disabled = true;
