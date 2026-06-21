@@ -631,10 +631,30 @@ function buildDashboard() {
       </div>`;
     }
   } else {
+    const sortStateD = (S.sort && S.sort.dashboard_rodeos) || null;
+    const arrowD = key => (sortStateD && sortStateD.key === key) ? (sortStateD.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    let rodeosOrdenados = rodeosFiltrados;
+    if (sortStateD) {
+      rodeosOrdenados = [...rodeosFiltrados].sort((a, b) => {
+        let va = dashboardSortValue_(a, sortStateD.key), vb = dashboardSortValue_(b, sortStateD.key);
+        if (va == null) va = '';
+        if (vb == null) vb = '';
+        const na = Number(va), nb = Number(vb);
+        const numeric = va !== '' && vb !== '' && !isNaN(na) && !isNaN(nb);
+        const cmp = numeric ? (na - nb) : String(va).localeCompare(String(vb), 'es', { sensitivity: 'base' });
+        return sortStateD.dir === 'asc' ? cmp : -cmp;
+      });
+    }
     h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Rodeo</th><th>Campo</th><th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th><th class="tc">Abortos</th><th class="tc">Mort. terneros</th>
+      <th class="sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('nombre')">Rodeo${arrowD('nombre')}</th>
+      <th class="sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('campo')">Campo${arrowD('campo')}</th>
+      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('prenez')">Preñez${arrowD('prenez')}</th>
+      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('paricion')">Parición${arrowD('paricion')}</th>
+      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('destete')">Destete${arrowD('destete')}</th>
+      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('abortos')">Abortos${arrowD('abortos')}</th>
+      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('mortandad')">Mort. terneros${arrowD('mortandad')}</th>
     </tr></thead><tbody>`;
-    rodeosFiltrados.forEach(r => {
+    rodeosOrdenados.forEach(r => {
       const k = r.kpis;
       h += `<tr>
         <td><strong>${r.rodeo.nombre}</strong></td>
@@ -649,6 +669,30 @@ function buildDashboard() {
     h += '</tbody></table></div>';
   }
   return h;
+}
+
+function dashboardSortValue_(r, key) {
+  switch (key) {
+    case 'nombre': return r.rodeo.nombre || '';
+    case 'campo': return campoNombre(r.rodeo.campo_id) || '';
+    case 'prenez': return r.kpis.servicio.indice_prenez;
+    case 'paricion': return r.kpis.paricion.indice_paricion;
+    case 'destete': return r.kpis.destete.indice_destete;
+    case 'abortos': return r.kpis.gestacion.abortos;
+    case 'mortandad': return r.kpis.destete.mortandad_terneros;
+    default: return '';
+  }
+}
+
+function sortDashboardRodeos(key) {
+  if (!S.sort) S.sort = {};
+  const current = S.sort.dashboard_rodeos;
+  if (current && current.key === key) {
+    current.dir = current.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    S.sort.dashboard_rodeos = { key, dir: 'asc' };
+  }
+  render();
 }
 
 // Suma los valores crudos de KPIs de varios rodeos y recalcula los porcentajes agregados
