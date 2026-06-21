@@ -2253,9 +2253,57 @@ async function calcularMargenBruto_() {
   S.margenBruto = await apiCall('margenBruto', { params: { desde, hasta } });
 }
 
+// Convierte ventas e insumos a dólares usando la cotización BNA vigente en la fecha de CADA línea
+// (la cesión por destete ya viene resuelta en dólares desde el backend, con el precio interno guardado en su momento).
+function vistaUsdMargenBruto_(mb) {
+  let ventasUsd = 0, ventasSinCotizacion = 0;
+  const detalleVentas = (mb.ingresos.detalle_ventas || []).map(v => {
+    const tc = tipoCambioVigente_(v.fecha);
+    const importeUsd = tc ? v.importe / Number(tc.valor) : null;
+    const precioUsd = tc && v.cant_animales ? v.precio_pactado / Number(tc.valor) : null;
+    if (importeUsd == null) ventasSinCotizacion++; else ventasUsd += importeUsd;
+    return Object.assign({}, v, { importe_usd: importeUsd, precio_pactado_usd: precioUsd });
+  });
+
+  let cesionUsd = 0;
+  (mb.ingresos.detalle_destetes || []).forEach(d => { cesionUsd += d.valor_usd || 0; });
+
+  let insumosUsd = 0, consumosSinCotizacion = 0;
+  const porProductoUsd = {};
+  (mb.egresos.detalle_consumos || []).forEach(c => {
+    const tc = tipoCambioVigente_(c.fecha);
+    if (tc) {
+      const usd = c.costo_ars / Number(tc.valor);
+      insumosUsd += usd;
+      porProductoUsd[c.producto] = (porProductoUsd[c.producto] || 0) + usd;
+    } else {
+      consumosSinCotizacion++;
+    }
+  });
+
+  const totalIngresosUsd = ventasUsd + cesionUsd;
+  return {
+    ventas: ventasUsd, ventasSinCotizacion,
+    cesion: cesionUsd,
+    total: totalIngresosUsd,
+    insumos: insumosUsd, consumosSinCotizacion,
+    detalle_por_producto: Object.keys(porProductoUsd).map(n => ({ producto: n, costo: porProductoUsd[n] })).sort((a, b) => b.costo - a.costo),
+    detalle_ventas: detalleVentas,
+    resultado: totalIngresosUsd - insumosUsd,
+  };
+}
+
 function buildMargenBruto() {
   const precios = (S.cache.precios_internos || []).slice().sort((a, b) => String(b.fecha_desde || '').localeCompare(String(a.fecha_desde || '')));
   const mb = S.margenBruto;
+  if (mb && mb.ingresos) {
+    mb.ingresos.detalle_ventas = mb.ingresos.detalle_ventas || [];
+    mb.ingresos.detalle_destetes = mb.ingresos.detalle_destetes || [];
+  }
+  if (mb && mb.egresos) {
+    mb.egresos.detalle_por_producto = mb.egresos.detalle_por_producto || [];
+    mb.egresos.detalle_consumos = mb.egresos.detalle_consumos || [];
+  }
 
   let h = `<div class="panel">
     <div class="panel-title">Precio de transferencia interno</div>
@@ -2278,6 +2326,7 @@ function buildMargenBruto() {
   ], 'precios_internos', 'precio_id');
 
   h += '<div class="section-label">Margen bruto de Cría</div>';
+  const moneda = S.margenBrutoMoneda || 'ARS';
   h += `<div class="panel">
     <div class="fgrid" style="align-items:flex-end">
       <div class="fg"><label>Período</label>
@@ -2291,6 +2340,12 @@ function buildMargenBruto() {
       <div class="fg" id="mb-desde-wrap" style="display:none"><label>Desde</label><input type="date" id="mb-desde" value="${S.margenBrutoPeriodo ? S.margenBrutoPeriodo.desde : ''}"></div>
       <div class="fg" id="mb-hasta-wrap" style="display:none"><label>Hasta</label><input type="date" id="mb-hasta" value="${S.margenBrutoPeriodo ? S.margenBrutoPeriodo.hasta : ''}"></div>
       <div class="fg" style="flex:0"><button class="btn btn-primary" id="mb-calcular">Calcular</button></div>
+      <div class="fg" style="flex:0"><label>Moneda</label>
+        <div class="radio-group" id="mb-moneda-group">
+          <div class="radio-pill ${moneda === 'ARS' ? 'selected' : ''}" data-moneda="ARS">$ ARS</div>
+          <div class="radio-pill ${moneda === 'USD' ? 'selected' : ''}" data-moneda="USD">U$D</div>
+        </div>
+      </div>
     </div>
   </div>`;
 
@@ -2299,30 +2354,47 @@ function buildMargenBruto() {
     return h;
   }
 
-  const resultadoPositivo = mb.resultado >= 0;
+  if (moneda === 'USD' && !S.corralesTipoCambio) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No se pudo traer la cotización del dólar desde Corrales en este momento. Probá de nuevo en unos segundos, o cargá el tipo de cambio en Corrales primero.</div></div>';
+    return h;
+  }
+
+  const vw = moneda === 'USD' ? vistaUsdMargenBruto_(mb) : null;
+  const simb = moneda === 'USD' ? 'U$D ' : '$ ';
+  const dec = moneda === 'USD' ? 2 : 0;
+  const valIngresos = vw ? vw.total : mb.ingresos.total;
+  const valEgresos = vw ? vw.insumos : mb.egresos.insumos;
+  const valResultado = vw ? vw.resultado : mb.resultado;
+  const valVentas = vw ? vw.ventas : mb.ingresos.ventas;
+  const valCesion = vw ? vw.cesion : mb.ingresos.cesion_destete_ars;
+
+  const resultadoPositivo = valResultado >= 0;
   h += `<div class="kpi-row">
     <div class="kpi-card accent-green">
       <div class="kpi-icon">↑</div><div class="kpi-label">Ingresos totales</div>
-      <div class="kpi-value">$ ${fn(mb.ingresos.total)}</div>
+      <div class="kpi-value">${simb}${fn(valIngresos, dec)}</div>
       <div class="kpi-sub">Ventas + cesión por destete</div>
     </div>
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">↓</div><div class="kpi-label">Egresos (insumos)</div>
-      <div class="kpi-value">$ ${fn(mb.egresos.insumos)}</div>
+      <div class="kpi-value">${simb}${fn(valEgresos, dec)}</div>
       <div class="kpi-sub">Alimentación y veterinaria consumida</div>
     </div>
     <div class="kpi-card ${resultadoPositivo ? 'accent-green' : 'accent-red'}">
       <div class="kpi-icon">${resultadoPositivo ? '✓' : '!'}</div><div class="kpi-label">Margen bruto</div>
-      <div class="kpi-value">$ ${fn(mb.resultado)}</div>
+      <div class="kpi-value">${simb}${fn(valResultado, dec)}</div>
       <div class="kpi-sub">${fd(mb.periodo.desde)} — ${fd(mb.periodo.hasta)}</div>
     </div>
   </div>`;
+  if (vw && (vw.ventasSinCotizacion || vw.consumosSinCotizacion)) {
+    h += `<div class="helper-text" style="margin-bottom:10px;color:var(--clay-text)">⚠ ${vw.ventasSinCotizacion ? vw.ventasSinCotizacion + ' venta(s) ' : ''}${vw.ventasSinCotizacion && vw.consumosSinCotizacion ? 'y ' : ''}${vw.consumosSinCotizacion ? vw.consumosSinCotizacion + ' consumo(s) ' : ''}sin cotización BNA cargada en Corrales para su fecha — quedaron fuera de este total en dólares.</div>`;
+  }
 
   h += `<div class="panel">
     <div class="panel-title">Detalle de ingresos</div>
     <div class="fgrid">
-      <div class="fg"><label>Ventas reales</label><div style="font-size:18px;font-weight:600">$ ${fn(mb.ingresos.ventas)}</div><div class="helper-text">${mb.ingresos.cant_ventas} venta${mb.ingresos.cant_ventas === 1 ? '' : 's'}${mb.ingresos.ventas_sin_precio ? ' — ⚠ ' + mb.ingresos.ventas_sin_precio + ' sin precio cargado' : ''}</div></div>
-      <div class="fg"><label>Cesión interna por destete</label><div style="font-size:18px;font-weight:600">$ ${fn(mb.ingresos.cesion_destete_ars)}</div><div class="helper-text">${mb.ingresos.cant_destetes} destete${mb.ingresos.cant_destetes === 1 ? '' : 's'} · ref. U$D ${fn(mb.ingresos.cesion_destete_usd_ref, 2)}${mb.ingresos.destetes_sin_precio_interno.length ? ' — ⚠ ' + mb.ingresos.destetes_sin_precio_interno.length + ' sin precio interno vigente' : ''}</div></div>
+      <div class="fg"><label>Ventas reales</label><div style="font-size:18px;font-weight:600">${simb}${fn(valVentas, dec)}</div><div class="helper-text">${mb.ingresos.cant_ventas} venta${mb.ingresos.cant_ventas === 1 ? '' : 's'}${mb.ingresos.ventas_sin_precio ? ' — ⚠ ' + mb.ingresos.ventas_sin_precio + ' sin precio cargado' : ''}</div></div>
+      <div class="fg"><label>Cesión interna por destete</label><div style="font-size:18px;font-weight:600">${simb}${fn(valCesion, dec)}</div><div class="helper-text">${mb.ingresos.cant_destetes} destete${mb.ingresos.cant_destetes === 1 ? '' : 's'}${moneda === 'ARS' ? ' · ref. U$D ' + fn(mb.ingresos.cesion_destete_usd_ref, 2) : ''}${mb.ingresos.destetes_sin_precio_interno.length ? ' — ⚠ ' + mb.ingresos.destetes_sin_precio_interno.length + ' sin precio interno vigente' : ''}</div></div>
     </div>
   </div>`;
 
@@ -2331,15 +2403,17 @@ function buildMargenBruto() {
   if (!mb.ingresos.detalle_ventas.length) {
     h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin ventas en este período.</div></div>';
   } else {
+    const filasVentas = vw ? vw.detalle_ventas : mb.ingresos.detalle_ventas;
     h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th>Comprador</th><th class="tc">Cantidad</th><th class="tc">Precio/animal</th><th class="tc">Importe</th></tr></thead><tbody>';
-    mb.ingresos.detalle_ventas.forEach(v => {
+    filasVentas.forEach(v => {
+      const importeMostrado = vw ? v.importe_usd : v.importe;
       h += `<tr>
         <td>${fd(v.fecha)}</td>
         <td>${rodeoNombre(v.rodeo_id)}</td>
         <td>${v.comprador || '—'}</td>
         <td class="tc">${fn(v.cant_animales)}</td>
-        <td class="tc">${v.precio_pactado ? '$ ' + fn(v.precio_pactado) : '<span class="pill pill-clay">sin precio</span>'}</td>
-        <td class="tc"><strong>$ ${fn(v.importe)}</strong></td>
+        <td class="tc">${v.precio_pactado ? simb + fn(vw ? v.precio_pactado_usd : v.precio_pactado, dec) : '<span class="pill pill-clay">sin precio</span>'}</td>
+        <td class="tc"><strong>${importeMostrado == null ? '<span class="pill pill-clay">sin cotización</span>' : simb + fn(importeMostrado, dec)}</strong></td>
       </tr>`;
     });
     h += '</tbody></table></div>';
@@ -2351,16 +2425,18 @@ function buildMargenBruto() {
   if (!mb.ingresos.detalle_destetes.length) {
     h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin destetes en este período.</div></div>';
   } else {
-    h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cant.</th><th class="tc">Peso prom.</th><th class="tc">Kg totales</th><th class="tc">$/kg usado</th><th class="tc">Valor</th></tr></thead><tbody>';
+    h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cant.</th><th class="tc">Peso prom.</th><th class="tc">Kg totales</th><th class="tc">' + (moneda === 'USD' ? 'U$D/kg usado' : '$/kg usado') + '</th><th class="tc">Valor</th></tr></thead><tbody>';
     mb.ingresos.detalle_destetes.forEach(d => {
+      const precioUsado = moneda === 'USD' ? d.precio_usd_kg_usado : d.precio_ars_kg_usado;
+      const valor = moneda === 'USD' ? d.valor_usd : d.valor_ars;
       h += `<tr>
         <td>${fd(d.fecha)}</td>
         <td>${rodeoNombre(d.rodeo_id)}</td>
         <td class="tc">${fn(d.total)}</td>
         <td class="tc">${fn(d.peso_prom_kg)} kg</td>
         <td class="tc">${fn(d.kg_total)} kg</td>
-        <td class="tc">${d.sin_precio ? '<span class="pill pill-clay">sin precio vigente</span>' : '$ ' + fn(d.precio_ars_kg_usado, 2)}</td>
-        <td class="tc"><strong>${d.sin_precio ? '—' : '$ ' + fn(d.valor_ars)}</strong></td>
+        <td class="tc">${d.sin_precio ? '<span class="pill pill-clay">sin precio vigente</span>' : simb + fn(precioUsado, dec === 0 ? 2 : dec)}</td>
+        <td class="tc"><strong>${d.sin_precio ? '—' : simb + fn(valor, dec)}</strong></td>
       </tr>`;
     });
     h += '</tbody></table></div>';
@@ -2369,12 +2445,13 @@ function buildMargenBruto() {
 
   h += `<div class="panel">
     <div class="panel-title">Detalle de egresos por producto</div>`;
-  if (!mb.egresos.detalle_por_producto.length) {
+  const filasProducto = vw ? vw.detalle_por_producto : mb.egresos.detalle_por_producto;
+  if (!filasProducto.length) {
     h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin consumos de insumos en este período.</div></div>';
   } else {
     h += '<div class="tw"><table class="dt"><thead><tr><th>Producto</th><th class="tc">Costo</th></tr></thead><tbody>';
-    mb.egresos.detalle_por_producto.forEach(p => {
-      h += `<tr><td>${p.producto}</td><td class="tc">$ ${fn(p.costo)}</td></tr>`;
+    filasProducto.forEach(p => {
+      h += `<tr><td>${p.producto}</td><td class="tc">${simb}${fn(p.costo, dec)}</td></tr>`;
     });
     h += '</tbody></table></div>';
   }
@@ -2459,6 +2536,11 @@ function attachMargenBrutoEvents() {
     catch (err) { toast(err.message, 'err'); }
     finally { calcBtn.disabled = false; }
   };
+
+  document.querySelectorAll('#mb-moneda-group .radio-pill').forEach(p => p.onclick = () => {
+    S.margenBrutoMoneda = p.dataset.moneda;
+    render();
+  });
 }
 
 function buildConfig() {
