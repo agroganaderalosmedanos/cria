@@ -1274,6 +1274,29 @@ function attachDestetesEvents() {
   attachTableDeleteEvents('destetes', 'destete_id');
 }
 
+function actividadPorCategoria_(categoria) {
+  const c = String(categoria || '').trim().toLowerCase();
+  const mapa = {
+    'vaca': 'Cría',
+    'vacas': 'Cría',
+    'vaquillona': 'Cría',
+    'vaquillonas': 'Cría',
+    'vaquillona próximo servicio': 'Recría',
+    'vaquillonas próximo servicio': 'Recría',
+    'vaquillona para venta': 'Recría',
+    'vaquillonas para venta': 'Recría',
+    'novillito': 'Recría',
+    'novillitos': 'Recría',
+    'ternero': 'Recría',
+    'terneros': 'Recría',
+    'ternera': 'Recría',
+    'terneras': 'Recría',
+    'novillo': 'Engorde',
+    'novillos': 'Engorde',
+  };
+  return mapa[c] || 'Otra';
+}
+
 function buildStockTable_(stockList, campoFiltro) {
   const filtrado = campoFiltro ? stockList.filter(s => String(s.campo_id) === String(campoFiltro)) : stockList;
   if (!stockList.length) {
@@ -1282,16 +1305,44 @@ function buildStockTable_(stockList, campoFiltro) {
   const totalGeneral = filtrado.reduce((s, x) => s + (Number(x.stock) || 0), 0);
   const porCategoria = {};
   filtrado.forEach(s => { porCategoria[s.categoria] = (porCategoria[s.categoria] || 0) + (Number(s.stock) || 0); });
+  const porCampo = {};
+  filtrado.forEach(s => {
+    const nombreCampo = campoNombre(s.campo_id);
+    porCampo[nombreCampo] = (porCampo[nombreCampo] || 0) + (Number(s.stock) || 0);
+  });
+  const ordenActividad = ['Cría', 'Recría', 'Engorde', 'Otra'];
+  const porActividad = {};
+  filtrado.forEach(s => {
+    const act = actividadPorCategoria_(s.categoria);
+    porActividad[act] = (porActividad[act] || 0) + (Number(s.stock) || 0);
+  });
+  const porActividadOrdenado = ordenActividad.filter(a => porActividad[a] !== undefined);
 
-  let h = `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
-    <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:700;white-space:nowrap">
-      ⛭ Total: ${fn(totalGeneral)}
-    </div>
-    ${Object.entries(porCategoria).map(([cat, tot]) => `
-      <div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
-        ${cat}: <strong style="color:var(--text)">${fn(tot)}</strong>
+  let h = `<div style="margin-bottom:16px">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:700;white-space:nowrap">
+        ⛭ Total: ${fn(totalGeneral)}
       </div>
-    `).join('')}
+      ${porActividadOrdenado.map(act => `
+        <div style="background:var(--gold-bg, var(--bg2));color:var(--gold-text, var(--text2));border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:700;white-space:nowrap">
+          ${act}: <strong>${fn(porActividad[act])}</strong>
+        </div>
+      `).join('')}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      ${Object.entries(porCategoria).map(([cat, tot]) => `
+        <div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
+          ${cat}: <strong style="color:var(--text)">${fn(tot)}</strong>
+        </div>
+      `).join('')}
+    </div>
+    ${!campoFiltro ? `<div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${Object.entries(porCampo).map(([campo, tot]) => `
+        <div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600;white-space:nowrap">
+          📍 ${campo}: <strong style="color:var(--text)">${fn(tot)}</strong>
+        </div>
+      `).join('')}
+    </div>` : ''}
   </div>`;
   h += `<div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock</th></tr></thead><tbody>`;
   filtrado.forEach(s => {
