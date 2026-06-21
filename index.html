@@ -598,9 +598,14 @@ function buildDashboard() {
   });
   h += '</div>';
 
-  const rodeosFiltrados = S.selectedCampoId
+  const rodeosFiltrados = (S.selectedCampoId
     ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
-    : rodeosList;
+    : rodeosList
+  ).slice().sort((a, b) => {
+    const cmpCampo = campoNombre(a.rodeo.campo_id).localeCompare(campoNombre(b.rodeo.campo_id), 'es', { sensitivity: 'base' });
+    if (cmpCampo !== 0) return cmpCampo;
+    return a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
+  });
 
   if (S.selectedCampoId) {
     const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
@@ -631,7 +636,7 @@ function buildDashboard() {
       </div>`;
     }
   } else {
-    const sortStateD = (S.sort && S.sort.dashboard_rodeos) || (!S.selectedCampoId ? { key: 'campo', dir: 'asc' } : null);
+    const sortStateD = (S.sort && S.sort.dashboard_rodeos) || null;
     const arrowD = key => (sortStateD && sortStateD.key === key) ? (sortStateD.dir === 'asc' ? ' ▲' : ' ▼') : '';
     let rodeosOrdenados = rodeosFiltrados;
     if (sortStateD) {
