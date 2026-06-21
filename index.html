@@ -317,6 +317,10 @@ function rodeosConServicio() {
 function rodeosCriaPorCampo(campoId) {
   return rodeosCriaActivos().filter(r => String(r.campo_id) === String(campoId));
 }
+
+function rodeosConServicioPorCampo(campoId) {
+  return rodeosConServicio().filter(r => String(r.campo_id) === String(campoId));
+}
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
 }
@@ -904,11 +908,13 @@ function attachServiciosEvents() {
 
 function buildTactos() {
   const items = S.cache.tactos || [];
-  const rodeosAptos = rodeosConServicio();
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosConServ = rodeosConServicio();
+  const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
   let h = `<div class="panel">
     <div class="panel-title">Registrar tacto</div>
     <p class="helper-text" style="margin-bottom:14px">Registrá el total por rodeo. En el tacto IATF cargá las preñadas por IATF; en el tacto final, el total de preñadas (la diferencia con el IATF se calcula como preñadas por toro).</p>
-    ${rodeosAptos.length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
+    ${rodeosConServ.length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
     <div class="fgrid">
       <div class="fg" style="min-width:200px"><label>Tipo de tacto</label>
         <div class="radio-group" id="tc-tipo-group">
@@ -916,8 +922,11 @@ function buildTactos() {
           <div class="radio-pill" data-tipo="Tacto final">Tacto final</div>
         </div>
       </div>
+      <div class="fg"><label>Campo</label>
+        <select id="tc-campo" onchange="document.getElementById('tc-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
       <div class="fg"><label>Rodeo</label>
-        <select id="tc-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+        <select id="tc-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="tc-fecha" value="${today()}"></div>
       <div class="fg"><label>Total tacteadas</label><input type="number" id="tc-total" placeholder="Ej: 320" min="0" oninput="updateTactoCalc()"></div>
