@@ -930,8 +930,8 @@ function buildTactos() {
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="tc-fecha" value="${today()}"></div>
       <div class="fg"><label>Total tacteadas</label><input type="number" id="tc-total" placeholder="Ej: 320" min="0" oninput="updateTactoCalc()"></div>
-      <div class="fg"><label>Preñadas</label><input type="number" id="tc-prenadas" placeholder="Ej: 280" min="0" oninput="updateTactoCalc()"></div>
-      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="tc-obs" placeholder="Opcional"></div>
+      <div class="fg" style="max-width:110px;flex:0 1 110px"><label>Preñadas</label><input type="number" id="tc-prenadas" placeholder="Ej: 280" min="0" oninput="updateTactoCalc()"></div>
+      <div class="fg" style="min-width:320px;flex:2"><label>Observación</label><input type="text" id="tc-obs" placeholder="Opcional"></div>
     </div>
     <div id="tc-calc"></div>
     <button class="btn btn-primary" id="tc-save" style="margin-top:6px">Registrar tacto</button>
@@ -1589,30 +1589,4 @@ function showLoginScreen(onSuccess) {
   async function doLogin() {
     const usuario = userEl.value.trim();
     const password = passEl.value;
-    if (!usuario || !password) { errEl.textContent = 'Completá usuario y contraseña.'; return; }
-    btn.disabled = true; btn.textContent = 'Verificando…'; errEl.textContent = '';
-    try {
-      const url = LOGIN_API_URL + '?action=login&token=' + encodeURIComponent(LOGIN_TOKEN);
-      const res = await fetch(url, { method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ usuario, password }) });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Error al conectar');
-      loginSetSession(json.data);
-      overlay.remove();
-      onSuccess(json.data);
-    } catch(err) {
-      errEl.textContent = err.message;
-      btn.disabled = false; btn.textContent = 'Ingresar';
-    }
-  }
-  btn.onclick = doLogin;
-  passEl.onkeydown = e => { if (e.key === 'Enter') doLogin(); }
-
-  userEl.onkeydown = e => { if (e.key === 'Enter') passEl.focus(); }
-  setTimeout(() => userEl.focus(), 100);
-}
-loginRequired(session => { window.__lmSession = session; init(); });
-</script>
-</body>
-</html>
+    if (!usuario || !password) { errEl.textContent = 'Completá usuario y contraseña.'; return;
