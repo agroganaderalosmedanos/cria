@@ -1508,7 +1508,7 @@ function buildMovimientos() {
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="mv-hist-filtro-rodeo" onchange="renderHistorialFiltrado()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
       </select>
     </div>
   </div>
