@@ -994,14 +994,18 @@ function attachTactosEvents() {
 
 function buildAbortos() {
   const items = S.cache.abortos || [];
-  const rodeosAptos = rodeosConServicio();
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
   let h = `<div class="panel">
     <div class="panel-title">Registrar aborto</div>
-    ${rodeosAptos.length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía.</p>' : ''}
+    ${rodeosConServicio().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía.</p>' : ''}
     <div class="fgrid">
+      <div class="fg"><label>Campo</label>
+        <select id="ab-campo" onchange="document.getElementById('ab-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
       <div class="fg"><label>Fecha</label><input type="date" id="ab-fecha" value="${today()}"></div>
       <div class="fg"><label>Rodeo</label>
-        <select id="ab-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+        <select id="ab-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg"><label>Caravana <span class="opt">(opcional)</span></label><input type="text" id="ab-caravana" placeholder="Si se identificó"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ab-obs" placeholder="Opcional"></div>
