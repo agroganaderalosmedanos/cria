@@ -387,8 +387,8 @@ async function goto(page) {
     try { await loadEntity(entityMap[page]); } catch (err) { toast(err.message, 'err'); }
     S.loading = false;
   }
-  // Tactos y Abortos necesitan la caché de Servicios para filtrar rodeos con servicio registrado
-  if ((page === 'tactos' || page === 'abortos') && !S.cache.servicios) {
+  // Tactos, Abortos y Pariciones necesitan la caché de Servicios para filtrar rodeos con servicio registrado
+  if ((page === 'tactos' || page === 'abortos' || page === 'pariciones') && !S.cache.servicios) {
     try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
   }
   // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
