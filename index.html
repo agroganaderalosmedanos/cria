@@ -453,6 +453,9 @@ async function goto(page) {
   if (page === 'insumos' && !S.cache.compras_insumos) {
     try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ }
   }
+  if (page === 'insumos' && !S.cache.productos) {
+    try { await loadEntity('productos'); } catch (err) { /* silencioso */ }
+  }
   if (page === 'insumos' && !S.stockProductos) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
   }
@@ -1903,11 +1906,14 @@ function buildInsumos() {
     </div>
     <div class="fgrid">
       <div class="fg" style="min-width:240px"><label>Producto <a href="javascript:void(0)" onclick="toggleNuevoProducto()" style="font-size:11px;margin-left:8px;font-weight:600">+ nuevo producto</a></label>
-        <select id="in-producto">${productoOptionsHtml(productos)}</select>
+        <select id="in-producto" onchange="actualizarCampoCompraInsumo_()">${productoOptionsHtml(productos)}</select>
       </div>
       <div class="fg"><label>Cantidad</label><input type="number" id="in-cantidad" placeholder="Ej: 500" min="0.01" step="0.01"></div>
       <div class="fg" id="in-costo-wrap"><label>Costo total</label><input type="number" id="in-costo" placeholder="Ej: 150000" min="0" step="0.01"></div>
       <div class="fg" id="in-proveedor-wrap"><label>Proveedor <span class="opt">(opcional)</span></label><input type="text" id="in-proveedor" placeholder="Nombre del proveedor"></div>
+      <div class="fg" id="in-compra-campo-wrap" style="display:none"><label>Campo <span class="opt">(este producto se guarda por separado en cada campo)</span></label>
+        <select id="in-compra-campo">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
       <div class="fg" id="in-campo-wrap" style="display:none"><label>Campo</label>
         <select id="in-campo" onchange="document.getElementById('in-rodeo').innerHTML = rodeoOptionsHtml(rodeosConStockPorCampo_(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
@@ -1929,7 +1935,11 @@ function buildInsumos() {
         </div>
         <div class="fg"><label>Unidad</label><input type="text" id="np-unidad" placeholder="Ej: kg, litros, frascos, dosis"></div>
       </div>
-      <button class="btn btn-secondary" id="np-save" style="margin-top:4px">Crear producto</button>
+      <label style="display:flex;align-items:center;gap:7px;font-size:13px;margin-top:6px;cursor:pointer">
+        <input type="checkbox" id="np-por-campo" style="width:auto">
+        Se guarda por separado en cada campo (ej: rollos, silo) — si no, queda en un solo pozo de stock común
+      </label>
+      <button class="btn btn-secondary" id="np-save" style="margin-top:10px">Crear producto</button>
     </div>
     <button class="btn btn-primary" id="in-save" style="margin-top:6px">Registrar</button>
   </div>`;
@@ -1938,15 +1948,46 @@ function buildInsumos() {
   if (!stockProductos.length) {
     h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no cargaste ningún producto. Usá "+ nuevo producto" arriba.</div></div>';
   } else {
-    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">' + stockProductos.map(p => {
-      const colores = p.categoria === 'Veterinaria' ? ['var(--blue-bg)', 'var(--blue-text)']
-        : p.categoria === 'Reproducción' ? ['var(--gold-bg)', 'var(--gold-text)']
-        : ['var(--green-bg)', 'var(--green-text)'];
-      return `<div style="background:${colores[0]};color:${colores[1]};border-radius:9px;padding:8px 15px;font-size:14px;font-weight:700;white-space:nowrap">${p.nombre}: ${fn(p.stock)} ${p.unidad || ''}</div>`;
-    }).join('') + '</div>';
+    const colorPorCategoria = cat => cat === 'Veterinaria' ? ['var(--blue-bg)', 'var(--blue-text)']
+      : cat === 'Reproducción' ? ['var(--gold-bg)', 'var(--gold-text)']
+      : ['var(--green-bg)', 'var(--green-text)'];
+
+    const globales = stockProductos.filter(p => !p.por_campo);
+    const porCampo = stockProductos.filter(p => p.por_campo);
+
+    if (globales.length) {
+      h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:' + (porCampo.length ? '10px' : '16px') + '">' + globales.map(p => {
+        const [bg, text] = colorPorCategoria(p.categoria);
+        return `<div style="background:${bg};color:${text};border-radius:9px;padding:8px 15px;font-size:14px;font-weight:700;white-space:nowrap">${p.nombre}: ${fn(p.stock)} ${p.unidad || ''}</div>`;
+      }).join('') + '</div>';
+    }
+    if (porCampo.length) {
+      h += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">' + porCampo.map(p => {
+        const [bg, text] = colorPorCategoria(p.categoria);
+        const camposConStock = campos.length ? campos : Object.keys(p.stock_por_campo || {}).map(cid => ({ campo_id: cid, nombre: campoNombre(cid) }));
+        const subchips = camposConStock.map(c => {
+          const cant = (p.stock_por_campo && p.stock_por_campo[c.campo_id]) || 0;
+          return `<span style="background:var(--bg2);border-radius:7px;padding:4px 10px;font-size:12.5px;font-weight:600">${c.nombre}: ${fn(cant)} ${p.unidad || ''}</span>`;
+        }).join('');
+        return `<div style="background:${bg};border-radius:9px;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="color:${text};font-size:14px;font-weight:700;white-space:nowrap">${p.nombre}</span>
+          <span class="pill pill-gold" style="font-size:10.5px">por campo</span>
+          ${subchips}
+        </div>`;
+      }).join('') + '</div>';
+    }
   }
 
   const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
+  h += '<div class="section-label">Productos</div>';
+  h += buildEntityTable((S.cache.productos || []).slice(), [
+    { key: 'nombre', label: 'Nombre' },
+    { key: 'categoria', label: 'Categoría' },
+    { key: 'unidad', label: 'Unidad' },
+    { key: 'por_campo', label: 'Por campo', render: v => (v === true || String(v) === 'true') ? '<span class="pill pill-gold">Sí, por campo</span>' : '<span class="pill pill-green">Pozo común</span>' },
+    { key: 'activo', label: 'Activo', render: v => (v === true || String(v) === 'true') ? 'Sí' : 'No' },
+  ], 'productos', 'producto_id');
+
   h += `<div class="section-label">Historial de insumos</div>
   <div class="fgrid" style="margin-bottom:10px;max-width:680px">
     <div class="fg"><label>Filtrar por categoría</label>
@@ -2157,6 +2198,17 @@ window.toggleNuevoProducto = function() {
   if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 };
 
+window.actualizarCampoCompraInsumo_ = function() {
+  const wrap = document.getElementById('in-compra-campo-wrap');
+  if (!wrap) return;
+  const tipoSel = document.querySelector('#in-tipo-group .radio-pill.selected');
+  const esCompra = !tipoSel || tipoSel.dataset.tipo === 'Compra';
+  const productoId = document.getElementById('in-producto')?.value;
+  const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
+  const esPorCampo = producto && (producto.por_campo === true || String(producto.por_campo) === 'true');
+  wrap.style.display = (esCompra && esPorCampo) ? 'flex' : 'none';
+};
+
 function attachInsumosEvents() {
   function applyInsumoTipoUI(tipo) {
     const esCompra = tipo === 'Compra';
@@ -2169,22 +2221,25 @@ function attachInsumosEvents() {
     kw.style.display = esCompra ? 'none' : 'flex';
     rw.style.display = esCompra ? 'none' : 'flex';
     if (cnw) cnw.style.display = esCompra ? 'none' : 'flex';
+    actualizarCampoCompraInsumo_();
   }
   document.querySelectorAll('#in-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#in-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
     p.classList.add('selected');
     applyInsumoTipoUI(p.dataset.tipo);
   });
+  actualizarCampoCompraInsumo_();
 
   const npSave = document.getElementById('np-save');
   if (npSave) npSave.onclick = async () => {
     const nombre = document.getElementById('np-nombre').value.trim();
     const categoria = document.getElementById('np-categoria').value;
     const unidad = document.getElementById('np-unidad').value.trim();
+    const porCampo = document.getElementById('np-por-campo').checked;
     if (!nombre || !unidad) { toast('Completá nombre y unidad del producto.', 'err'); return; }
     npSave.disabled = true;
     try {
-      await apiCall('create', { body: { entity: 'productos', data: { nombre, categoria, unidad, activo: true } } });
+      await apiCall('create', { body: { entity: 'productos', data: { nombre, categoria, unidad, activo: true, por_campo: porCampo } } });
       await loadCatalogs();
       const sel = document.getElementById('in-producto');
       if (sel) {
@@ -2192,8 +2247,10 @@ function attachInsumosEvents() {
         const nuevo = (S.catalogs.productos || []).find(p => p.nombre === nombre);
         if (nuevo) sel.value = nuevo.producto_id;
       }
+      actualizarCampoCompraInsumo_();
       document.getElementById('np-nombre').value = '';
       document.getElementById('np-unidad').value = '';
+      document.getElementById('np-por-campo').checked = false;
       document.getElementById('in-nuevo-producto-panel').style.display = 'none';
       toast('Producto creado: ' + nombre, 'ok');
     } catch (err) { toast(err.message, 'err'); } finally { npSave.disabled = false; }
@@ -2211,11 +2268,16 @@ function attachInsumosEvents() {
     save.disabled = true;
     try {
       if (esCompra) {
+        const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
+        const esPorCampo = producto && (producto.por_campo === true || String(producto.por_campo) === 'true');
+        const campoCompraId = document.getElementById('in-compra-campo')?.value;
+        if (esPorCampo && !campoCompraId) { toast('Este producto se guarda por separado en cada campo — elegí a cuál entra esta compra.', 'err'); save.disabled = false; return; }
         const data = {
           fecha, producto_id: productoId, cantidad,
           costo_total: Number(document.getElementById('in-costo').value) || '',
           proveedor: document.getElementById('in-proveedor').value.trim(),
           observaciones: document.getElementById('in-obs').value.trim(),
+          campo_id: esPorCampo ? campoCompraId : '',
         };
         await apiCall('create', { body: { entity: 'compras_insumos', data } });
         invalidateCache('compras_insumos');
@@ -2242,6 +2304,7 @@ function attachInsumosEvents() {
 
   attachTableDeleteEvents('compras_insumos', 'compra_id');
   attachTableDeleteEvents('consumos_insumos', 'consumo_id');
+  attachTableDeleteEvents('productos', 'producto_id');
 }
 
 // ── MARGEN BRUTO ──────────────────────────────────────────────────────────
@@ -2678,6 +2741,7 @@ function attachTableDeleteEvents(entity, idCol) {
         if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
         if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
         if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
+        if (entity === 'productos') await loadCatalogs();
         render();
       } catch (err) { toast(err.message, 'err'); }
     };
@@ -2694,6 +2758,7 @@ function fieldInputType_(key, value) {
   if (key.includes('fecha')) return 'date';
   if (key === 'rodeo_id' || key === 'rodeo_origen_id' || key === 'rodeo_destino_id') return 'rodeo';
   if (key === 'campo_id' || key === 'campo_origen_id' || key === 'campo_destino_id') return 'campo';
+  if (key === 'activo' || key === 'por_campo') return 'boolean';
   if (key === 'tipo' || key === 'tipo_tacto' || key === 'tipo_venta' || key === 'estado') return 'text';
   if (typeof value === 'number' || (!isNaN(value) && value !== '' && value !== null)) return 'number';
   return 'text';
@@ -2715,7 +2780,11 @@ function openEditModal(entity, idCol, id) {
         <select id="${fid}">${rodeosL.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(item[k])?'selected':''}>${r.nombre}</option>`).join('')}</select></div>`;
     } else if (type === 'campo') {
       fieldsHtml += `<div class="fg"><label>${k}</label>
-        <select id="${fid}">${camposL.map(c => `<option value="${c.campo_id}" ${String(c.campo_id)===String(item[k])?'selected':''}>${c.nombre}</option>`).join('')}</select></div>`;
+        <select id="${fid}"><option value="">—</option>${camposL.map(c => `<option value="${c.campo_id}" ${String(c.campo_id)===String(item[k])?'selected':''}>${c.nombre}</option>`).join('')}</select></div>`;
+    } else if (type === 'boolean') {
+      const esTrue = item[k] === true || String(item[k]).toLowerCase() === 'true';
+      fieldsHtml += `<div class="fg"><label>${k}</label>
+        <select id="${fid}"><option value="true" ${esTrue?'selected':''}>Sí</option><option value="false" ${!esTrue?'selected':''}>No</option></select></div>`;
     } else if (type === 'date') {
       fieldsHtml += `<div class="fg"><label>${k}</label><input type="date" id="${fid}" value="${item[k]||''}"></div>`;
     } else if (type === 'number') {
@@ -2745,6 +2814,8 @@ function openEditModal(entity, idCol, id) {
     keys.forEach(k => {
       const el = document.getElementById('edit-' + k);
       if (!el) return;
+      const type = fieldInputType_(k, item[k]);
+      if (type === 'boolean') { data[k] = el.value === 'true'; return; }
       data[k] = el.tagName === 'SELECT' ? el.value : (el.type === 'number' ? Number(el.value) : el.value.trim());
     });
     const saveBtn = document.getElementById('edit-modal-save');
@@ -2757,6 +2828,8 @@ function openEditModal(entity, idCol, id) {
       await loadDashboard();
       if (entity === 'movimientos') { S.stock = null; await loadStock(); }
       if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
+      if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
+      if (entity === 'productos') await loadCatalogs();
       closeModal();
       render();
     } catch (err) { toast(err.message, 'err'); saveBtn.disabled = false; }
