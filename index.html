@@ -383,6 +383,7 @@ const NAV = [
   ]},
   { section: 'Stock', items: [
     { k: 'movimientos', icon: '⇄', label: 'Movimientos/Stock' },
+    { k: 'ventas', icon: '$', label: 'Ventas' },
   ]},
   { section: 'Sistema', items: [
     { k: 'config', icon: '⚙', label: 'Configuración' },
@@ -392,7 +393,7 @@ const NAV = [
 async function goto(page) {
   S.page = page;
   S.sidebarOpen = false;
-  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos' };
+  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos', ventas: 'ventas' };
   if (entityMap[page] && !S.cache[entityMap[page]]) {
     S.loading = true; render();
     try { await loadEntity(entityMap[page]); } catch (err) { toast(err.message, 'err'); }
@@ -482,7 +483,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resumen de cría', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos/Stock', config: 'Configuración',
+    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', config: 'Configuración',
   };
   return titles[p] || p;
 }
@@ -496,6 +497,7 @@ function pageSubtitle(p) {
     mortandad: 'Mortandad de terneros entre nacimiento y destete',
     destetes: 'Terneros destetados, caravaneados al plantel',
     movimientos: 'Transferencias de animales entre rodeos y saldo inicial',
+    ventas: 'Registro de ventas y baja de stock',
     config: 'Conexión con la planilla de datos',
   };
   return subs[p] || '';
@@ -512,6 +514,7 @@ function buildPage(page) {
     case 'mortandad':  return buildMortandad();
     case 'destetes':   return buildDestetes();
     case 'movimientos': return buildMovimientos();
+    case 'ventas':      return buildVentas();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -577,7 +580,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -1610,6 +1613,73 @@ function attachMovimientosEvents() {
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
   attachTableDeleteEvents('movimientos', 'movimiento_id');
+}
+
+function buildVentas() {
+  const items = S.cache.ventas || [];
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const compradores = (S.catalogs && S.catalogs.compradores) || [];
+  const rodeosAptos = rodeosPorCampo(campos[0]?.campo_id);
+  let h = `<div class="panel">
+    <div class="panel-title">Registrar venta</div>
+    <p class="helper-text" style="margin-bottom:14px">Sirve para cualquier categoría — vacas de descarte, vaquillonas, novillitos, etc. La cantidad se descuenta del stock del rodeo automáticamente.</p>
+    <div class="fgrid">
+      <div class="fg"><label>Campo</label>
+        <select id="ve-campo" onchange="document.getElementById('ve-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="ve-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
+      </div>
+      <div class="fg"><label>Fecha</label><input type="date" id="ve-fecha" value="${today()}"></div>
+      <div class="fg"><label>Comprador</label>
+        <input type="text" id="ve-comprador" placeholder="Nombre del comprador" list="ve-compradores-list">
+        <datalist id="ve-compradores-list">${compradores.map(c => `<option value="${c.nombre}">`).join('')}</datalist>
+      </div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="ve-cantidad" placeholder="Ej: 46" min="1"></div>
+      <div class="fg"><label>Precio por animal <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 450000" min="0"></div>
+      <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="ve-save" style="margin-top:6px">Registrar venta</button>
+  </div>`;
+
+  h += buildEntityTable(items, [
+    { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'comprador', label: 'Comprador', render: v => v || '—' },
+    { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
+    { key: 'precio_pactado', label: 'Precio/animal', render: v => v ? fn(v) : '—' },
+    { key: 'observaciones', label: 'Obs.', render: v => v || '—' },
+  ], 'ventas', 'venta_id');
+
+  return h;
+}
+
+function attachVentasEvents() {
+  const save = document.getElementById('ve-save');
+  if (save) save.onclick = async () => {
+    const data = {
+      fecha_salida: document.getElementById('ve-fecha').value,
+      rodeo_id: document.getElementById('ve-rodeo').value,
+      campo_id: document.getElementById('ve-campo').value,
+      comprador: document.getElementById('ve-comprador').value.trim(),
+      tipo_venta: 'Venta real',
+      cant_animales: Number(document.getElementById('ve-cantidad').value) || 0,
+      precio_pactado: Number(document.getElementById('ve-precio').value) || '',
+      observaciones: document.getElementById('ve-obs').value.trim(),
+    };
+    if (!data.fecha_salida || !data.rodeo_id || !data.cant_animales) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'ventas', data } });
+      invalidateCache('ventas');
+      S.stock = null; // fuerza a recalcular el stock con la venta ya restada
+      S.dashboard = null;
+      toast('Venta registrada — ' + data.cant_animales + ' animales', 'ok');
+      await loadEntity('ventas', true);
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('ventas', 'venta_id');
 }
 
 function buildConfig() {
