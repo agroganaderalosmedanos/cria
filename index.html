@@ -313,6 +313,10 @@ function rodeosConServicio() {
   const idsConServicio = new Set(servicios.map(s => String(s.rodeo_id)));
   return rodeosCriaActivos().filter(r => idsConServicio.has(String(r.rodeo_id)));
 }
+
+function rodeosCriaPorCampo(campoId) {
+  return rodeosCriaActivos().filter(r => String(r.campo_id) === String(campoId));
+}
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
 }
@@ -709,7 +713,8 @@ function attachDashboardEvents() {
 
 function buildServicios() {
   const items = S.cache.servicios || [];
-  const rodeosAptos = rodeosCriaActivos();
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosAptos = rodeosCriaPorCampo(campos[0]?.campo_id);
   let h = `<div class="panel">
     <div class="panel-title">Registrar servicio</div>
     <div class="fgrid">
@@ -720,8 +725,11 @@ function buildServicios() {
           <div class="radio-pill" data-tipo="Toros a campo">Toros a campo</div>
         </div>
       </div>
+      <div class="fg"><label>Campo</label>
+        <select id="sv-campo" onchange="document.getElementById('sv-rodeo').innerHTML = rodeoOptionsHtml(rodeosCriaPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
       <div class="fg"><label>Rodeo</label>
-        <select id="sv-rodeo">${rodeosAptos.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}</select>
+        <select id="sv-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}"></div>
       <div class="fg"><label>Fecha fin <span class="opt">(opcional)</span></label><input type="date" id="sv-fecha-fin"></div>
