@@ -631,7 +631,7 @@ function buildDashboard() {
       </div>`;
     }
   } else {
-    const sortStateD = (S.sort && S.sort.dashboard_rodeos) || null;
+    const sortStateD = (S.sort && S.sort.dashboard_rodeos) || (!S.selectedCampoId ? { key: 'campo', dir: 'asc' } : null);
     const arrowD = key => (sortStateD && sortStateD.key === key) ? (sortStateD.dir === 'asc' ? ' ▲' : ' ▼') : '';
     let rodeosOrdenados = rodeosFiltrados;
     if (sortStateD) {
