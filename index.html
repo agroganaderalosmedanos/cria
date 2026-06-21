@@ -342,6 +342,21 @@ function rodeoOptionsHtml(rodeosList) {
   if (!rodeosList.length) return '<option value="">Sin rodeos en este campo</option>';
   return rodeosList.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('');
 }
+// Un rodeo se muestra en el buscador de Movimientos solo si tiene stock actual O algún movimiento/venta registrado.
+// Si no tiene NINGUNA de las dos cosas, se oculta (las dos condiciones tienen que faltar juntas).
+function rodeoTieneActividad_(rodeoId) {
+  const stockRow = (S.stock || []).find(r => String(r.rodeo_id) === String(rodeoId));
+  if (stockRow && Number(stockRow.stock) !== 0) return true;
+  const tieneMov = (S.cache.movimientos || []).some(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
+  if (tieneMov) return true;
+  return (S.cache.ventas || []).some(v => String(v.rodeo_id) === String(rodeoId));
+}
+function rodeosTodosConActividad_() {
+  return rodeosTodos().filter(r => rodeoTieneActividad_(r.rodeo_id));
+}
+function rodeosConActividadPorCampo_(campoId) {
+  return rodeosPorCampo(campoId).filter(r => rodeoTieneActividad_(r.rodeo_id));
+}
 
 async function loadCatalogs() {
   S.catalogs = await apiCall('catalog');
@@ -1425,7 +1440,7 @@ window.renderStockFiltrado = function() {
 
 function buildMovimientos() {
   const items = S.cache.movimientos || [];
-  const rodeosTodosL = rodeosTodos();
+  const rodeosTodosL = rodeosTodosConActividad_();
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const stockList = S.stock || [];
 
@@ -1485,7 +1500,7 @@ function buildMovimientos() {
   h += `<div class="section-label">Historial de movimientos</div>
   <div class="fgrid" style="margin-bottom:10px;max-width:480px">
     <div class="fg"><label>Filtrar por campo</label>
-      <select id="mv-hist-filtro-campo" onchange="document.getElementById('mv-hist-filtro-rodeo').innerHTML = '<option value=\\'\\'>Todos los rodeos</option>' + rodeoOptionsHtml(rodeosPorCampo(this.value)); renderHistorialFiltrado()">
+      <select id="mv-hist-filtro-campo" onchange="document.getElementById('mv-hist-filtro-rodeo').innerHTML = '<option value=\\'\\'>Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConActividadPorCampo_(this.value)); renderHistorialFiltrado()">
         <option value="">Todos los campos</option>
         ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
       </select>
@@ -1517,78 +1532,102 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   if (rodeoId) corralesF = [];
   else if (campoId) corralesF = corralesF.filter(v => norm_(CORRAL_CAMPO_NOMBRE_[String(v.cid)]) === nombreCampoSeleccionado);
 
-  const filas = [
-    ...movsF.map(m => ({ origen: 'mov', fecha: m.fecha, item: m })),
-    ...ventasF.map(v => ({ origen: 'venta', fecha: v.fecha_salida, item: v })),
-    ...corralesF.map(v => ({ origen: 'corral', fecha: v.fecha, item: v })),
-  ].sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+  // Normalizamos las 3 fuentes a una misma forma de fila, así se pueden ordenar todas juntas por cualquier columna
+  let filas = [
+    ...movsF.map(m => ({
+      fecha: m.fecha || '',
+      tipoLabel: m.tipo, tipoClass: m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green',
+      caravana: m.caravana || '—',
+      campoOrigen: m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—',
+      rodeoOrigen: m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
+      campoDestino: campoNombre(m.campo_destino_id), rodeoDestino: rodeoNombre(m.rodeo_destino_id),
+      cantidad: Number(m.cantidad) || 0, obs: m.observaciones || '—',
+      entity: 'movimientos', idCol: 'movimiento_id', id: m.movimiento_id, editable: true,
+    })),
+    ...ventasF.map(v => ({
+      fecha: v.fecha_salida || '',
+      tipoLabel: 'Venta', tipoClass: 'pill-red',
+      caravana: '—',
+      campoOrigen: v.campo_id ? campoNombre(v.campo_id) : '—', rodeoOrigen: v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—',
+      campoDestino: '—', rodeoDestino: '—',
+      cantidad: Number(v.cant_animales) || 0, obs: v.comprador ? 'Venta a ' + v.comprador : (v.observaciones || '—'),
+      entity: 'ventas', idCol: 'venta_id', id: v.venta_id, editable: true,
+    })),
+    ...corralesF.map(v => {
+      const esBaja = !!v.baja;
+      return {
+        fecha: v.fecha || '',
+        tipoLabel: (esBaja ? 'Baja' : 'Venta') + ' (Corrales)', tipoClass: esBaja ? 'pill-clay' : 'pill-red',
+        caravana: '—',
+        campoOrigen: CORRAL_CAMPO_NOMBRE_[String(v.cid)] || 'Sin campo asignado', rodeoOrigen: 'Corral ' + v.cid,
+        campoDestino: '—', rodeoDestino: '—',
+        cantidad: Number(v.cant) || 0, obs: esBaja ? 'Baja registrada en Corrales' : (v.precio ? `Venta en Corrales — $${fn(v.precio)}/kg` : 'Venta en Corrales'),
+        entity: null, idCol: null, id: null, editable: false,
+      };
+    }),
+  ];
 
   if (!filas.length) {
     return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay registros. Cargá el primero arriba.</div></div>';
   }
 
+  if (!S.sort) S.sort = {};
+  const sortState = S.sort.historialMov || { key: 'fecha', dir: 'desc' };
+  filas = [...filas].sort((a, b) => {
+    let va = a[sortState.key], vb = b[sortState.key];
+    if (va == null) va = ''; if (vb == null) vb = '';
+    const na = Number(va), nb = Number(vb);
+    const numeric = va !== '' && vb !== '' && !isNaN(na) && !isNaN(nb);
+    const cmp = numeric ? (na - nb) : String(va).localeCompare(String(vb), 'es', { sensitivity: 'base' });
+    return sortState.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const cols = [
+    { key: 'fecha', label: 'Fecha' }, { key: 'tipoLabel', label: 'Tipo' }, { key: 'caravana', label: 'Caravana' },
+    { key: 'campoOrigen', label: 'Campo origen' }, { key: 'rodeoOrigen', label: 'Rodeo origen' },
+    { key: 'campoDestino', label: 'Campo destino' }, { key: 'rodeoDestino', label: 'Rodeo destino' },
+    { key: 'cantidad', label: 'Cant.' }, { key: 'obs', label: 'Obs.' },
+  ];
+
   let h = `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${filas.length}</span></div>
-  <div class="tw"><table class="dt"><thead><tr>
-    <th>Fecha</th><th>Tipo</th><th>Caravana</th><th>Campo origen</th><th>Rodeo origen</th><th>Campo destino</th><th>Rodeo destino</th><th class="tc">Cant.</th><th>Obs.</th><th></th>
-  </tr></thead><tbody>`;
+  <div class="tw"><table class="dt"><thead><tr>`;
+  cols.forEach(c => {
+    const activo = sortState.key === c.key;
+    const flecha = activo ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    h += `<th class="sortable-th" onclick="sortHistorialMov('${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
+  });
+  h += '<th></th></tr></thead><tbody>';
 
   filas.forEach(f => {
-    if (f.origen === 'mov') {
-      const m = f.item;
-      h += `<tr>
-        <td>${fd(m.fecha)}</td>
-        <td><span class="pill ${m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green'}">${m.tipo}</span></td>
-        <td>${m.caravana || '—'}</td>
-        <td>${m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—'}</td>
-        <td>${m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—'}</td>
-        <td>${campoNombre(m.campo_destino_id)}</td>
-        <td>${rodeoNombre(m.rodeo_destino_id)}</td>
-        <td class="tc">${fn(m.cantidad)}</td>
-        <td>${m.observaciones || '—'}</td>
-        <td><div class="row-actions">
-          <button class="icon-btn" data-edit="${m.movimiento_id}" data-entity="movimientos" data-idcol="movimiento_id" title="Editar">✎</button>
-          <button class="icon-btn danger" data-del="${m.movimiento_id}" data-entity="movimientos" data-idcol="movimiento_id" title="Eliminar">✕</button>
-        </div></td>
-      </tr>`;
-    } else if (f.origen === 'venta') {
-      const v = f.item;
-      h += `<tr>
-        <td>${fd(v.fecha_salida)}</td>
-        <td><span class="pill pill-red">Venta</span></td>
-        <td>—</td>
-        <td>${v.campo_id ? campoNombre(v.campo_id) : '—'}</td>
-        <td>${v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—'}</td>
-        <td>—</td>
-        <td>—</td>
-        <td class="tc">${fn(v.cant_animales)}</td>
-        <td>${v.comprador ? 'Venta a ' + v.comprador : (v.observaciones || '—')}</td>
-        <td><div class="row-actions">
-          <button class="icon-btn" data-edit="${v.venta_id}" data-entity="ventas" data-idcol="venta_id" title="Editar">✎</button>
-          <button class="icon-btn danger" data-del="${v.venta_id}" data-entity="ventas" data-idcol="venta_id" title="Eliminar">✕</button>
-        </div></td>
-      </tr>`;
-    } else {
-      const v = f.item;
-      const esBaja = !!v.baja;
-      const campoNom = CORRAL_CAMPO_NOMBRE_[String(v.cid)] || 'Sin campo asignado';
-      const obs = esBaja ? 'Baja registrada en Corrales' : (v.precio ? `Venta en Corrales — $${fn(v.precio)}/kg` : 'Venta en Corrales');
-      h += `<tr>
-        <td>${fd(v.fecha)}</td>
-        <td><span class="pill ${esBaja ? 'pill-clay' : 'pill-gold'}">${esBaja ? 'Baja' : 'Venta'} (Corrales)</span></td>
-        <td>—</td>
-        <td>${campoNom}</td>
-        <td>Corral ${v.cid}</td>
-        <td>—</td>
-        <td>—</td>
-        <td class="tc">${fn(v.cant)}</td>
-        <td>${obs}</td>
-        <td></td>
-      </tr>`;
-    }
+    h += `<tr>
+      <td>${fd(f.fecha)}</td>
+      <td><span class="pill ${f.tipoClass}">${f.tipoLabel}</span></td>
+      <td>${f.caravana}</td>
+      <td>${f.campoOrigen}</td>
+      <td>${f.rodeoOrigen}</td>
+      <td>${f.campoDestino}</td>
+      <td>${f.rodeoDestino}</td>
+      <td class="tc">${fn(f.cantidad)}</td>
+      <td>${f.obs}</td>
+      <td>${f.editable ? `<div class="row-actions">
+        <button class="icon-btn" data-edit="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Editar">✎</button>
+        <button class="icon-btn danger" data-del="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Eliminar">✕</button>
+      </div>` : ''}</td>
+    </tr>`;
   });
   h += '</tbody></table></div>';
   return h;
 }
+window.sortHistorialMov = function(key) {
+  if (!S.sort) S.sort = {};
+  const current = S.sort.historialMov;
+  if (current && current.key === key) {
+    current.dir = current.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    S.sort.historialMov = { key, dir: 'asc' };
+  }
+  window.renderHistorialFiltrado ? window.renderHistorialFiltrado() : render();
+};
 window.renderHistorialFiltrado = function() {
   const campoId = document.getElementById('mv-hist-filtro-campo')?.value || '';
   const rodeoId = document.getElementById('mv-hist-filtro-rodeo')?.value || '';
