@@ -1464,11 +1464,29 @@ function buildEntityTable(items, cols, entity, idCol) {
   if (!items.length) {
     return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay registros. Cargá el primero arriba.</div></div>';
   }
+  if (!S.sort) S.sort = {};
+  const sortState = S.sort[entity];
+  let sortedItems = items;
+  if (sortState) {
+    sortedItems = [...items].sort((a, b) => {
+      let va = a[sortState.key], vb = b[sortState.key];
+      if (va == null) va = '';
+      if (vb == null) vb = '';
+      const na = Number(va), nb = Number(vb);
+      const numeric = va !== '' && vb !== '' && !isNaN(na) && !isNaN(nb);
+      const cmp = numeric ? (na - nb) : String(va).localeCompare(String(vb), 'es', { sensitivity: 'base' });
+      return sortState.dir === 'asc' ? cmp : -cmp;
+    });
+  }
   let h = `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${items.length}</span></div>
   <div class="tw"><table class="dt"><thead><tr>`;
-  cols.forEach(c => h += `<th>${c.label}</th>`);
+  cols.forEach(c => {
+    const activo = sortState && sortState.key === c.key;
+    const flecha = activo ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    h += `<th class="sortable-th" onclick="sortEntityTable('${entity}','${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
+  });
   h += '<th></th></tr></thead><tbody>';
-  items.forEach(item => {
+  sortedItems.forEach(item => {
     h += '<tr>';
     cols.forEach(c => h += `<td>${c.render ? c.render(item[c.key]) : (item[c.key] != null ? item[c.key] : '—')}</td>`);
     h += `<td><div class="row-actions">
@@ -1479,6 +1497,17 @@ function buildEntityTable(items, cols, entity, idCol) {
   });
   h += '</tbody></table></div>';
   return h;
+}
+
+function sortEntityTable(entity, key) {
+  if (!S.sort) S.sort = {};
+  const current = S.sort[entity];
+  if (current && current.key === key) {
+    current.dir = current.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    S.sort[entity] = { key, dir: 'asc' };
+  }
+  render();
 }
 function attachTableDeleteEvents(entity, idCol) {
   document.querySelectorAll('[data-del][data-entity="' + entity + '"]').forEach(btn => {
