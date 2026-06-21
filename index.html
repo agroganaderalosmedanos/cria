@@ -1849,6 +1849,9 @@ function productoOptionsHtml(productosList) {
   if (!productosList.length) return '<option value="">Sin productos cargados — creá uno con "+ nuevo producto"</option>';
   return productosList.map(p => `<option value="${p.producto_id}">${p.nombre} (${p.unidad || 'sin unidad'})</option>`).join('');
 }
+function productoFiltroOptionsHtml_(productosList) {
+  return '<option value="">Todos los productos</option>' + productosList.map(p => `<option value="${p.producto_id}">${p.nombre}</option>`).join('');
+}
 
 function buildInsumos() {
   const productos = (S.catalogs && S.catalogs.productos) || [];
@@ -1910,17 +1913,14 @@ function buildInsumos() {
   const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
   h += `<div class="section-label">Historial de insumos</div>
   <div class="fgrid" style="margin-bottom:10px;max-width:680px">
-    <div class="fg"><label>Filtrar por producto</label>
-      <select id="in-hist-filtro-producto" onchange="renderInsumosHistorialFiltrado()">
-        <option value="">Todos los productos</option>
-        ${productos.map(p => `<option value="${p.producto_id}">${p.nombre}</option>`).join('')}
-      </select>
-    </div>
     <div class="fg"><label>Filtrar por categoría</label>
-      <select id="in-hist-filtro-categoria" onchange="renderInsumosHistorialFiltrado()">
+      <select id="in-hist-filtro-categoria" onchange="document.getElementById('in-hist-filtro-producto').innerHTML = productoFiltroOptionsHtml_(this.value ? (S.catalogs.productos||[]).filter(p => p.categoria === this.value) : (S.catalogs.productos||[])); renderInsumosHistorialFiltrado()">
         <option value="">Todas las categorías</option>
         ${categoriasIns.map(c => `<option value="${c}">${c}</option>`).join('')}
       </select>
+    </div>
+    <div class="fg"><label>Filtrar por producto</label>
+      <select id="in-hist-filtro-producto" onchange="renderInsumosHistorialFiltrado()">${productoFiltroOptionsHtml_(productos)}</select>
     </div>
     <div class="fg"><label>Desde</label><input type="date" id="in-hist-desde" onchange="renderInsumosHistorialFiltrado()"></div>
     <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
