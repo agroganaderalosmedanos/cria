@@ -1589,4 +1589,30 @@ function showLoginScreen(onSuccess) {
   async function doLogin() {
     const usuario = userEl.value.trim();
     const password = passEl.value;
-    if (!usuario || !password) { errEl.textContent = 'Completá usuario y contraseña.'; return;
+    if (!usuario || !password) { errEl.textContent = 'Completá usuario y contraseña.'; return; }
+    btn.disabled = true; btn.textContent = 'Verificando…'; errEl.textContent = '';
+    try {
+      const url = LOGIN_API_URL + '?action=login&token=' + encodeURIComponent(LOGIN_TOKEN);
+      const res = await fetch(url, { method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ usuario, password }) });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Error al conectar');
+      loginSetSession(json.data);
+      overlay.remove();
+      onSuccess(json.data);
+    } catch(err) {
+      errEl.textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Ingresar';
+    }
+  }
+  btn.onclick = doLogin;
+  passEl.onkeydown = e => { if (e.key === 'Enter') doLogin(); }
+
+  userEl.onkeydown = e => { if (e.key === 'Enter') passEl.focus(); }
+  setTimeout(() => userEl.focus(), 100);
+}
+loginRequired(session => { window.__lmSession = session; init(); });
+</script>
+</body>
+</html>
