@@ -1318,6 +1318,16 @@ function buildStockTable_(stockList, campoFiltro) {
   const corralesEnEsteFiltro = corralesDisponible
     ? (campoFiltro ? (corralesPorCampo[nombreCampoFiltro] || 0) : Object.values(corralesPorCampo).reduce((s, x) => s + x, 0))
     : 0;
+  const corralesFilas = corralesDisponible
+    ? Object.entries(S.corralesStock)
+        .map(([cid, stock]) => ({
+          nombre: `Corral ${cid} (Corrales)`,
+          campo: CORRAL_CAMPO_NOMBRE_[cid] || 'Sin campo asignado',
+          categoria: 'engorde (Corrales)',
+          stock,
+        }))
+        .filter(c => !campoFiltro || c.campo === nombreCampoFiltro)
+    : [];
 
   const totalGeneral = filtrado.reduce((s, x) => s + (Number(x.stock) || 0), 0) + corralesEnEsteFiltro;
   const porCategoria = {};
@@ -1376,10 +1386,15 @@ function buildStockTable_(stockList, campoFiltro) {
     </div>` : ''}
   </div>`;
   h += `<div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock</th></tr></thead><tbody>`;
-  filtrado.forEach(s => {
+  filtrado.filter(s => (Number(s.stock) || 0) !== 0).forEach(s => {
     h += `<tr><td><strong>${s.nombre}</strong></td><td style="color:var(--text2)">${campoNombre(s.campo_id)}</td>
       <td><span class="pill pill-gray">${s.categoria}</span></td>
       <td class="tc"><strong>${fn(s.stock)}</strong></td></tr>`;
+  });
+  corralesFilas.filter(c => (Number(c.stock) || 0) !== 0).forEach(c => {
+    h += `<tr><td><strong>${c.nombre}</strong></td><td style="color:var(--text2)">${c.campo}</td>
+      <td><span class="pill pill-gold">${c.categoria}</span></td>
+      <td class="tc"><strong>${fn(c.stock)}</strong></td></tr>`;
   });
   h += `</tbody></table></div>`;
   return h;
