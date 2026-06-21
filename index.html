@@ -225,6 +225,7 @@ let S = {
   selectedCampoId: null,
   dashboard: null,
   stock: null,
+  corralesStock: undefined,
   cache: {},
   modal: null,
 };
@@ -412,6 +413,9 @@ async function goto(page) {
   }
   if (page === 'movimientos' && !S.stock) {
     try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
+  }
+  if (page === 'movimientos' && S.corralesStock === undefined) {
+    loadCorralesStock().then(render).catch(() => {});
   }
   render();
 }
@@ -1308,7 +1312,14 @@ function buildStockTable_(stockList, campoFiltro) {
   if (!stockList.length) {
     return `<div class="empty-state"><span class="ico">◌</span><div class="msg">Cargando stock…</div></div>`;
   }
-  const totalGeneral = filtrado.reduce((s, x) => s + (Number(x.stock) || 0), 0);
+  const corralesDisponible = S.corralesStock && typeof S.corralesStock === 'object';
+  const corralesPorCampo = corralesDisponible ? corralesStockPorCampoNombre_() : {};
+  const nombreCampoFiltro = campoFiltro ? campoNombre(campoFiltro) : null;
+  const corralesEnEsteFiltro = corralesDisponible
+    ? (campoFiltro ? (corralesPorCampo[nombreCampoFiltro] || 0) : Object.values(corralesPorCampo).reduce((s, x) => s + x, 0))
+    : 0;
+
+  const totalGeneral = filtrado.reduce((s, x) => s + (Number(x.stock) || 0), 0) + corralesEnEsteFiltro;
   const porCategoria = {};
   filtrado.forEach(s => { porCategoria[s.categoria] = (porCategoria[s.categoria] || 0) + (Number(s.stock) || 0); });
   const porCampo = {};
@@ -1316,15 +1327,29 @@ function buildStockTable_(stockList, campoFiltro) {
     const nombreCampo = campoNombre(s.campo_id);
     porCampo[nombreCampo] = (porCampo[nombreCampo] || 0) + (Number(s.stock) || 0);
   });
+  if (!campoFiltro && corralesDisponible) {
+    Object.entries(corralesPorCampo).forEach(([campo, tot]) => {
+      porCampo[campo] = (porCampo[campo] || 0) + tot;
+    });
+  }
   const ordenActividad = ['Cría', 'Recría', 'Engorde', 'Venta', 'Otra'];
   const porActividad = {};
   filtrado.forEach(s => {
     const act = actividadPorCategoria_(s.categoria);
     porActividad[act] = (porActividad[act] || 0) + (Number(s.stock) || 0);
   });
+  if (corralesDisponible) {
+    porActividad['Engorde'] = (porActividad['Engorde'] || 0) + corralesEnEsteFiltro;
+  }
   const porActividadOrdenado = ordenActividad.filter(a => porActividad[a] !== undefined);
+  const notaCorrales = S.corralesStock === undefined
+    ? '<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">Cargando stock de Corrales…</div>'
+    : (S.corralesStock === null
+      ? '<div style="font-size:12.5px;color:var(--clay-text);margin-bottom:8px">⚠ No se pudo traer el stock de Corrales en este momento.</div>'
+      : (corralesDisponible ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">El total y Engorde incluyen ${fn(corralesEnEsteFiltro)} animales de Corrales (dato en vivo)${campoFiltro ? ' en este campo' : ''}.</div>` : ''));
 
   let h = `<div style="margin-bottom:16px">
+    ${notaCorrales}
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
       <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:700;white-space:nowrap">
         ⛭ Total: ${fn(totalGeneral)}
@@ -1461,6 +1486,32 @@ window.renderHistorialFiltrado = function() {
 };
 async function loadStock() {
   S.stock = await apiCall('stock');
+}
+async function loadCorralesStock() {
+  try {
+    const res = await fetch('https://raw.githubusercontent.com/agroganaderalosmedanos/corrales/main/datos.json');
+    const data = await res.json();
+    const porCorral = {};
+    (data.ingresos || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) + (Number(x.cant) || 0); });
+    (data.ventas || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) - (Number(x.cant) || 0); });
+    S.corralesStock = porCorral; // { cid: stock_actual }
+  } catch (err) {
+    S.corralesStock = null; // si falla la consulta, no se muestra el dato pero no rompe la página
+  }
+}
+// Mapeo de cada corral al campo donde está físicamente ubicado.
+// Si se agrega un corral nuevo, avisar para sumarlo acá.
+const CORRAL_CAMPO_NOMBRE_ = { '1': 'El Cencerro', '2': 'El Misterio', '3': 'El Misterio' };
+
+function corralesStockPorCampoNombre_() {
+  const out = {};
+  if (S.corralesStock && typeof S.corralesStock === 'object') {
+    Object.entries(S.corralesStock).forEach(([cid, stock]) => {
+      const campo = CORRAL_CAMPO_NOMBRE_[cid] || 'Corral sin campo asignado';
+      out[campo] = (out[campo] || 0) + stock;
+    });
+  }
+  return out;
 }
 function attachMovimientosEvents() {
   function applyTipoUI(tipo) {
