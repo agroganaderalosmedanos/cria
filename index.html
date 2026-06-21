@@ -1307,12 +1307,14 @@ function actividadPorCategoria_(categoria) {
   return mapa[c] || 'Otra';
 }
 
-function buildStockTable_(stockList, campoFiltro) {
-  const filtrado = campoFiltro ? stockList.filter(s => String(s.campo_id) === String(campoFiltro)) : stockList;
+function buildStockTable_(stockList, campoFiltro, categoriaFiltro) {
+  let filtrado = campoFiltro ? stockList.filter(s => String(s.campo_id) === String(campoFiltro)) : stockList;
+  if (categoriaFiltro) filtrado = filtrado.filter(s => s.categoria === categoriaFiltro);
   if (!stockList.length) {
     return `<div class="empty-state"><span class="ico">◌</span><div class="msg">Cargando stock…</div></div>`;
   }
-  const corralesDisponible = S.corralesStock && typeof S.corralesStock === 'object';
+  const incluirCorralesPorCategoria = !categoriaFiltro || categoriaFiltro === 'engorde (Corrales)';
+  const corralesDisponible = S.corralesStock && typeof S.corralesStock === 'object' && incluirCorralesPorCategoria;
   const corralesPorCampo = corralesDisponible ? corralesStockPorCampoNombre_() : {};
   const nombreCampoFiltro = campoFiltro ? campoNombre(campoFiltro) : null;
   const corralesEnEsteFiltro = corralesDisponible
@@ -1352,11 +1354,11 @@ function buildStockTable_(stockList, campoFiltro) {
     porActividad['Engorde'] = (porActividad['Engorde'] || 0) + corralesEnEsteFiltro;
   }
   const porActividadOrdenado = ordenActividad.filter(a => porActividad[a]);
-  const notaCorrales = S.corralesStock === undefined
+  const notaCorrales = !incluirCorralesPorCategoria ? '' : (S.corralesStock === undefined
     ? '<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">Cargando stock de Corrales…</div>'
     : (S.corralesStock === null
       ? '<div style="font-size:12.5px;color:var(--clay-text);margin-bottom:8px">⚠ No se pudo traer el stock de Corrales en este momento.</div>'
-      : (corralesDisponible ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">El total y Engorde incluyen ${fn(corralesEnEsteFiltro)} animales de Corrales (dato en vivo)${campoFiltro ? ' en este campo' : ''}.</div>` : ''));
+      : (corralesDisponible ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">El total y Engorde incluyen ${fn(corralesEnEsteFiltro)} animales de Corrales (dato en vivo)${campoFiltro ? ' en este campo' : ''}.</div>` : '')));
 
   let h = `<div style="margin-bottom:16px">
     ${notaCorrales}
@@ -1406,9 +1408,13 @@ function buildStockTable_(stockList, campoFiltro) {
   h += `</tbody></table></div>`;
   return h;
 }
-window.renderStockFiltrado = function(campoId) {
+window.renderStockFiltrado = function() {
   const el = document.getElementById('mv-stock-tabla');
-  if (el) el.innerHTML = buildStockTable_(S.stock || [], campoId);
+  const campoEl = document.getElementById('mv-stock-filtro-campo');
+  const catEl = document.getElementById('mv-stock-filtro-categoria');
+  const campoId = campoEl ? campoEl.value : '';
+  const categoria = catEl ? catEl.value : '';
+  if (el) el.innerHTML = buildStockTable_(S.stock || [], campoId, categoria);
 };
 
 function buildMovimientos() {
@@ -1451,16 +1457,24 @@ function buildMovimientos() {
     <button class="btn btn-primary" id="mv-save" style="margin-top:6px">Registrar movimiento</button>
   </div>`;
 
+  const categoriasStock = [...new Set(stockList.map(s => s.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
   h += `<div class="section-label">Stock actual por rodeo</div>
-  <div class="fgrid" style="margin-bottom:10px;max-width:320px">
+  <div class="fgrid" style="margin-bottom:10px;max-width:480px">
     <div class="fg"><label>Filtrar por campo</label>
-      <select id="mv-stock-filtro-campo" onchange="renderStockFiltrado(this.value)">
+      <select id="mv-stock-filtro-campo" onchange="renderStockFiltrado()">
         <option value="">Todos los campos</option>
         ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
       </select>
     </div>
+    <div class="fg"><label>Filtrar por categoría</label>
+      <select id="mv-stock-filtro-categoria" onchange="renderStockFiltrado()">
+        <option value="">Todas las categorías</option>
+        ${categoriasStock.map(c => `<option value="${c}">${c}</option>`).join('')}
+        <option value="engorde (Corrales)">engorde (Corrales)</option>
+      </select>
+    </div>
   </div>
-  <div id="mv-stock-tabla">${buildStockTable_(stockList, '')}</div>`;
+  <div id="mv-stock-tabla">${buildStockTable_(stockList, '', '')}</div>`;
 
   h += `<div class="section-label">Historial de movimientos</div>
   <div class="fgrid" style="margin-bottom:10px;max-width:480px">
