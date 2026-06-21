@@ -1497,11 +1497,11 @@ function buildMovimientos() {
       </select>
     </div>
   </div>
-  <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], '', '')}</div>`;
+  <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], S.corralesVentas || [], '', '')}</div>`;
 
   return h;
 }
-function buildMovimientosHistorial_(movimientos, ventas, campoId, rodeoId) {
+function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId, rodeoId) {
   let movsF = movimientos;
   if (campoId) movsF = movsF.filter(m => String(m.campo_origen_id) === String(campoId) || String(m.campo_destino_id) === String(campoId));
   if (rodeoId) movsF = movsF.filter(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
@@ -1510,9 +1510,16 @@ function buildMovimientosHistorial_(movimientos, ventas, campoId, rodeoId) {
   if (campoId) ventasF = ventasF.filter(v => String(v.campo_id) === String(campoId));
   if (rodeoId) ventasF = ventasF.filter(v => String(v.rodeo_id) === String(rodeoId));
 
+  // Ventas/bajas cargadas en la app de Corrales (novillos en engorde) — no tienen rodeo de Cría, así que se excluyen si hay filtro de rodeo
+  let corralesF = corralesVentas || [];
+  const nombreCampoSeleccionado = campoId ? campoNombre(campoId) : '';
+  if (rodeoId) corralesF = [];
+  else if (campoId) corralesF = corralesF.filter(v => CORRAL_CAMPO_NOMBRE_[String(v.cid)] === nombreCampoSeleccionado);
+
   const filas = [
-    ...movsF.map(m => ({ esVenta: false, fecha: m.fecha, item: m })),
-    ...ventasF.map(v => ({ esVenta: true, fecha: v.fecha_salida, item: v })),
+    ...movsF.map(m => ({ origen: 'mov', fecha: m.fecha, item: m })),
+    ...ventasF.map(v => ({ origen: 'venta', fecha: v.fecha_salida, item: v })),
+    ...corralesF.map(v => ({ origen: 'corral', fecha: v.fecha, item: v })),
   ].sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
 
   if (!filas.length) {
@@ -1525,7 +1532,7 @@ function buildMovimientosHistorial_(movimientos, ventas, campoId, rodeoId) {
   </tr></thead><tbody>`;
 
   filas.forEach(f => {
-    if (!f.esVenta) {
+    if (f.origen === 'mov') {
       const m = f.item;
       h += `<tr>
         <td>${fd(m.fecha)}</td>
@@ -1542,7 +1549,7 @@ function buildMovimientosHistorial_(movimientos, ventas, campoId, rodeoId) {
           <button class="icon-btn danger" data-del="${m.movimiento_id}" data-entity="movimientos" data-idcol="movimiento_id" title="Eliminar">✕</button>
         </div></td>
       </tr>`;
-    } else {
+    } else if (f.origen === 'venta') {
       const v = f.item;
       h += `<tr>
         <td>${fd(v.fecha_salida)}</td>
@@ -1559,6 +1566,23 @@ function buildMovimientosHistorial_(movimientos, ventas, campoId, rodeoId) {
           <button class="icon-btn danger" data-del="${v.venta_id}" data-entity="ventas" data-idcol="venta_id" title="Eliminar">✕</button>
         </div></td>
       </tr>`;
+    } else {
+      const v = f.item;
+      const esBaja = !!v.baja;
+      const campoNom = CORRAL_CAMPO_NOMBRE_[String(v.cid)] || 'Sin campo asignado';
+      const obs = esBaja ? 'Baja registrada en Corrales' : (v.precio ? `Venta en Corrales — $${fn(v.precio)}/kg` : 'Venta en Corrales');
+      h += `<tr>
+        <td>${fd(v.fecha)}</td>
+        <td><span class="pill ${esBaja ? 'pill-clay' : 'pill-gold'}">${esBaja ? 'Baja' : 'Venta'} (Corrales)</span></td>
+        <td>—</td>
+        <td>${campoNom}</td>
+        <td>Corral ${v.cid}</td>
+        <td>—</td>
+        <td>—</td>
+        <td class="tc">${fn(v.cant)}</td>
+        <td>${obs}</td>
+        <td></td>
+      </tr>`;
     }
   });
   h += '</tbody></table></div>';
@@ -1569,7 +1593,7 @@ window.renderHistorialFiltrado = function() {
   const rodeoId = document.getElementById('mv-hist-filtro-rodeo')?.value || '';
   const el = document.getElementById('mv-historial-tabla');
   if (el) {
-    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], S.cache.ventas || [], campoId, rodeoId);
+    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], S.cache.ventas || [], S.corralesVentas || [], campoId, rodeoId);
     attachTableDeleteEvents('movimientos', 'movimiento_id');
     attachTableDeleteEvents('ventas', 'venta_id');
   }
@@ -1585,8 +1609,10 @@ async function loadCorralesStock() {
     (data.ingresos || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) + (Number(x.cant) || 0); });
     (data.ventas || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) - (Number(x.cant) || 0); });
     S.corralesStock = porCorral; // { cid: stock_actual }
+    S.corralesVentas = data.ventas || []; // detalle de ventas/bajas para mostrarlas en el historial de Movimientos
   } catch (err) {
     S.corralesStock = null; // si falla la consulta, no se muestra el dato pero no rompe la página
+    S.corralesVentas = null;
   }
 }
 // Mapeo de cada corral al campo donde está físicamente ubicado.
