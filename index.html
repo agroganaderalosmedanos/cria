@@ -408,6 +408,9 @@ const NAV = [
     { k: 'ventas', icon: '$', label: 'Ventas' },
     { k: 'insumos', icon: '🌿', label: 'Insumos' },
   ]},
+  { section: 'Resultados', items: [
+    { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
+  ]},
   { section: 'Sistema', items: [
     { k: 'config', icon: '⚙', label: 'Configuración' },
   ]},
@@ -452,6 +455,15 @@ async function goto(page) {
   }
   if (page === 'insumos' && !S.stockProductos) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
+  }
+  if (page === 'margenbruto') {
+    if (!S.cache.precios_internos) {
+      try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ }
+    }
+    if (!S.margenBruto) {
+      if (!S.margenBrutoPeriodo) S.margenBrutoPeriodo = periodoPreset_('anio');
+      try { await calcularMargenBruto_(); } catch (err) { toast(err.message, 'err'); }
+    }
   }
   render();
 }
@@ -518,7 +530,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resumen de cría', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', insumos: 'Insumos', config: 'Configuración',
+    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración',
   };
   return titles[p] || p;
 }
@@ -534,6 +546,7 @@ function pageSubtitle(p) {
     movimientos: 'Transferencias de animales entre rodeos y saldo inicial',
     ventas: 'Registro de ventas y baja de stock',
     insumos: 'Compras y consumos de alimentación y veterinaria',
+    margenbruto: 'Resultado de la actividad Cría: ventas reales y cesión interna a Recría, menos insumos consumidos',
     config: 'Conexión con la planilla de datos',
   };
   return subs[p] || '';
@@ -552,6 +565,7 @@ function buildPage(page) {
     case 'movimientos': return buildMovimientos();
     case 'ventas':      return buildVentas();
     case 'insumos':     return buildInsumos();
+    case 'margenbruto': return buildMargenBruto();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -617,7 +631,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -1264,7 +1278,7 @@ function buildDestetes() {
   const rodeosAptos = rodeosConPrenadasPorCampo(campos[0]?.campo_id);
   let h = `<div class="panel">
     <div class="panel-title">Registrar destete</div>
-    <p class="helper-text" style="margin-bottom:14px">Conteo por rodeo. Las caravanas individuales se incorporan luego desde la planilla de Animales cuando estén disponibles.</p>
+    <p class="helper-text" style="margin-bottom:14px">Conteo por rodeo. Las caravanas individuales se incorporan luego desde la planilla de Animales cuando estén disponibles. El peso es obligatorio (real de la pesada, o estimado si no pesaste) — se usa para valorizar la cesión interna a Recría en el Margen Bruto.</p>
     ${rodeosConPrenadas().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene vacas preñadas confirmadas por tacto todavía.</p>' : ''}
     <div class="fgrid">
       <div class="fg"><label>Campo</label>
@@ -1276,7 +1290,7 @@ function buildDestetes() {
       </div>
       <div class="fg"><label>Machos</label><input type="number" id="de-machos" placeholder="Ej: 60" min="0"></div>
       <div class="fg"><label>Hembras</label><input type="number" id="de-hembras" placeholder="Ej: 58" min="0"></div>
-      <div class="fg"><label>Peso promedio (kg) <span class="opt">(opcional)</span></label><input type="number" id="de-peso" placeholder="Ej: 180" min="0"></div>
+      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="de-peso" placeholder="Ej: 180" min="0"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="de-obs" placeholder="Opcional"></div>
     </div>
     <button class="btn btn-primary" id="de-save" style="margin-top:6px">Registrar destete</button>
@@ -1297,11 +1311,13 @@ function attachDestetesEvents() {
     const machos = Number(document.getElementById('de-machos').value) || 0;
     const hembras = Number(document.getElementById('de-hembras').value) || 0;
     if (machos === 0 && hembras === 0) { toast('Ingresá machos o hembras destetados.', 'err'); return; }
+    const peso = Number(document.getElementById('de-peso').value) || 0;
+    if (peso <= 0) { toast('El peso promedio es obligatorio — se usa para calcular la cesión interna a Recría. Si no pesaste, cargá una estimación.', 'err'); return; }
     const data = {
       fecha: document.getElementById('de-fecha').value,
       rodeo_id: document.getElementById('de-rodeo').value,
       machos, hembras, total: machos + hembras,
-      peso_prom_kg: Number(document.getElementById('de-peso').value) || '',
+      peso_prom_kg: peso,
       observacion: document.getElementById('de-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
@@ -1312,6 +1328,7 @@ function attachDestetesEvents() {
       toast('Destete registrado — ' + data.total + ' terneros', 'ok');
       await loadEntity('destetes', true);
       S.dashboard = null;
+      S.margenBruto = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -1837,6 +1854,7 @@ function attachVentasEvents() {
       invalidateCache('ventas');
       S.stock = null; // fuerza a recalcular el stock con la venta ya restada
       S.dashboard = null;
+      S.margenBruto = null;
       toast('Venta registrada — ' + data.cant_animales + ' animales', 'ok');
       await loadEntity('ventas', true);
       render();
@@ -2203,6 +2221,170 @@ function attachInsumosEvents() {
   attachTableDeleteEvents('consumos_insumos', 'consumo_id');
 }
 
+// ── MARGEN BRUTO ──────────────────────────────────────────────────────────
+function periodoPreset_(preset) {
+  const hoy = new Date();
+  const y = hoy.getFullYear();
+  const pad = n => String(n).padStart(2, '0');
+  if (preset === 'mes') {
+    return { desde: `${y}-${pad(hoy.getMonth() + 1)}-01`, hasta: today() };
+  }
+  if (preset === 'anio_pasado') {
+    return { desde: `${y - 1}-01-01`, hasta: `${y - 1}-12-31` };
+  }
+  // 'anio' (default)
+  return { desde: `${y}-01-01`, hasta: today() };
+}
+
+async function calcularMargenBruto_() {
+  const { desde, hasta } = S.margenBrutoPeriodo;
+  S.margenBruto = await apiCall('margenBruto', { params: { desde, hasta } });
+}
+
+function buildMargenBruto() {
+  const precios = (S.cache.precios_internos || []).slice().sort((a, b) => String(b.fecha_desde || '').localeCompare(String(a.fecha_desde || '')));
+  const mb = S.margenBruto;
+
+  let h = `<div class="panel">
+    <div class="panel-title">Precio de transferencia interno</div>
+    <p class="helper-text" style="margin-bottom:14px">Valor del kg vivo usado para valorizar la cesión de terneros destetados hacia Recría. Cada destete usa el precio vigente a su fecha — cargá uno nuevo cuando cambie, no edites los anteriores.</p>
+    <div class="fgrid">
+      <div class="fg"><label>Vigente desde</label><input type="date" id="pi-fecha" value="${today()}"></div>
+      <div class="fg"><label>Precio $/kg (ARS)</label><input type="number" id="pi-ars" placeholder="Ej: 1800" min="0" step="0.01"></div>
+      <div class="fg"><label>Precio U$D/kg</label><input type="number" id="pi-usd" placeholder="Ej: 1.6" min="0" step="0.01"></div>
+      <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="pi-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="pi-save" style="margin-top:6px">Guardar precio</button>
+  </div>`;
+
+  h += '<div class="section-label">Historial de precios internos</div>';
+  h += buildEntityTable(precios, [
+    { key: 'fecha_desde', label: 'Vigente desde', render: v => fd(v) },
+    { key: 'precio_ars_kg', label: '$/kg ARS', render: v => v ? '$ ' + fn(v, 2) : '—' },
+    { key: 'precio_usd_kg', label: 'U$D/kg', render: v => v ? 'U$D ' + fn(v, 2) : '—' },
+    { key: 'observacion', label: 'Observación', render: v => v || '—' },
+  ], 'precios_internos', 'precio_id');
+
+  h += '<div class="section-label">Margen bruto de Cría</div>';
+  h += `<div class="panel">
+    <div class="fgrid" style="align-items:flex-end">
+      <div class="fg"><label>Período</label>
+        <select id="mb-preset">
+          <option value="anio">Este año</option>
+          <option value="mes">Este mes</option>
+          <option value="anio_pasado">Año pasado</option>
+          <option value="custom">Personalizado</option>
+        </select>
+      </div>
+      <div class="fg" id="mb-desde-wrap" style="display:none"><label>Desde</label><input type="date" id="mb-desde" value="${S.margenBrutoPeriodo ? S.margenBrutoPeriodo.desde : ''}"></div>
+      <div class="fg" id="mb-hasta-wrap" style="display:none"><label>Hasta</label><input type="date" id="mb-hasta" value="${S.margenBrutoPeriodo ? S.margenBrutoPeriodo.hasta : ''}"></div>
+      <div class="fg" style="flex:0"><button class="btn btn-primary" id="mb-calcular">Calcular</button></div>
+    </div>
+  </div>`;
+
+  if (!mb) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Elegí un período y calculá.</div></div>';
+    return h;
+  }
+
+  const resultadoPositivo = mb.resultado >= 0;
+  h += `<div class="kpi-row">
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">↑</div><div class="kpi-label">Ingresos totales</div>
+      <div class="kpi-value">$ ${fn(mb.ingresos.total)}</div>
+      <div class="kpi-sub">Ventas + cesión por destete</div>
+    </div>
+    <div class="kpi-card accent-clay">
+      <div class="kpi-icon">↓</div><div class="kpi-label">Egresos (insumos)</div>
+      <div class="kpi-value">$ ${fn(mb.egresos.insumos)}</div>
+      <div class="kpi-sub">Alimentación y veterinaria consumida</div>
+    </div>
+    <div class="kpi-card ${resultadoPositivo ? 'accent-green' : 'accent-red'}">
+      <div class="kpi-icon">${resultadoPositivo ? '✓' : '!'}</div><div class="kpi-label">Margen bruto</div>
+      <div class="kpi-value">$ ${fn(mb.resultado)}</div>
+      <div class="kpi-sub">${fd(mb.periodo.desde)} — ${fd(mb.periodo.hasta)}</div>
+    </div>
+  </div>`;
+
+  h += `<div class="panel">
+    <div class="panel-title">Detalle de ingresos</div>
+    <div class="fgrid">
+      <div class="fg"><label>Ventas reales</label><div style="font-size:18px;font-weight:600">$ ${fn(mb.ingresos.ventas)}</div><div class="helper-text">${mb.ingresos.cant_ventas} venta${mb.ingresos.cant_ventas === 1 ? '' : 's'}${mb.ingresos.ventas_sin_precio ? ' — ⚠ ' + mb.ingresos.ventas_sin_precio + ' sin precio cargado' : ''}</div></div>
+      <div class="fg"><label>Cesión interna por destete</label><div style="font-size:18px;font-weight:600">$ ${fn(mb.ingresos.cesion_destete_ars)}</div><div class="helper-text">${mb.ingresos.cant_destetes} destete${mb.ingresos.cant_destetes === 1 ? '' : 's'} · ref. U$D ${fn(mb.ingresos.cesion_destete_usd_ref, 2)}${mb.ingresos.destetes_sin_precio_interno.length ? ' — ⚠ ' + mb.ingresos.destetes_sin_precio_interno.length + ' sin precio interno vigente' : ''}</div></div>
+    </div>
+  </div>`;
+
+  h += `<div class="panel">
+    <div class="panel-title">Detalle de egresos por producto</div>`;
+  if (!mb.egresos.detalle_por_producto.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin consumos de insumos en este período.</div></div>';
+  } else {
+    h += '<div class="tw"><table class="dt"><thead><tr><th>Producto</th><th class="tc">Costo</th></tr></thead><tbody>';
+    mb.egresos.detalle_por_producto.forEach(p => {
+      h += `<tr><td>${p.producto}</td><td class="tc">$ ${fn(p.costo)}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  return h;
+}
+
+function attachMargenBrutoEvents() {
+  const save = document.getElementById('pi-save');
+  if (save) save.onclick = async () => {
+    const fecha = document.getElementById('pi-fecha').value;
+    const ars = Number(document.getElementById('pi-ars').value) || 0;
+    const usd = Number(document.getElementById('pi-usd').value) || 0;
+    if (!fecha || (!ars && !usd)) { toast('Completá la fecha y al menos un precio.', 'err'); return; }
+    const data = {
+      fecha_desde: fecha, precio_ars_kg: ars || '', precio_usd_kg: usd || '',
+      observacion: document.getElementById('pi-obs').value.trim(),
+    };
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'precios_internos', data } });
+      invalidateCache('precios_internos');
+      toast('Precio interno guardado', 'ok');
+      await loadEntity('precios_internos', true);
+      S.margenBruto = null;
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('precios_internos', 'precio_id');
+
+  const presetSel = document.getElementById('mb-preset');
+  if (presetSel) {
+    const customMode = S.margenBrutoPeriodo && S.margenBrutoPeriodo.custom;
+    presetSel.value = customMode ? 'custom' : (S.margenBrutoPeriodoPreset || 'anio');
+    const toggleCustom = () => {
+      const isCustom = presetSel.value === 'custom';
+      document.getElementById('mb-desde-wrap').style.display = isCustom ? '' : 'none';
+      document.getElementById('mb-hasta-wrap').style.display = isCustom ? '' : 'none';
+    };
+    toggleCustom();
+    presetSel.onchange = toggleCustom;
+  }
+  const calcBtn = document.getElementById('mb-calcular');
+  if (calcBtn) calcBtn.onclick = async () => {
+    const preset = document.getElementById('mb-preset').value;
+    if (preset === 'custom') {
+      const desde = document.getElementById('mb-desde').value;
+      const hasta = document.getElementById('mb-hasta').value;
+      if (!desde || !hasta) { toast('Completá desde y hasta.', 'err'); return; }
+      S.margenBrutoPeriodo = { desde, hasta, custom: true };
+      S.margenBrutoPeriodoPreset = 'custom';
+    } else {
+      S.margenBrutoPeriodo = periodoPreset_(preset);
+      S.margenBrutoPeriodoPreset = preset;
+    }
+    calcBtn.disabled = true;
+    try { await calcularMargenBruto_(); render(); }
+    catch (err) { toast(err.message, 'err'); }
+    finally { calcBtn.disabled = false; }
+  };
+}
+
 function buildConfig() {
   return `
   <div class="panel">
@@ -2305,6 +2487,7 @@ function attachTableDeleteEvents(entity, idCol) {
         await loadDashboard();
         if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
         if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
+        if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
         render();
       } catch (err) { toast(err.message, 'err'); }
     };
@@ -2383,6 +2566,7 @@ function openEditModal(entity, idCol, id) {
       await loadEntity(entity, true);
       await loadDashboard();
       if (entity === 'movimientos') { S.stock = null; await loadStock(); }
+      if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
       closeModal();
       render();
     } catch (err) { toast(err.message, 'err'); saveBtn.disabled = false; }
