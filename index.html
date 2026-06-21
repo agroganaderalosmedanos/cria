@@ -415,6 +415,9 @@ async function goto(page) {
   if (page === 'movimientos' && !S.stock) {
     try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
   }
+  if (page === 'movimientos' && !S.cache.ventas) {
+    try { await loadEntity('ventas'); } catch (err) { /* silencioso */ }
+  }
   if (page === 'movimientos' && S.corralesStock === undefined) {
     loadCorralesStock().then(render).catch(() => {});
   }
@@ -1494,33 +1497,81 @@ function buildMovimientos() {
       </select>
     </div>
   </div>
-  <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, '', '')}</div>`;
+  <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], '', '')}</div>`;
 
   return h;
 }
-function buildMovimientosHistorial_(items, campoId, rodeoId) {
-  let filtrado = items;
-  if (campoId) filtrado = filtrado.filter(m => String(m.campo_origen_id) === String(campoId) || String(m.campo_destino_id) === String(campoId));
-  if (rodeoId) filtrado = filtrado.filter(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
-  return buildEntityTable(filtrado, [
-    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-    { key: 'tipo', label: 'Tipo', render: v => `<span class="pill ${v === 'Saldo inicial' ? 'pill-gold' : v === 'Traslado individual' ? 'pill-clay' : 'pill-green'}">${v}</span>` },
-    { key: 'caravana', label: 'Caravana', render: v => v || '—' },
-    { key: 'campo_origen_id', label: 'Campo origen', render: v => v ? campoNombre(v) : '—' },
-    { key: 'rodeo_origen_id', label: 'Rodeo origen', render: v => v ? rodeoNombre(v) : '—' },
-    { key: 'campo_destino_id', label: 'Campo destino', render: v => campoNombre(v) },
-    { key: 'rodeo_destino_id', label: 'Rodeo destino', render: v => rodeoNombre(v) },
-    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
-    { key: 'observaciones', label: 'Obs.', render: v => v || '—' },
-  ], 'movimientos', 'movimiento_id');
+function buildMovimientosHistorial_(movimientos, ventas, campoId, rodeoId) {
+  let movsF = movimientos;
+  if (campoId) movsF = movsF.filter(m => String(m.campo_origen_id) === String(campoId) || String(m.campo_destino_id) === String(campoId));
+  if (rodeoId) movsF = movsF.filter(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
+
+  let ventasF = ventas || [];
+  if (campoId) ventasF = ventasF.filter(v => String(v.campo_id) === String(campoId));
+  if (rodeoId) ventasF = ventasF.filter(v => String(v.rodeo_id) === String(rodeoId));
+
+  const filas = [
+    ...movsF.map(m => ({ esVenta: false, fecha: m.fecha, item: m })),
+    ...ventasF.map(v => ({ esVenta: true, fecha: v.fecha_salida, item: v })),
+  ].sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+
+  if (!filas.length) {
+    return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay registros. Cargá el primero arriba.</div></div>';
+  }
+
+  let h = `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${filas.length}</span></div>
+  <div class="tw"><table class="dt"><thead><tr>
+    <th>Fecha</th><th>Tipo</th><th>Caravana</th><th>Campo origen</th><th>Rodeo origen</th><th>Campo destino</th><th>Rodeo destino</th><th class="tc">Cant.</th><th>Obs.</th><th></th>
+  </tr></thead><tbody>`;
+
+  filas.forEach(f => {
+    if (!f.esVenta) {
+      const m = f.item;
+      h += `<tr>
+        <td>${fd(m.fecha)}</td>
+        <td><span class="pill ${m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green'}">${m.tipo}</span></td>
+        <td>${m.caravana || '—'}</td>
+        <td>${m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—'}</td>
+        <td>${m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—'}</td>
+        <td>${campoNombre(m.campo_destino_id)}</td>
+        <td>${rodeoNombre(m.rodeo_destino_id)}</td>
+        <td class="tc">${fn(m.cantidad)}</td>
+        <td>${m.observaciones || '—'}</td>
+        <td><div class="row-actions">
+          <button class="icon-btn" data-edit="${m.movimiento_id}" data-entity="movimientos" data-idcol="movimiento_id" title="Editar">✎</button>
+          <button class="icon-btn danger" data-del="${m.movimiento_id}" data-entity="movimientos" data-idcol="movimiento_id" title="Eliminar">✕</button>
+        </div></td>
+      </tr>`;
+    } else {
+      const v = f.item;
+      h += `<tr>
+        <td>${fd(v.fecha_salida)}</td>
+        <td><span class="pill pill-red">Venta</span></td>
+        <td>—</td>
+        <td>${v.campo_id ? campoNombre(v.campo_id) : '—'}</td>
+        <td>${v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—'}</td>
+        <td>—</td>
+        <td>—</td>
+        <td class="tc">${fn(v.cant_animales)}</td>
+        <td>${v.comprador ? 'Venta a ' + v.comprador : (v.observaciones || '—')}</td>
+        <td><div class="row-actions">
+          <button class="icon-btn" data-edit="${v.venta_id}" data-entity="ventas" data-idcol="venta_id" title="Editar">✎</button>
+          <button class="icon-btn danger" data-del="${v.venta_id}" data-entity="ventas" data-idcol="venta_id" title="Eliminar">✕</button>
+        </div></td>
+      </tr>`;
+    }
+  });
+  h += '</tbody></table></div>';
+  return h;
 }
 window.renderHistorialFiltrado = function() {
   const campoId = document.getElementById('mv-hist-filtro-campo')?.value || '';
   const rodeoId = document.getElementById('mv-hist-filtro-rodeo')?.value || '';
   const el = document.getElementById('mv-historial-tabla');
   if (el) {
-    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], campoId, rodeoId);
+    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], S.cache.ventas || [], campoId, rodeoId);
     attachTableDeleteEvents('movimientos', 'movimiento_id');
+    attachTableDeleteEvents('ventas', 'venta_id');
   }
 };
 async function loadStock() {
@@ -1613,6 +1664,7 @@ function attachMovimientosEvents() {
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
   attachTableDeleteEvents('movimientos', 'movimiento_id');
+  attachTableDeleteEvents('ventas', 'venta_id');
 }
 
 function buildVentas() {
@@ -1782,7 +1834,7 @@ function attachTableDeleteEvents(entity, idCol) {
         toast('Registro eliminado', 'ok');
         await loadEntity(entity, true);
         await loadDashboard();
-        if (entity === 'movimientos') { S.stock = null; await loadStock(); }
+        if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
         render();
       } catch (err) { toast(err.message, 'err'); }
     };
