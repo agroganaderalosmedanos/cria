@@ -1511,10 +1511,11 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   if (rodeoId) ventasF = ventasF.filter(v => String(v.rodeo_id) === String(rodeoId));
 
   // Ventas/bajas cargadas en la app de Corrales (novillos en engorde) — no tienen rodeo de Cría, así que se excluyen si hay filtro de rodeo
+  const norm_ = s => String(s || '').trim().toLowerCase();
   let corralesF = corralesVentas || [];
-  const nombreCampoSeleccionado = campoId ? campoNombre(campoId) : '';
+  const nombreCampoSeleccionado = campoId ? norm_(campoNombre(campoId)) : '';
   if (rodeoId) corralesF = [];
-  else if (campoId) corralesF = corralesF.filter(v => CORRAL_CAMPO_NOMBRE_[String(v.cid)] === nombreCampoSeleccionado);
+  else if (campoId) corralesF = corralesF.filter(v => norm_(CORRAL_CAMPO_NOMBRE_[String(v.cid)]) === nombreCampoSeleccionado);
 
   const filas = [
     ...movsF.map(m => ({ origen: 'mov', fecha: m.fecha, item: m })),
