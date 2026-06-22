@@ -54,7 +54,7 @@ body { min-height: 100vh; }
 
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; }
 .nav-section-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #8a8174; padding: 14px 10px 6px; }
-.nav-section-label.destacada { color: #d4b65f; border-top: 1px solid rgba(212,182,95,0.25); margin-top: 6px; padding-top: 16px; }
+.nav-section-label.destacada { font-size: 12.5px; font-weight: 700; letter-spacing: 0.04em; color: #d4b65f; border-top: 1px solid rgba(212,182,95,0.25); margin-top: 6px; padding-top: 16px; }
 .nav-item {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
   color: #cfc9bd; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s;
@@ -403,23 +403,21 @@ const NAV = [
   { section: 'Panel', items: [
     { k: 'dashboard', icon: '◈', label: 'Resumen' },
   ]},
-  { section: 'Ciclo de cría', items: [
+  { section: 'Cría', destacada: true, items: [
     { k: 'servicios', icon: '⚭', label: 'Servicios' },
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'mortandad', icon: '†', label: 'Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
-  ]},
-  { section: 'Stock', items: [
     { k: 'movimientos', icon: '⇄', label: 'Movimientos/Stock' },
-    { k: 'ventas', icon: '$', label: 'Ventas Cría' },
+    { k: 'ventas', icon: '$', label: 'Ventas' },
     { k: 'insumos', icon: '🌿', label: 'Insumos' },
   ]},
   { section: 'Recría', destacada: true, items: [
     { k: 'recria', icon: '🐄', label: 'Recría' },
   ]},
-  { section: 'Resultados', items: [
+  { section: 'Resultados', destacada: true, items: [
     { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
   ]},
   { section: 'Sistema', items: [
