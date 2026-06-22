@@ -54,6 +54,7 @@ body { min-height: 100vh; }
 
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; }
 .nav-section-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #8a8174; padding: 14px 10px 6px; }
+.nav-section-label.destacada { color: #d4b65f; border-top: 1px solid rgba(212,182,95,0.25); margin-top: 6px; padding-top: 16px; }
 .nav-item {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
   color: #cfc9bd; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s;
@@ -415,7 +416,7 @@ const NAV = [
     { k: 'ventas', icon: '$', label: 'Ventas Cría' },
     { k: 'insumos', icon: '🌿', label: 'Insumos' },
   ]},
-  { section: 'Recría', items: [
+  { section: 'Recría', destacada: true, items: [
     { k: 'recria', icon: '🐄', label: 'Recría' },
   ]},
   { section: 'Resultados', items: [
@@ -509,7 +510,7 @@ function render() {
 
 function buildShell() {
   const navHtml = NAV.map(sec => `
-    <div class="nav-section-label">${sec.section}</div>
+    <div class="nav-section-label${sec.destacada ? ' destacada' : ''}">${sec.section}</div>
     ${sec.items.map(it => `
       <button class="nav-item ${S.page === it.k ? 'active' : ''}" data-nav="${it.k}">
         <span class="nav-icon">${it.icon}</span>${it.label}
