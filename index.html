@@ -417,6 +417,9 @@ const NAV = [
   { section: 'Recría', destacada: true, items: [
     { k: 'recria', icon: '🐄', label: 'Recría' },
   ]},
+  { section: 'Engorde', destacada: true, items: [
+    { k: 'engorde', icon: '🏭', label: 'Engorde' },
+  ]},
   { section: 'Resultados', destacada: true, items: [
     { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
   ]},
@@ -472,12 +475,16 @@ async function goto(page) {
   if (page === 'insumos' && !S.stockProductos) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
   }
+  if (page === 'engorde') {
+    if (!S.cache.pesadas) { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.ventas) { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
+  }
   if (page === 'recria') {
     if (!S.resumenRecria) {
       try { S.resumenRecria = await apiCall('resumenRecria'); } catch (err) { toast(err.message, 'err'); }
     }
     if (!S.cache.pesadas) { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.ventas_recria) { try { await loadEntity('ventas_recria'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.ventas) { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
     if (!S.cache.egresos_recria) { try { await loadEntity('egresos_recria'); } catch (err) { /* silencioso */ } }
   }
   if (page === 'margenbruto') {
@@ -594,6 +601,7 @@ function buildPage(page) {
     case 'insumos':     return buildInsumos();
     case 'margenbruto': return buildMargenBruto();
     case 'recria':      return buildRecria();
+    case 'engorde':     return buildEngorde();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -659,7 +667,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -1879,7 +1887,7 @@ function attachMovimientosEvents() {
 function buildRecria() {
   const rodeos = (S.resumenRecria && S.resumenRecria.rodeos) || [];
   const pesadas = S.cache.pesadas || [];
-  const ventasR = S.cache.ventas_recria || [];
+  const ventasR = S.cache.ventas || [];
   const egresosR = S.cache.egresos_recria || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
@@ -1990,7 +1998,7 @@ function buildRecria() {
       { key: 'peso_campo_kg', label: 'Peso (kg)', render: v => v ? fn(v) : '—' },
       { key: 'precio_pactado', label: '$/kg', render: v => v ? fn(v) : '—' },
       { key: 'importe_total', label: 'Importe', render: v => v ? '$ ' + fn(v) : '—' },
-    ], 'ventas_recria', 'venta_id');
+    ], 'ventas', 'venta_id');
   }
 
   // ── Historial de egresos
@@ -2073,14 +2081,14 @@ function attachRecriaEvents() {
     const rodeo = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(rodeoId));
     veSave.disabled = true;
     try {
-      await apiCall('create', { body: { entity: 'ventas_recria', data: {
+      await apiCall('create', { body: { entity: 'ventas', data: {
         fecha_salida: fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
         comprador: document.getElementById('rc-ve-comprador').value.trim(),
         cant_animales: cantidad, peso_campo_kg: peso, precio_pactado: precio, importe_total: importe,
         observaciones: document.getElementById('rc-ve-obs').value.trim(),
       }}});
-      invalidateCache('ventas_recria'); S.resumenRecria = null;
-      await loadEntity('ventas_recria', true);
+      invalidateCache('ventas'); S.resumenRecria = null;
+      await loadEntity('ventas', true);
       S.resumenRecria = await apiCall('resumenRecria');
       toast('Venta registrada — ' + cantidad + ' animales', 'ok');
       render();
@@ -2113,8 +2121,99 @@ function attachRecriaEvents() {
   };
 
   attachTableDeleteEvents('pesadas', 'pesada_id');
-  attachTableDeleteEvents('ventas_recria', 'venta_id');
+  attachTableDeleteEvents('ventas', 'venta_id');
   attachTableDeleteEvents('egresos_recria', 'egreso_id');
+}
+
+// ── ENGORDE ───────────────────────────────────────────────────────────────
+function buildEngorde() {
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosEngorde = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const pesadas = (S.cache.pesadas || []).filter(p => {
+    return rodeosEngorde.some(r => String(r.rodeo_id) === String(p.rodeo_id));
+  });
+  const ventas = (S.cache.ventas || []).filter(v => {
+    return rodeosEngorde.some(r => String(r.rodeo_id) === String(v.rodeo_id));
+  });
+
+  let h = '<div class="page-header"><div class="page-title">Engorde</div><div class="page-sub">Pesadas y seguimiento de corrales de engorde</div></div>';
+
+  // Tarjetas por corral
+  h += '<div class="section-label">Corrales activos</div>';
+  if (!rodeosEngorde.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay rodeos con actividad "Engorde". Creá uno desde Movimientos o editá la columna "actividad" en la hoja Rodeos.</div></div>';
+  } else {
+    const stockList = S.stock || [];
+    h += '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">';
+    rodeosEngorde.forEach(r => {
+      const stockRow = stockList.find(s => String(s.rodeo_id) === String(r.rodeo_id));
+      const stock = stockRow ? stockRow.stock : 0;
+      const ultimaP = pesadas.filter(p => String(p.rodeo_id) === String(r.rodeo_id))
+        .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
+      h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;min-width:200px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:2px">${r.nombre}</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${campoNombre(r.campo_id)}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--blue-text)">${fn(stock)} <span style="font-size:13px;font-weight:500">animales</span></div>
+        ${ultimaP ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Última pesada: <strong>${fn(ultimaP.peso_prom_kg)} kg</strong> (${fd(ultimaP.fecha)})</div>` : '<div style="font-size:12px;color:var(--muted);margin-top:4px">Sin pesadas registradas</div>'}
+      </div>`;
+    });
+    h += '</div>';
+  }
+
+  // Formulario de pesada
+  const rodeoOpts = rodeosEngorde.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
+  h += `<div class="section-label">Registrar pesada</div>
+  <div class="panel"><div class="fgrid">
+    <div class="fg"><label>Fecha</label><input type="date" id="eg-pe-fecha" value="${today()}"></div>
+    <div class="fg"><label>Corral</label><select id="eg-pe-rodeo">${rodeoOpts}</select></div>
+    <div class="fg"><label>Cantidad pesada</label><input type="number" id="eg-pe-cantidad" placeholder="Ej: 33" min="1"></div>
+    <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="eg-pe-peso" placeholder="Ej: 480" min="0" step="0.1"></div>
+    <div class="fg"><label>Observación</label><input type="text" id="eg-pe-obs" placeholder="Opcional"></div>
+  </div>
+  <button class="btn btn-primary" id="eg-pe-save" style="margin-top:6px">Registrar pesada</button>
+  </div>`;
+
+  // Historial de pesadas
+  h += '<div class="section-label">Historial de pesadas</div>';
+  const pesSorted = [...pesadas].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  h += buildEntityTable(pesSorted, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Corral', render: v => rodeoNombre(v) },
+    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+    { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+  ], 'pesadas', 'pesada_id');
+
+  return h;
+}
+
+function attachEngordeEvents() {
+  const save = document.getElementById('eg-pe-save');
+  if (save) save.onclick = async () => {
+    const fecha = document.getElementById('eg-pe-fecha').value;
+    const rodeoId = document.getElementById('eg-pe-rodeo').value;
+    const cantidad = Number(document.getElementById('eg-pe-cantidad').value) || 0;
+    const peso = Number(document.getElementById('eg-pe-peso').value) || 0;
+    if (!fecha || !rodeoId || !cantidad || !peso) { toast('Completá todos los campos.', 'err'); return; }
+    const rodeo = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'pesadas', data: {
+        fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
+        cantidad, peso_prom_kg: peso, observacion: document.getElementById('eg-pe-obs').value.trim(),
+      }}});
+      invalidateCache('pesadas');
+      await loadEntity('pesadas', true);
+      toast('Pesada registrada — ' + fn(peso) + ' kg prom.', 'ok');
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('pesadas', 'pesada_id');
+}
+
+function actividadDeRodeo_(rodeoId) {
+  const r = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
+  return r ? (r.actividad || 'Cría') : 'Cría';
 }
 
 function buildVentas() {
@@ -2122,9 +2221,16 @@ function buildVentas() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const compradores = (S.catalogs && S.catalogs.compradores) || [];
   const rodeosAptos = rodeosPorCampo(campos[0]?.campo_id);
-  let h = `<div class="panel">
-    <div class="panel-title">Registrar venta</div>
-    <p class="helper-text" style="margin-bottom:14px">Sirve para cualquier categoría — vacas de descarte, vaquillonas, novillitos, etc. La cantidad se descuenta del stock del rodeo automáticamente.</p>
+
+  // Separar por estado
+  const pendientes = items.filter(v => !v.importe_liq && !v.estado?.includes('liquidado'));
+  const liquidadas = items.filter(v => v.importe_liq || v.estado?.includes('liquidado'));
+
+  let h = `<div class="page-header"><div class="page-title">Ventas</div>
+    <div class="page-sub">Cría, Recría y Engorde — registrá la salida y completá la liquidación cuando llegue del frigorífico</div></div>`;
+
+  h += `<div class="panel">
+    <div class="panel-title">Registrar salida</div>
     <div class="fgrid">
       <div class="fg"><label>Campo</label>
         <select id="ve-campo" onchange="document.getElementById('ve-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
@@ -2139,23 +2245,63 @@ function buildVentas() {
       </div>
       <div class="fg"><label>Cantidad</label><input type="number" id="ve-cantidad" placeholder="Ej: 46" min="1"></div>
       <div class="fg"><label>Peso total en campo (kg) <span class="opt">(opcional)</span></label><input type="number" id="ve-peso" placeholder="Ej: 12650" min="0" oninput="actualizarImporteVenta_()"></div>
-      <div class="fg"><label>Precio por kg <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 2850" min="0" oninput="actualizarImporteVenta_()"></div>
-      <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe total calculado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
+      <div class="fg"><label>Precio pactado $/kg <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 2850" min="0" oninput="actualizarImporteVenta_()"></div>
+      <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe estimado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
     </div>
-    <button class="btn btn-primary" id="ve-save" style="margin-top:6px">Registrar venta</button>
+    <button class="btn btn-primary" id="ve-save" style="margin-top:6px">Registrar salida</button>
   </div>`;
 
-  h += buildEntityTable(items, [
+  // Pendientes de liquidación
+  if (pendientes.length) {
+    h += `<div class="section-label" style="color:var(--clay-text)">⏳ Pendientes de liquidación</div>`;
+    h += buildEntityTable(pendientes, [
+      { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
+      { key: 'rodeo_id', label: 'Rodeo', render: v => `${rodeoNombre(v)} <span class="pill pill-gold" style="font-size:10px">${actividadDeRodeo_(v)}</span>` },
+      { key: 'comprador', label: 'Comprador', render: v => v || '—' },
+      { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
+      { key: 'peso_campo_kg', label: 'Kg campo', render: v => v ? fn(v) : '—' },
+      { key: 'precio_pactado', label: '$/kg pactado', render: v => v ? fn(v) : '—' },
+      { key: 'venta_id', label: 'Acción', render: (v, row) => `<button class="btn btn-primary" style="font-size:11px;padding:3px 10px" onclick="abrirLiquidacion_('${v}')">💰 Liquidar</button>` },
+    ], 'ventas', 'venta_id', { ocultarBotones: true });
+  }
+
+  // Historial liquidadas
+  h += `<div class="section-label">Historial de ventas</div>`;
+  h += buildEntityTable(liquidadas, [
     { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
-    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => `${rodeoNombre(v)} <span class="pill pill-gold" style="font-size:10px">${actividadDeRodeo_(v)}</span>` },
     { key: 'comprador', label: 'Comprador', render: v => v || '—' },
     { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
-    { key: 'peso_campo_kg', label: 'Peso campo (kg)', render: v => v ? fn(v) : '—' },
-    { key: 'precio_pactado', label: '$/kg', render: v => v ? fn(v) : '—' },
-    { key: 'importe_total', label: 'Importe total', render: v => v ? '$ ' + fn(v) : '—' },
-    { key: 'observaciones', label: 'Obs.', render: v => v || '—' },
+    { key: 'peso_campo_kg', label: 'Kg campo', render: v => v ? fn(v) : '—' },
+    { key: 'kg_liquidados', label: 'Kg liq.', render: v => v ? fn(v) : '—' },
+    { key: 'precio_liq', label: '$/kg liq.', render: v => v ? fn(v) : '—' },
+    { key: 'importe_liq', label: 'Importe', render: v => v ? '$ ' + fn(v) : '—' },
   ], 'ventas', 'venta_id');
+
+  // Modal de liquidación (oculto)
+  h += `<div id="modal-liquidacion" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--bg);border-radius:12px;padding:24px;max-width:520px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+      <div style="font-weight:700;font-size:16px;margin-bottom:16px">💰 Completar liquidación</div>
+      <div class="fgrid">
+        <div class="fg"><label>Tipo</label>
+          <select id="liq-tipo">
+            <option value="frigorifico">Frigorífico (con rinde)</option>
+            <option value="en_pie">En pie / directa</option>
+          </select>
+        </div>
+        <div class="fg"><label>Kg liquidados</label><input type="number" id="liq-kg" placeholder="Ej: 16800" min="0" oninput="calcLiqPreview_()"></div>
+        <div class="fg" id="liq-rinde-wrap"><label>Rinde %</label><input type="number" id="liq-rinde" placeholder="Ej: 56" min="0" max="100" step="0.1"></div>
+        <div class="fg"><label>Precio $/kg liquidado</label><input type="number" id="liq-precio" placeholder="Ej: 4800" min="0" oninput="calcLiqPreview_()"></div>
+        <div class="fg"><label>Importe total $</label><input type="number" id="liq-importe" placeholder="Se calcula solo"></div>
+      </div>
+      <div id="liq-preview" style="font-size:14px;font-weight:600;color:var(--green-text);margin:8px 0"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-secondary" onclick="cerrarLiquidacion_()">Cancelar</button>
+        <button class="btn btn-primary" id="liq-save">✓ Guardar liquidación</button>
+      </div>
+    </div>
+  </div>`;
 
   return h;
 }
@@ -2167,19 +2313,67 @@ function attachVentasEvents() {
     const wrap = document.getElementById('ve-importe-preview');
     const val = document.getElementById('ve-importe-val');
     if (!wrap || !val) return;
-    if (peso && precio) {
-      wrap.style.display = 'flex';
-      val.textContent = '$ ' + fn(peso * precio);
-    } else {
-      wrap.style.display = 'none';
+    if (peso && precio) { wrap.style.display = 'flex'; val.textContent = '$ ' + fn(peso * precio); }
+    else wrap.style.display = 'none';
+  };
+
+  window.abrirLiquidacion_ = function(id) {
+    S._liquidandoId = id;
+    const modal = document.getElementById('modal-liquidacion');
+    if (modal) modal.style.display = 'flex';
+    document.getElementById('liq-tipo').onchange = () => {
+      const esFrigo = document.getElementById('liq-tipo').value === 'frigorifico';
+      document.getElementById('liq-rinde-wrap').style.display = esFrigo ? 'flex' : 'none';
+    };
+    calcLiqPreview_();
+    document.getElementById('liq-save').onclick = guardarLiquidacion_;
+  };
+
+  window.cerrarLiquidacion_ = function() {
+    const modal = document.getElementById('modal-liquidacion');
+    if (modal) modal.style.display = 'none';
+    S._liquidandoId = null;
+  };
+
+  window.calcLiqPreview_ = function() {
+    const kg = Number(document.getElementById('liq-kg')?.value) || 0;
+    const precio = Number(document.getElementById('liq-precio')?.value) || 0;
+    const prev = document.getElementById('liq-preview');
+    const impEl = document.getElementById('liq-importe');
+    if (kg && precio) {
+      const imp = Math.round(kg * precio);
+      if (impEl && !impEl.value) impEl.value = imp;
+      if (prev) prev.textContent = fn(kg) + ' kg × $ ' + fn(precio) + '/kg = $ ' + fn(imp);
     }
+  };
+
+  window.guardarLiquidacion_ = async function() {
+    const id = S._liquidandoId;
+    if (!id) return;
+    const tipo = document.getElementById('liq-tipo').value;
+    const kg = Number(document.getElementById('liq-kg').value) || 0;
+    const rinde = Number(document.getElementById('liq-rinde')?.value) || 0;
+    const precio = Number(document.getElementById('liq-precio').value) || 0;
+    const importe = Number(document.getElementById('liq-importe').value) || (kg * precio);
+    if (!kg || !precio) { toast('Completá kg y precio de liquidación.', 'err'); return; }
+    const venta = (S.cache.ventas || []).find(v => String(v.venta_id) === String(id));
+    if (!venta) { toast('Venta no encontrada.', 'err'); return; }
+    const data = { ...venta, tipo_liquidacion: tipo, kg_liquidados: kg, rinde_pct: rinde, precio_liq: precio, importe_liq: importe, estado: 'liquidado' };
+    try {
+      document.getElementById('liq-save').disabled = true;
+      await apiCall('update', { body: { entity: 'ventas', id, data } });
+      invalidateCache('ventas'); S.margenBruto = null;
+      await loadEntity('ventas', true);
+      cerrarLiquidacion_();
+      toast('Liquidación registrada — $ ' + fn(importe), 'ok');
+      render();
+    } catch (err) { toast(err.message, 'err'); document.getElementById('liq-save').disabled = false; }
   };
 
   const save = document.getElementById('ve-save');
   if (save) save.onclick = async () => {
     const peso = Number(document.getElementById('ve-peso').value) || '';
     const precio = Number(document.getElementById('ve-precio').value) || '';
-    const importe = (peso && precio) ? peso * precio : '';
     const data = {
       fecha_salida: document.getElementById('ve-fecha').value,
       rodeo_id: document.getElementById('ve-rodeo').value,
@@ -2190,16 +2384,13 @@ function attachVentasEvents() {
       peso_campo_kg: peso,
       precio_pactado: precio,
       observaciones: document.getElementById('ve-obs').value.trim(),
-      importe_total: importe,
     };
     if (!data.fecha_salida || !data.rodeo_id || !data.cant_animales) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
     save.disabled = true;
     try {
       await apiCall('create', { body: { entity: 'ventas', data } });
       invalidateCache('ventas');
-      S.stock = null; // fuerza a recalcular el stock con la venta ya restada
-      S.dashboard = null;
-      S.margenBruto = null;
+      S.stock = null; S.dashboard = null; S.margenBruto = null;
       toast('Venta registrada — ' + data.cant_animales + ' animales', 'ok');
       await loadEntity('ventas', true);
       render();
