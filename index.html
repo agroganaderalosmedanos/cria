@@ -2008,7 +2008,13 @@ function buildInsumos() {
       </select>
     </div>
     <div class="fg"><label>Filtrar por producto</label>
-      <select id="in-hist-filtro-producto" onchange="renderInsumosHistorialFiltrado()">${productoFiltroOptionsHtml_(productos)}</select>
+      <select id="in-hist-filtro-producto" onchange="actualizarFiltroCampoHistorial_(); renderInsumosHistorialFiltrado()">${productoFiltroOptionsHtml_(productos)}</select>
+    </div>
+    <div class="fg" id="in-hist-campo-wrap" style="display:none"><label>Campo</label>
+      <select id="in-hist-filtro-campo" onchange="renderInsumosHistorialFiltrado()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
     </div>
     <div class="fg"><label>Desde</label><input type="date" id="in-hist-desde" onchange="renderInsumosHistorialFiltrado()"></div>
     <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
@@ -2113,19 +2119,41 @@ window.sortHistorialInsumos = function(key) {
   else { S.sort.historialInsumos = { key, dir: 'asc' }; }
   window.renderInsumosHistorialFiltrado ? window.renderInsumosHistorialFiltrado() : render();
 };
-function buildStockSeleccionado_(productoFiltro) {
+function buildStockSeleccionado_(productoFiltro, campoFiltro) {
   if (!productoFiltro) return '';
   const row = (S.stockProductos || []).find(p => String(p.producto_id) === String(productoFiltro));
   if (!row) return '';
-  const esVet = row.categoria === 'Veterinaria';
-  return `<div style="background:${esVet ? 'var(--blue-bg)' : 'var(--green-bg)'};color:${esVet ? 'var(--blue-text)' : 'var(--green-text)'};border-radius:9px;padding:10px 16px;font-size:16px;font-weight:700;display:inline-block;margin-bottom:12px">Stock actual de ${row.nombre}: ${fn(row.stock)} ${row.unidad || ''}</div>`;
+  const colores = row.categoria === 'Veterinaria' ? ['var(--blue-bg)', 'var(--blue-text)']
+    : row.categoria === 'Reproducción' ? ['var(--gold-bg)', 'var(--gold-text)']
+    : ['var(--green-bg)', 'var(--green-text)'];
+  let stockLabel;
+  if (esPorCampo_(row.por_campo)) {
+    if (campoFiltro && row.stock_por_campo) {
+      const cant = row.stock_por_campo[campoFiltro] || 0;
+      stockLabel = `${fn(cant)} ${row.unidad || ''} en ${campoNombre(campoFiltro)}`;
+    } else {
+      // Mostrar todos los campos
+      const partes = Object.entries(row.stock_por_campo || {}).map(([cid, cant]) => `${campoNombre(cid)}: ${fn(cant)}`).join(' · ');
+      stockLabel = (partes || '0') + ' ' + (row.unidad || '');
+    }
+  } else {
+    stockLabel = `${fn(row.stock)} ${row.unidad || ''}`;
+  }
+  return `<div style="background:${colores[0]};color:${colores[1]};border-radius:9px;padding:10px 16px;font-size:16px;font-weight:700;display:inline-block;margin-bottom:12px">Stock actual de ${row.nombre}: ${stockLabel}</div>`;
 }
-function buildInsumosKardex_(compras, consumos, productoId, desde, hasta) {
+function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoFiltro) {
   const p = ((S.catalogs && S.catalogs.productos) || []).find(x => String(x.producto_id) === String(productoId));
   if (!p) return '';
+  const porCampo = esPorCampo_(p.por_campo);
 
-  const comprasP = (compras || []).filter(c => String(c.producto_id) === String(productoId));
-  const consumosP = (consumos || []).filter(c => String(c.producto_id) === String(productoId));
+  let comprasP = (compras || []).filter(c => String(c.producto_id) === String(productoId));
+  let consumosP = (consumos || []).filter(c => String(c.producto_id) === String(productoId));
+
+  // Si el producto es por campo y hay filtro de campo, restringir ambas listas
+  if (porCampo && campoFiltro) {
+    comprasP = comprasP.filter(c => String(c.campo_id) === String(campoFiltro));
+    consumosP = consumosP.filter(c => String(c.campo_id) === String(campoFiltro));
+  }
 
   // Saldo inicial: resultado de todo lo anterior a la fecha "Desde" (si no hay fecha "Desde", arranca en 0 desde el principio de todo)
   let saldoInicial = 0;
@@ -2186,17 +2214,30 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta) {
   </div>`;
   return h;
 }
+window.actualizarFiltroCampoHistorial_ = function() {
+  const productoId = document.getElementById('in-hist-filtro-producto')?.value || '';
+  const wrap = document.getElementById('in-hist-campo-wrap');
+  if (!wrap) return;
+  const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
+  wrap.style.display = (productoId && producto && esPorCampo_(producto.por_campo)) ? 'flex' : 'none';
+  if (wrap.style.display === 'none') {
+    const sel = document.getElementById('in-hist-filtro-campo');
+    if (sel) sel.value = '';
+  }
+};
+
 window.renderInsumosHistorialFiltrado = function() {
   const productoFiltro = document.getElementById('in-hist-filtro-producto')?.value || '';
   const categoriaFiltro = document.getElementById('in-hist-filtro-categoria')?.value || '';
+  const campoFiltro = document.getElementById('in-hist-filtro-campo')?.value || '';
   const desde = document.getElementById('in-hist-desde')?.value || '';
   const hasta = document.getElementById('in-hist-hasta')?.value || '';
   const stockEl = document.getElementById('in-stock-seleccionado');
-  if (stockEl) stockEl.innerHTML = buildStockSeleccionado_(productoFiltro);
+  if (stockEl) stockEl.innerHTML = buildStockSeleccionado_(productoFiltro, campoFiltro);
   const el = document.getElementById('in-historial-tabla');
   if (el) {
     if (productoFiltro) {
-      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta);
+      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta, campoFiltro);
     } else {
       el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta);
     }
