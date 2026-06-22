@@ -1551,13 +1551,24 @@ function buildMovimientos() {
         <select id="mv-origen">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
       </div>
       <div class="fg" id="mv-campo-destino-wrap"><label>Campo destino</label>
-        <select id="mv-campo-destino" onchange="document.getElementById('mv-destino').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="mv-campo-destino" onchange="actualizarRodeosDestino_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
-      <div class="fg"><label id="mv-destino-label">Rodeo</label>
-        <select id="mv-destino">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+      <div class="fg"><label id="mv-destino-label">Rodeo destino</label>
+        <select id="mv-destino" onchange="mostrarNuevoRodeoDestino_()">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}
+          <option value="__nuevo__">➕ Crear rodeo nuevo...</option>
+        </select>
       </div>
     </div>
-    <div class="fgrid">
+    <div class="fgrid" id="mv-nuevo-rodeo-wrap" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:4px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;width:100%">Nuevo rodeo destino</div>
+      <div class="fg"><label>Nombre del rodeo</label><input type="text" id="mv-nr-nombre" placeholder="Ej: Vaquillonas 2026"></div>
+      <div class="fg"><label>Categoría</label>
+        <select id="mv-nr-categoria">
+          ${[...new Set(((S.catalogs && S.catalogs.rodeos) || []).map(r => r.categoria).filter(Boolean))].sort().map(c => `<option value="${c}">${c}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="fgrid" style="margin-top:8px">
       <div class="fg" id="mv-caravana-wrap" style="display:none"><label>Caravana</label><input type="text" id="mv-caravana" placeholder="Ej: 982000..."></div>
       <div class="fg" id="mv-cantidad-wrap"><label>Cantidad</label><input type="number" id="mv-cantidad" placeholder="Ej: 50" min="1"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="mv-obs" placeholder="Opcional"></div>
@@ -1768,6 +1779,20 @@ function corralesStockPorCampoNombre_() {
   }
   return out;
 }
+window.actualizarRodeosDestino_ = function() {
+  const campoId = document.getElementById('mv-campo-destino')?.value;
+  const sel = document.getElementById('mv-destino');
+  if (!sel) return;
+  sel.innerHTML = rodeoOptionsHtml(rodeosPorCampo(campoId)) + '<option value="__nuevo__">➕ Crear rodeo nuevo...</option>';
+  mostrarNuevoRodeoDestino_();
+};
+
+window.mostrarNuevoRodeoDestino_ = function() {
+  const val = document.getElementById('mv-destino')?.value;
+  const wrap = document.getElementById('mv-nuevo-rodeo-wrap');
+  if (wrap) wrap.style.display = val === '__nuevo__' ? 'flex' : 'none';
+};
+
 function attachMovimientosEvents() {
   function applyTipoUI(tipo) {
     const esSaldoInicial = tipo === 'Saldo inicial';
@@ -1789,14 +1814,37 @@ function attachMovimientosEvents() {
     const tipo = document.querySelector('#mv-tipo-group .selected').dataset.tipo;
     const esIndividual = tipo === 'Traslado individual';
     const esSaldoInicial = tipo === 'Saldo inicial';
+    let rodeoDestinoId = document.getElementById('mv-destino').value;
+    const campoDest = document.getElementById('mv-campo-destino').value;
+
+    // Si eligió "crear rodeo nuevo", crearlo primero
+    if (rodeoDestinoId === '__nuevo__') {
+      const nombre = document.getElementById('mv-nr-nombre').value.trim();
+      const categoria = document.getElementById('mv-nr-categoria').value;
+      const actividad = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.campo_id) === String(campoDest))?.actividad || 'Cría';
+      if (!nombre) { toast('Escribí el nombre del rodeo nuevo.', 'err'); return; }
+      try {
+        const resp = await apiCall('create', { body: { entity: 'rodeos', data: {
+          nombre, campo_id: campoDest, categoria, activo: true, actividad,
+        }}});
+        await loadCatalogs();
+        await loadStock();
+        const nuevos = (S.catalogs && S.catalogs.rodeos) || [];
+        const creado = nuevos.find(r => r.nombre === nombre && String(r.campo_id) === String(campoDest));
+        if (!creado) { toast('Error al crear el rodeo.', 'err'); return; }
+        rodeoDestinoId = String(creado.rodeo_id);
+        toast('Rodeo "' + nombre + '" creado.', 'ok');
+      } catch (err) { toast('Error al crear rodeo: ' + err.message, 'err'); return; }
+    }
+
     const data = {
       tipo,
       caravana: esIndividual ? document.getElementById('mv-caravana').value.trim() : '',
       fecha: document.getElementById('mv-fecha').value,
       campo_origen_id: !esSaldoInicial ? document.getElementById('mv-campo-origen').value : '',
-      campo_destino_id: document.getElementById('mv-campo-destino').value,
+      campo_destino_id: campoDest,
       rodeo_origen_id: !esSaldoInicial ? document.getElementById('mv-origen').value : '',
-      rodeo_destino_id: document.getElementById('mv-destino').value,
+      rodeo_destino_id: rodeoDestinoId,
       cantidad: esIndividual ? 1 : (Number(document.getElementById('mv-cantidad').value) || 0),
       observaciones: document.getElementById('mv-obs').value.trim(),
     };
@@ -1804,12 +1852,7 @@ function attachMovimientosEvents() {
     if (esIndividual && !data.caravana) { toast('Ingresá la caravana del animal.', 'err'); return; }
     if (!esIndividual && !data.cantidad) { toast('Ingresá la cantidad.', 'err'); return; }
     if (!esSaldoInicial && data.rodeo_origen_id === data.rodeo_destino_id) { toast('El rodeo de origen y destino no pueden ser el mismo.', 'err'); return; }
-    // Validación de coherencia: el rodeo elegido debe pertenecer realmente al campo elegido
-    const rodeoDestObj = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_destino_id));
-    if (!rodeoDestObj || String(rodeoDestObj.campo_id) !== String(data.campo_destino_id)) {
-      toast('El rodeo destino no corresponde al campo elegido. Volvé a seleccionar el campo y esperá que se actualice la lista de rodeos.', 'err');
-      return;
-    }
+    // Validación de coherencia campo-rodeo (solo para rodeos existentes, el nuevo ya fue validado arriba)
     if (!esSaldoInicial) {
       const rodeoOrigObj = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_origen_id));
       if (!rodeoOrigObj || String(rodeoOrigObj.campo_id) !== String(data.campo_origen_id)) {
