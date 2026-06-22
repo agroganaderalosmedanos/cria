@@ -412,8 +412,11 @@ const NAV = [
   ]},
   { section: 'Stock', items: [
     { k: 'movimientos', icon: '⇄', label: 'Movimientos/Stock' },
-    { k: 'ventas', icon: '$', label: 'Ventas' },
+    { k: 'ventas', icon: '$', label: 'Ventas Cría' },
     { k: 'insumos', icon: '🌿', label: 'Insumos' },
+  ]},
+  { section: 'Recría', items: [
+    { k: 'recria', icon: '🐄', label: 'Recría' },
   ]},
   { section: 'Resultados', items: [
     { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
@@ -469,6 +472,14 @@ async function goto(page) {
   }
   if (page === 'insumos' && !S.stockProductos) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
+  }
+  if (page === 'recria') {
+    if (!S.resumenRecria) {
+      try { S.resumenRecria = await apiCall('resumenRecria'); } catch (err) { toast(err.message, 'err'); }
+    }
+    if (!S.cache.pesadas) { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.ventas_recria) { try { await loadEntity('ventas_recria'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.egresos_recria) { try { await loadEntity('egresos_recria'); } catch (err) { /* silencioso */ } }
   }
   if (page === 'margenbruto') {
     if (!S.cache.precios_internos) {
@@ -583,6 +594,7 @@ function buildPage(page) {
     case 'ventas':      return buildVentas();
     case 'insumos':     return buildInsumos();
     case 'margenbruto': return buildMargenBruto();
+    case 'recria':      return buildRecria();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -648,7 +660,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -1819,6 +1831,248 @@ function attachMovimientosEvents() {
   };
   attachTableDeleteEvents('movimientos', 'movimiento_id');
   attachTableDeleteEvents('ventas', 'venta_id');
+}
+
+// ── RECRÍA ────────────────────────────────────────────────────────────────
+function buildRecria() {
+  const rodeos = (S.resumenRecria && S.resumenRecria.rodeos) || [];
+  const pesadas = S.cache.pesadas || [];
+  const ventasR = S.cache.ventas_recria || [];
+  const egresosR = S.cache.egresos_recria || [];
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const rodeosRecria = rodeosAll.filter(r => r.actividad === 'Recría');
+
+  let h = '<div class="page-header"><div class="page-title">Recría</div><div class="page-sub">Pesadas, movimientos, ventas y egresos de animales en recría</div></div>';
+
+  // ── Tarjetas resumen por rodeo
+  h += '<div class="section-label">Rodeos en Recría</div>';
+  if (!rodeos.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay rodeos con actividad "Recría". Completá la columna "actividad" en la hoja Rodeos de Sheets.</div></div>';
+  } else {
+    h += '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">';
+    rodeos.forEach(r => {
+      const up = r.ultima_pesada;
+      h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;min-width:200px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:2px">${r.nombre}</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${r.campo_nombre || ''}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--gold-text)">${fn(r.stock)} <span style="font-size:13px;font-weight:500">animales</span></div>
+        ${up ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Última pesada: <strong>${fn(up.peso_prom_kg)} kg</strong> (${fd(up.fecha)})</div>` : '<div style="font-size:12px;color:var(--muted);margin-top:4px">Sin pesadas registradas</div>'}
+      </div>`;
+    });
+    h += '</div>';
+  }
+
+  // ── Formulario de registro
+  const campoOpts = campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('');
+  const rodeoOpts = rodeosRecria.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
+
+  h += `<div class="section-label">Registrar</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    ${['pesada','venta','egreso'].map(t =>
+      `<button class="radio-pill${S.recriaTab === t ? ' selected' : ''}" data-rtab="${t}">${t === 'pesada' ? '⚖ Pesada' : t === 'venta' ? '$ Venta' : '→ Egreso'}</button>`
+    ).join('')}
+  </div>`;
+
+  // Tab Pesada
+  h += `<div id="rc-tab-pesada" style="display:${(!S.recriaTab || S.recriaTab === 'pesada') ? 'block' : 'none'}">
+  <div class="panel"><div class="fgrid">
+    <div class="fg"><label>Fecha</label><input type="date" id="rc-pe-fecha" value="${hoy_()}"></div>
+    <div class="fg"><label>Rodeo</label><select id="rc-pe-rodeo">${rodeoOpts}</select></div>
+    <div class="fg"><label>Cantidad pesada</label><input type="number" id="rc-pe-cantidad" placeholder="Ej: 45" min="1"></div>
+    <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="rc-pe-peso" placeholder="Ej: 185" min="0" step="0.1"></div>
+    <div class="fg"><label>Observación</label><input type="text" id="rc-pe-obs" placeholder="Opcional"></div>
+  </div>
+  <button class="btn btn-primary" id="rc-pe-save" style="margin-top:6px">Registrar pesada</button>
+  </div></div>`;
+
+  // Tab Venta
+  h += `<div id="rc-tab-venta" style="display:${S.recriaTab === 'venta' ? 'block' : 'none'}">
+  <div class="panel"><div class="fgrid">
+    <div class="fg"><label>Fecha</label><input type="date" id="rc-ve-fecha" value="${hoy_()}"></div>
+    <div class="fg"><label>Rodeo</label><select id="rc-ve-rodeo">${rodeoOpts}</select></div>
+    <div class="fg"><label>Comprador</label><input type="text" id="rc-ve-comprador" placeholder="Nombre del comprador" list="rc-compradores-list">
+      <datalist id="rc-compradores-list">${((S.catalogs && S.catalogs.compradores) || []).map(c => `<option value="${c.nombre}">`).join('')}</datalist></div>
+    <div class="fg"><label>Cantidad</label><input type="number" id="rc-ve-cantidad" placeholder="Ej: 15" min="1"></div>
+    <div class="fg"><label>Peso total (kg)</label><input type="number" id="rc-ve-peso" placeholder="Ej: 3200" min="0" oninput="actualizarImporteRecria_()"></div>
+    <div class="fg"><label>Precio por kg</label><input type="number" id="rc-ve-precio" placeholder="Ej: 2900" min="0" oninput="actualizarImporteRecria_()"></div>
+    <div class="fg" id="rc-ve-importe-preview" style="display:none"><label>Importe total</label><div id="rc-ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
+    <div class="fg"><label>Observación</label><input type="text" id="rc-ve-obs" placeholder="Opcional"></div>
+  </div>
+  <button class="btn btn-primary" id="rc-ve-save" style="margin-top:6px">Registrar venta</button>
+  </div></div>`;
+
+  // Tab Egreso
+  h += `<div id="rc-tab-egreso" style="display:${S.recriaTab === 'egreso' ? 'block' : 'none'}">
+  <div class="panel"><div class="fgrid">
+    <div class="fg"><label>Fecha</label><input type="date" id="rc-eg-fecha" value="${hoy_()}"></div>
+    <div class="fg"><label>Rodeo de origen</label><select id="rc-eg-rodeo">${rodeoOpts}</select></div>
+    <div class="fg"><label>Destino</label>
+      <select id="rc-eg-destino">
+        <option value="Engorde">Engorde (Corrales)</option>
+        <option value="Reposición">Reposición de vientres (vuelve a Cría)</option>
+      </select></div>
+    <div class="fg"><label>Cantidad</label><input type="number" id="rc-eg-cantidad" placeholder="Ej: 30" min="1"></div>
+    <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="rc-eg-peso" placeholder="Ej: 280" min="0" step="0.1"></div>
+    <div class="fg"><label>Observación</label><input type="text" id="rc-eg-obs" placeholder="Opcional"></div>
+  </div>
+  <button class="btn btn-primary" id="rc-eg-save" style="margin-top:6px">Registrar egreso</button>
+  </div></div>`;
+
+  // ── Historial de pesadas
+  h += '<div class="section-label">Historial de pesadas</div>';
+  const pesSorted = [...pesadas].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  if (!pesSorted.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pesadas registradas.</div></div>';
+  } else {
+    h += buildEntityTable(pesSorted, [
+      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+      { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+      { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+      { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+      { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+    ], 'pesadas', 'pesada_id');
+  }
+
+  // ── Historial de ventas Recría
+  h += '<div class="section-label">Ventas de Recría</div>';
+  const ventSorted = [...ventasR].sort((a, b) => String(b.fecha_salida).localeCompare(String(a.fecha_salida)));
+  if (!ventSorted.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay ventas registradas.</div></div>';
+  } else {
+    h += buildEntityTable(ventSorted, [
+      { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
+      { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+      { key: 'comprador', label: 'Comprador', render: v => v || '—' },
+      { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
+      { key: 'peso_campo_kg', label: 'Peso (kg)', render: v => v ? fn(v) : '—' },
+      { key: 'precio_pactado', label: '$/kg', render: v => v ? fn(v) : '—' },
+      { key: 'importe_total', label: 'Importe', render: v => v ? '$ ' + fn(v) : '—' },
+    ], 'ventas_recria', 'venta_id');
+  }
+
+  // ── Historial de egresos
+  h += '<div class="section-label">Egresos (a Engorde o Reposición)</div>';
+  const egrSorted = [...egresosR].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  if (!egrSorted.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay egresos registrados.</div></div>';
+  } else {
+    h += buildEntityTable(egrSorted, [
+      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+      { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+      { key: 'destino', label: 'Destino', render: v => v === 'Engorde' ? '<span class="pill pill-blue">Engorde</span>' : '<span class="pill pill-gold">Reposición</span>' },
+      { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
+      { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => v ? fn(v) : '—' },
+      { key: 'observaciones', label: 'Obs.', render: v => v || '—' },
+    ], 'egresos_recria', 'egreso_id');
+  }
+
+  return h;
+}
+
+function attachRecriaEvents() {
+  // Tabs
+  document.querySelectorAll('[data-rtab]').forEach(btn => {
+    btn.onclick = () => {
+      S.recriaTab = btn.dataset.rtab;
+      document.querySelectorAll('[data-rtab]').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      ['pesada','venta','egreso'].forEach(t => {
+        const el = document.getElementById('rc-tab-' + t);
+        if (el) el.style.display = S.recriaTab === t ? 'block' : 'none';
+      });
+    };
+  });
+
+  // Preview importe venta
+  window.actualizarImporteRecria_ = function() {
+    const peso = Number(document.getElementById('rc-ve-peso')?.value) || 0;
+    const precio = Number(document.getElementById('rc-ve-precio')?.value) || 0;
+    const wrap = document.getElementById('rc-ve-importe-preview');
+    const val = document.getElementById('rc-ve-importe-val');
+    if (!wrap || !val) return;
+    if (peso && precio) { wrap.style.display = 'flex'; val.textContent = '$ ' + fn(peso * precio); }
+    else wrap.style.display = 'none';
+  };
+
+  // Guardar pesada
+  const peSave = document.getElementById('rc-pe-save');
+  if (peSave) peSave.onclick = async () => {
+    const fecha = document.getElementById('rc-pe-fecha').value;
+    const rodeoId = document.getElementById('rc-pe-rodeo').value;
+    const cantidad = Number(document.getElementById('rc-pe-cantidad').value) || 0;
+    const peso = Number(document.getElementById('rc-pe-peso').value) || 0;
+    if (!fecha || !rodeoId || !cantidad || !peso) { toast('Completá fecha, rodeo, cantidad y peso.', 'err'); return; }
+    const rodeo = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(rodeoId));
+    peSave.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'pesadas', data: {
+        fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
+        cantidad, peso_prom_kg: peso, observacion: document.getElementById('rc-pe-obs').value.trim(),
+      }}});
+      invalidateCache('pesadas'); S.resumenRecria = null;
+      await loadEntity('pesadas', true);
+      S.resumenRecria = await apiCall('resumenRecria');
+      toast('Pesada registrada — ' + fn(peso) + ' kg prom.', 'ok');
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { peSave.disabled = false; }
+  };
+
+  // Guardar venta
+  const veSave = document.getElementById('rc-ve-save');
+  if (veSave) veSave.onclick = async () => {
+    const fecha = document.getElementById('rc-ve-fecha').value;
+    const rodeoId = document.getElementById('rc-ve-rodeo').value;
+    const cantidad = Number(document.getElementById('rc-ve-cantidad').value) || 0;
+    const peso = Number(document.getElementById('rc-ve-peso').value) || '';
+    const precio = Number(document.getElementById('rc-ve-precio').value) || '';
+    const importe = (peso && precio) ? peso * precio : '';
+    if (!fecha || !rodeoId || !cantidad) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    const rodeo = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(rodeoId));
+    veSave.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'ventas_recria', data: {
+        fecha_salida: fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
+        comprador: document.getElementById('rc-ve-comprador').value.trim(),
+        cant_animales: cantidad, peso_campo_kg: peso, precio_pactado: precio, importe_total: importe,
+        observaciones: document.getElementById('rc-ve-obs').value.trim(),
+      }}});
+      invalidateCache('ventas_recria'); S.resumenRecria = null;
+      await loadEntity('ventas_recria', true);
+      S.resumenRecria = await apiCall('resumenRecria');
+      toast('Venta registrada — ' + cantidad + ' animales', 'ok');
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { veSave.disabled = false; }
+  };
+
+  // Guardar egreso
+  const egSave = document.getElementById('rc-eg-save');
+  if (egSave) egSave.onclick = async () => {
+    const fecha = document.getElementById('rc-eg-fecha').value;
+    const rodeoId = document.getElementById('rc-eg-rodeo').value;
+    const destino = document.getElementById('rc-eg-destino').value;
+    const cantidad = Number(document.getElementById('rc-eg-cantidad').value) || 0;
+    const peso = Number(document.getElementById('rc-eg-peso').value) || '';
+    if (!fecha || !rodeoId || !cantidad) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    const rodeo = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(rodeoId));
+    egSave.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'egresos_recria', data: {
+        fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
+        destino, cant_animales: cantidad, peso_prom_kg: peso,
+        observaciones: document.getElementById('rc-eg-obs').value.trim(),
+      }}});
+      invalidateCache('egresos_recria'); S.resumenRecria = null;
+      await loadEntity('egresos_recria', true);
+      S.resumenRecria = await apiCall('resumenRecria');
+      toast('Egreso registrado — ' + cantidad + ' animales a ' + destino, 'ok');
+      render();
+    } catch (err) { toast(err.message, 'err'); } finally { egSave.disabled = false; }
+  };
+
+  attachTableDeleteEvents('pesadas', 'pesada_id');
+  attachTableDeleteEvents('ventas_recria', 'venta_id');
+  attachTableDeleteEvents('egresos_recria', 'egreso_id');
 }
 
 function buildVentas() {
