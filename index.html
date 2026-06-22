@@ -1842,7 +1842,9 @@ function buildVentas() {
         <datalist id="ve-compradores-list">${compradores.map(c => `<option value="${c.nombre}">`).join('')}</datalist>
       </div>
       <div class="fg"><label>Cantidad</label><input type="number" id="ve-cantidad" placeholder="Ej: 46" min="1"></div>
-      <div class="fg"><label>Precio por animal <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 450000" min="0"></div>
+      <div class="fg"><label>Peso total en campo (kg) <span class="opt">(opcional)</span></label><input type="number" id="ve-peso" placeholder="Ej: 12650" min="0" oninput="actualizarImporteVenta_()"></div>
+      <div class="fg"><label>Precio por kg <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 2850" min="0" oninput="actualizarImporteVenta_()"></div>
+      <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe total calculado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
     </div>
     <button class="btn btn-primary" id="ve-save" style="margin-top:6px">Registrar venta</button>
@@ -1853,7 +1855,9 @@ function buildVentas() {
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
     { key: 'comprador', label: 'Comprador', render: v => v || '—' },
     { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
-    { key: 'precio_pactado', label: 'Precio/animal', render: v => v ? fn(v) : '—' },
+    { key: 'peso_campo_kg', label: 'Peso campo (kg)', render: v => v ? fn(v) : '—' },
+    { key: 'precio_pactado', label: '$/kg', render: v => v ? fn(v) : '—' },
+    { key: 'importe_total', label: 'Importe total', render: v => v ? '$ ' + fn(v) : '—' },
     { key: 'observaciones', label: 'Obs.', render: v => v || '—' },
   ], 'ventas', 'venta_id');
 
@@ -1861,8 +1865,25 @@ function buildVentas() {
 }
 
 function attachVentasEvents() {
+  window.actualizarImporteVenta_ = function() {
+    const peso = Number(document.getElementById('ve-peso')?.value) || 0;
+    const precio = Number(document.getElementById('ve-precio')?.value) || 0;
+    const wrap = document.getElementById('ve-importe-preview');
+    const val = document.getElementById('ve-importe-val');
+    if (!wrap || !val) return;
+    if (peso && precio) {
+      wrap.style.display = 'flex';
+      val.textContent = '$ ' + fn(peso * precio);
+    } else {
+      wrap.style.display = 'none';
+    }
+  };
+
   const save = document.getElementById('ve-save');
   if (save) save.onclick = async () => {
+    const peso = Number(document.getElementById('ve-peso').value) || '';
+    const precio = Number(document.getElementById('ve-precio').value) || '';
+    const importe = (peso && precio) ? peso * precio : '';
     const data = {
       fecha_salida: document.getElementById('ve-fecha').value,
       rodeo_id: document.getElementById('ve-rodeo').value,
@@ -1870,8 +1891,10 @@ function attachVentasEvents() {
       comprador: document.getElementById('ve-comprador').value.trim(),
       tipo_venta: 'Venta real',
       cant_animales: Number(document.getElementById('ve-cantidad').value) || 0,
-      precio_pactado: Number(document.getElementById('ve-precio').value) || '',
+      peso_campo_kg: peso,
+      precio_pactado: precio,
       observaciones: document.getElementById('ve-obs').value.trim(),
+      importe_total: importe,
     };
     if (!data.fecha_salida || !data.rodeo_id || !data.cant_animales) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
     save.disabled = true;
