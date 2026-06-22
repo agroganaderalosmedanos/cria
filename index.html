@@ -463,6 +463,10 @@ async function goto(page) {
   if (page === 'insumos' && !S.cache.productos) {
     try { await loadEntity('productos'); } catch (err) { /* silencioso */ }
   }
+  if (page === 'insumos') {
+    // Siempre refrescar catálogo al entrar a Insumos para que por_campo esté actualizado
+    try { await loadCatalogs(); } catch (err) { /* silencioso */ }
+  }
   if (page === 'insumos' && !S.stockProductos) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
   }
