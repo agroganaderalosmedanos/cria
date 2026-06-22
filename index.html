@@ -2199,14 +2199,19 @@ window.toggleNuevoProducto = function() {
 };
 
 window.actualizarCampoCompraInsumo_ = function() {
-  const wrap = document.getElementById('in-compra-campo-wrap');
-  if (!wrap) return;
   const tipoSel = document.querySelector('#in-tipo-group .radio-pill.selected');
   const esCompra = !tipoSel || tipoSel.dataset.tipo === 'Compra';
   const productoId = document.getElementById('in-producto')?.value;
   const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
   const esPorCampo = producto && (producto.por_campo === true || String(producto.por_campo) === 'true');
-  wrap.style.display = (esCompra && esPorCampo) ? 'flex' : 'none';
+
+  // Compras: campo solo si el producto es por campo
+  const compraWrap = document.getElementById('in-compra-campo-wrap');
+  if (compraWrap) compraWrap.style.display = (esCompra && esPorCampo) ? 'flex' : 'none';
+
+  // Consumos: campo solo si el producto es por campo (el rodeo siempre aparece)
+  const kw = document.getElementById('in-campo-wrap');
+  if (kw && !esCompra) kw.style.display = esPorCampo ? 'flex' : 'none';
 };
 
 function attachInsumosEvents() {
@@ -2215,10 +2220,11 @@ function attachInsumosEvents() {
     const cw = document.getElementById('in-costo-wrap'), pw = document.getElementById('in-proveedor-wrap');
     const kw = document.getElementById('in-campo-wrap'), rw = document.getElementById('in-rodeo-wrap');
     const cnw = document.getElementById('in-campana-wrap');
-    if (!cw || !pw || !kw || !rw) return; // todavía no está el formulario en pantalla (ej: durante el spinner de carga)
+    if (!cw || !pw || !rw) return;
     cw.style.display = esCompra ? 'flex' : 'none';
     pw.style.display = esCompra ? 'flex' : 'none';
-    kw.style.display = esCompra ? 'none' : 'flex';
+    // in-campo-wrap: lo maneja actualizarCampoCompraInsumo_ según producto
+    if (kw && esCompra) kw.style.display = 'none'; // en compras nunca (tiene su propio wrap)
     rw.style.display = esCompra ? 'none' : 'flex';
     if (cnw) cnw.style.display = esCompra ? 'none' : 'flex';
     actualizarCampoCompraInsumo_();
