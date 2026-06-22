@@ -284,6 +284,13 @@ function toast(msg, type) {
 }
 
 function today() { return new Date().toISOString().slice(0, 10); }
+// Compara por_campo de forma robusta: acepta true, "true", "TRUE", "True", 1, "1"
+function esPorCampo_(v) {
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string') return v.toLowerCase() === 'true' || v === '1';
+  return false;
+}
+
 function fd(dateStr) {
   if (!dateStr) return '—';
   const parts = String(dateStr).split('-');
@@ -1952,8 +1959,8 @@ function buildInsumos() {
       : cat === 'Reproducción' ? ['var(--gold-bg)', 'var(--gold-text)']
       : ['var(--green-bg)', 'var(--green-text)'];
 
-    const globales = stockProductos.filter(p => !p.por_campo);
-    const porCampo = stockProductos.filter(p => p.por_campo);
+    const globales = stockProductos.filter(p => !esPorCampo_(p.por_campo));
+    const porCampo = stockProductos.filter(p => esPorCampo_(p.por_campo));
 
     if (globales.length) {
       h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:' + (porCampo.length ? '10px' : '16px') + '">' + globales.map(p => {
@@ -1984,8 +1991,8 @@ function buildInsumos() {
     { key: 'nombre', label: 'Nombre' },
     { key: 'categoria', label: 'Categoría' },
     { key: 'unidad', label: 'Unidad' },
-    { key: 'por_campo', label: 'Por campo', render: v => (v === true || String(v) === 'true') ? '<span class="pill pill-gold">Sí, por campo</span>' : '<span class="pill pill-green">Pozo común</span>' },
-    { key: 'activo', label: 'Activo', render: v => (v === true || String(v) === 'true') ? 'Sí' : 'No' },
+    { key: 'por_campo', label: 'Por campo', render: v => esPorCampo_(v) ? '<span class="pill pill-gold">Sí, por campo</span>' : '<span class="pill pill-green">Pozo común</span>' },
+    { key: 'activo', label: 'Activo', render: v => esPorCampo_(v) ? 'Sí' : 'No' },
   ], 'productos', 'producto_id');
 
   h += `<div class="section-label">Historial de insumos</div>
@@ -2203,7 +2210,7 @@ window.actualizarCampoCompraInsumo_ = function() {
   const esCompra = !tipoSel || tipoSel.dataset.tipo === 'Compra';
   const productoId = document.getElementById('in-producto')?.value;
   const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
-  const esPorCampo = producto && (producto.por_campo === true || String(producto.por_campo) === 'true');
+  const esPorCampo = producto && esPorCampo_(producto.por_campo);
 
   // Compras: campo solo si el producto es por campo
   const compraWrap = document.getElementById('in-compra-campo-wrap');
@@ -2275,7 +2282,7 @@ function attachInsumosEvents() {
     try {
       if (esCompra) {
         const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
-        const esPorCampo = producto && (producto.por_campo === true || String(producto.por_campo) === 'true');
+        const esPorCampo = producto && esPorCampo_(producto.por_campo);
         const campoCompraId = document.getElementById('in-compra-campo')?.value;
         if (esPorCampo && !campoCompraId) { toast('Este producto se guarda por separado en cada campo — elegí a cuál entra esta compra.', 'err'); save.disabled = false; return; }
         const data = {
@@ -2788,7 +2795,7 @@ function openEditModal(entity, idCol, id) {
       fieldsHtml += `<div class="fg"><label>${k}</label>
         <select id="${fid}"><option value="">—</option>${camposL.map(c => `<option value="${c.campo_id}" ${String(c.campo_id)===String(item[k])?'selected':''}>${c.nombre}</option>`).join('')}</select></div>`;
     } else if (type === 'boolean') {
-      const esTrue = item[k] === true || String(item[k]).toLowerCase() === 'true';
+      const esTrue = esPorCampo_(item[k]);
       fieldsHtml += `<div class="fg"><label>${k}</label>
         <select id="${fid}"><option value="true" ${esTrue?'selected':''}>Sí</option><option value="false" ${!esTrue?'selected':''}>No</option></select></div>`;
     } else if (type === 'date') {
