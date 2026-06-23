@@ -453,7 +453,7 @@ async function goto(page) {
   // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
   // se recarga automáticamente al volver a visitarlo.
   if (page === 'dashboard' && !S.dashboard) {
-    loadDashboard().then(render).catch(() => {});
+    loadDashboard().then(render).catch(err => { S.dashboardError = err.message; render(); });
   }
   if (page === 'movimientos' && !S.stock) {
     try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
@@ -689,6 +689,7 @@ function attachPageEvents(page) {
 }
 
 function buildDashboard() {
+  if (S.dashboardError) return `<div class="empty-state"><span class="ico">⚠</span><div class="msg">Error al cargar el resumen: ${S.dashboardError}<br><br><button class="btn btn-secondary" onclick="S.dashboardError=null;S.dashboard=null;render()">Reintentar</button></div></div>`;
   if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Calculando índices…</div>';
   const g = S.dashboard.general;
   const rodeosList = S.dashboard.rodeos || [];
