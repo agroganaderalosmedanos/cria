@@ -418,7 +418,12 @@ const NAV = [
     { k: 'recria', icon: '🐄', label: 'Recría' },
   ]},
   { section: 'Engorde', destacada: true, items: [
-    { k: 'engorde', icon: '🏭', label: 'Engorde' },
+    { k: 'engorde', icon: '📊', label: 'Dashboard' },
+    { k: 'engorde_costos', icon: '💲', label: 'Costos' },
+    { k: 'engorde_comparacion', icon: '⚖', label: 'Comparación' },
+    { k: 'engorde_proyeccion', icon: '📅', label: 'Proyección de salidas' },
+    { k: 'engorde_cierre', icon: '🔮', label: 'Costo proyectado' },
+    { k: 'engorde_historial', icon: '📋', label: 'Historial de lotes' },
   ]},
   { section: 'Resultados', destacada: true, items: [
     { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
@@ -475,9 +480,13 @@ async function goto(page) {
   if (page === 'insumos' && !S.stockProductos) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
   }
-  if (page === 'engorde') {
+  if (page.startsWith('engorde')) {
+    if (!S.stock) { try { await loadStock(); } catch (err) { /* silencioso */ } }
     if (!S.cache.pesadas) { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
     if (!S.cache.ventas) { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.consumos_insumos) { try { await loadEntity('consumos_insumos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.compras_insumos) { try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.movimientos) { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
   }
   if (page === 'recria') {
     if (!S.resumenRecria) {
@@ -601,7 +610,14 @@ function buildPage(page) {
     case 'insumos':     return buildInsumos();
     case 'margenbruto': return buildMargenBruto();
     case 'recria':      return buildRecria();
-    case 'engorde':     return buildEngorde();
+    case 'engorde':
+    case 'engorde_costos':
+    case 'engorde_comparacion':
+    case 'engorde_proyeccion':
+    case 'engorde_cierre':
+    case 'engorde_historial': return buildEngorde();
+    case 'engorde_pesadas': return buildEngordePesadas();
+    case 'engorde_alim':    return buildEngordeAlim();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -667,7 +683,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_alim: attachEngordeAlimEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -2125,90 +2141,672 @@ function attachRecriaEvents() {
   attachTableDeleteEvents('egresos_recria', 'egreso_id');
 }
 
-// ── ENGORDE ───────────────────────────────────────────────────────────────
-function buildEngorde() {
-  const campos = (S.catalogs && S.catalogs.campos) || [];
-  const rodeosEngorde = rodeosTodos().filter(r => r.actividad === 'Engorde');
-  const pesadas = (S.cache.pesadas || []).filter(p => {
-    return rodeosEngorde.some(r => String(r.rodeo_id) === String(p.rodeo_id));
-  });
-  const ventas = (S.cache.ventas || []).filter(v => {
-    return rodeosEngorde.some(r => String(r.rodeo_id) === String(v.rodeo_id));
-  });
+// ── ENGORDE — funciones auxiliares ───────────────────────────────────────
+function egConfig_(rodeoId) {
+  try { return JSON.parse(localStorage.getItem('eg_cfg') || '{}')[rodeoId] || {}; } catch(e) { return {}; }
+}
+function egSaveConfig_(rodeoId, cfg) {
+  try {
+    const all = JSON.parse(localStorage.getItem('eg_cfg') || '{}');
+    all[rodeoId] = Object.assign({}, all[rodeoId] || {}, cfg);
+    localStorage.setItem('eg_cfg', JSON.stringify(all));
+  } catch(e) {}
+}
+function egLotes_() { try { return JSON.parse(localStorage.getItem('eg_lotes') || '[]'); } catch(e) { return []; } }
+function egSaveLotes_(lotes) { try { localStorage.setItem('eg_lotes', JSON.stringify(lotes)); } catch(e) {} }
 
-  let h = '<div class="page-header"><div class="page-title">Engorde</div><div class="page-sub">Pesadas y seguimiento de corrales de engorde</div></div>';
-
-  // Tarjetas por corral
-  h += '<div class="section-label">Corrales activos</div>';
-  if (!rodeosEngorde.length) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay rodeos con actividad "Engorde". Creá uno desde Movimientos o editá la columna "actividad" en la hoja Rodeos.</div></div>';
-  } else {
-    const stockList = S.stock || [];
-    h += '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">';
-    rodeosEngorde.forEach(r => {
-      const stockRow = stockList.find(s => String(s.rodeo_id) === String(r.rodeo_id));
-      const stock = stockRow ? stockRow.stock : 0;
-      const ultimaP = pesadas.filter(p => String(p.rodeo_id) === String(r.rodeo_id))
-        .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
-      h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;min-width:200px">
-        <div style="font-weight:700;font-size:15px;margin-bottom:2px">${r.nombre}</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${campoNombre(r.campo_id)}</div>
-        <div style="font-size:22px;font-weight:800;color:var(--blue-text)">${fn(stock)} <span style="font-size:13px;font-weight:500">animales</span></div>
-        ${ultimaP ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Última pesada: <strong>${fn(ultimaP.peso_prom_kg)} kg</strong> (${fd(ultimaP.fecha)})</div>` : '<div style="font-size:12px;color:var(--muted);margin-top:4px">Sin pesadas registradas</div>'}
-      </div>`;
-    });
-    h += '</div>';
+function egStock_(rodeoId) {
+  const row = (S.stock || []).find(r => String(r.rodeo_id) === String(rodeoId));
+  return row ? (row.stock || 0) : 0;
+}
+function egPesadas_(rodeoId) {
+  return (S.cache.pesadas || []).filter(p => String(p.rodeo_id) === String(rodeoId))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+}
+function egVentas_(rodeoId) {
+  return (S.cache.ventas || []).filter(v => String(v.rodeo_id) === String(rodeoId));
+}
+function egConsumos_(rodeoId, hastaFecha) {
+  const todos = (S.cache.consumos_insumos || []).filter(c => String(c.rodeo_id) === String(rodeoId));
+  return hastaFecha ? todos.filter(c => String(c.fecha) <= hastaFecha) : todos;
+}
+function egCostoPromProducto_(productoId) {
+  const compras = (S.cache.compras_insumos || []).filter(c => String(c.producto_id) === String(productoId));
+  const cant = compras.reduce((s, c) => s + (Number(c.cantidad) || 0), 0);
+  const costo = compras.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
+  return cant > 0 ? costo / cant : 0;
+}
+function egCostoAlim_(rodeoId, hastaFecha) {
+  return egConsumos_(rodeoId, hastaFecha).reduce((s, c) => {
+    return s + (Number(c.cantidad) || 0) * egCostoPromProducto_(c.producto_id);
+  }, 0);
+}
+function egKgVend_(rodeoId) {
+  return egVentas_(rodeoId).reduce((s, v) => s + (Number(v.peso_campo_kg) || 0), 0);
+}
+function egIngVentas_(rodeoId) {
+  return egVentas_(rodeoId).reduce((s, v) => {
+    return s + (Number(v.importe_liq) || (Number(v.precio_pactado) * (Number(v.peso_campo_kg) || 0)) || 0);
+  }, 0);
+}
+function egFechaIngreso_(rodeoId) {
+  const movs = (S.cache.movimientos || [])
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  return movs.length ? movs[0].fecha : null;
+}
+function egKgIngreso_(rodeoId) {
+  // Primero intentamos de la config
+  const cfg = egConfig_(rodeoId);
+  if (cfg.kgIngreso) return Number(cfg.kgIngreso);
+  // Fallback: parsear de las observaciones del primer movimiento
+  const movs = (S.cache.movimientos || [])
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  if (movs.length) {
+    const match = (movs[0].observaciones || '').match(/(\d+)\s*kg/);
+    if (match) return Number(match[1]);
   }
+  return 0;
+}
+function egCantIngresada_(rodeoId) {
+  return (S.cache.movimientos || [])
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
+}
+function egKgIngresados_(rodeoId) {
+  return egCantIngresada_(rodeoId) * egKgIngreso_(rodeoId);
+}
+function egCostoCompra_(rodeoId) {
+  const cfg = egConfig_(rodeoId);
+  if (!cfg.precioCompra) return 0;
+  return egKgIngresados_(rodeoId) * Number(cfg.precioCompra);
+}
+function egKgStockEstimado_(rodeoId) {
+  const stk = egStock_(rodeoId);
+  if (!stk) return 0;
+  const pes = egPesadas_(rodeoId);
+  if (pes.length) return stk * Number(pes[pes.length-1].peso_prom_kg);
+  const kgIng = egKgIngreso_(rodeoId);
+  return kgIng ? stk * kgIng : 0;
+}
+function egKgGanadosHastaPesada_(rodeoId) {
+  const pes = egPesadas_(rodeoId);
+  if (!pes.length) return 0;
+  const ultima = pes[pes.length-1];
+  const kgVendHP = egVentas_(rodeoId)
+    .filter(v => String(v.fecha_salida) <= String(ultima.fecha))
+    .reduce((s, v) => s + (Number(v.peso_campo_kg) || 0), 0);
+  const kgStockPesada = Number(ultima.cantidad) * Number(ultima.peso_prom_kg);
+  const kgIng = egKgIngresados_(rodeoId);
+  return Math.max(0, kgVendHP + kgStockPesada - kgIng);
+}
+function egGanDiaria_(rodeoId) {
+  const pes = egPesadas_(rodeoId);
+  if (!pes.length) return null;
+  const ultima = pes[pes.length-1];
+  if (pes.length >= 2) {
+    const pen = pes[pes.length-2];
+    const dias = Math.round((new Date(ultima.fecha) - new Date(pen.fecha)) / 86400000);
+    if (dias > 0) return (Number(ultima.peso_prom_kg) - Number(pen.peso_prom_kg)) / dias;
+  }
+  const fi = egFechaIngreso_(rodeoId);
+  const kgIng = egKgIngreso_(rodeoId);
+  if (fi && kgIng) {
+    const dias = Math.round((new Date(ultima.fecha) - new Date(fi)) / 86400000);
+    if (dias > 0) return (Number(ultima.peso_prom_kg) - kgIng) / dias;
+  }
+  return null;
+}
+function egFmon_(pesos, moneda) {
+  if (moneda === 'USD' && S.corralesTipoCambio) {
+    const tc = tipoCambioVigente_(today());
+    if (tc) { const u = pesos / tc; return 'U$S ' + fn(u, 0); }
+  }
+  return '$ ' + fn(pesos, 0);
+}
 
-  // Formulario de pesada
-  const rodeoOpts = rodeosEngorde.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
-  h += `<div class="section-label">Registrar pesada</div>
-  <div class="panel"><div class="fgrid">
-    <div class="fg"><label>Fecha</label><input type="date" id="eg-pe-fecha" value="${today()}"></div>
-    <div class="fg"><label>Corral</label><select id="eg-pe-rodeo">${rodeoOpts}</select></div>
-    <div class="fg"><label>Cantidad pesada</label><input type="number" id="eg-pe-cantidad" placeholder="Ej: 33" min="1"></div>
-    <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="eg-pe-peso" placeholder="Ej: 480" min="0" step="0.1"></div>
-    <div class="fg"><label>Observación</label><input type="text" id="eg-pe-obs" placeholder="Opcional"></div>
-  </div>
-  <button class="btn btn-primary" id="eg-pe-save" style="margin-top:6px">Registrar pesada</button>
+// ── ENGORDE — construcción principal ─────────────────────────────────────
+function buildEngorde() {
+  const page = S.page;
+  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const moneda = S.engordeMoneda || 'ARS';
+  const fm = p => egFmon_(p, moneda);
+
+  // Tabs de navegación
+  const tabs = [
+    { k: 'engorde', label: '📊 Dashboard' },
+    { k: 'engorde_costos', label: '💲 Costos' },
+    { k: 'engorde_comparacion', label: '⚖ Comparación' },
+    { k: 'engorde_proyeccion', label: '📅 Proyección' },
+    { k: 'engorde_cierre', label: '🔮 Costo cierre' },
+    { k: 'engorde_historial', label: '📋 Historial' },
+  ];
+
+  let h = `<div class="page-header">
+    <div class="page-title">Engorde</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      ${tabs.map(t => `<button class="radio-pill${page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.label}</button>`).join('')}
+      <button class="radio-pill${moneda==='USD'?' selected':''}" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="margin-left:auto">🇺🇸 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}</button>
+    </div>
   </div>`;
 
-  // Historial de pesadas
-  h += '<div class="section-label">Historial de pesadas</div>';
-  const pesSorted = [...pesadas].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
-  h += buildEntityTable(pesSorted, [
-    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-    { key: 'rodeo_id', label: 'Corral', render: v => rodeoNombre(v) },
-    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
-    { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
-    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
-  ], 'pesadas', 'pesada_id');
+  // Selector de corral (para costos)
+  if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
+    if (!S.engordeCorralId && rodeosEng.length) S.engordeCorralId = String(rodeosEng[0].rodeo_id);
+    h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <label style="font-size:13px;font-weight:600">Corral:</label>
+      <select id="eg-selector-corral" onchange="S.engordeCorralId=this.value;render()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
+        ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(S.engordeCorralId)?'selected':''}>${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+      </select>
+    </div>`;
+  }
+
+  if (page === 'engorde') h += buildEngordeDashboard_(rodeosEng, fm);
+  else if (page === 'engorde_costos') h += buildEngordeCostos_(S.engordeCorralId, fm);
+  else if (page === 'engorde_comparacion') h += buildEngordeComparacion_(rodeosEng, fm);
+  else if (page === 'engorde_proyeccion') h += buildEngordeProyeccion_(S.engordeCorralId, fm);
+  else if (page === 'engorde_cierre') h += buildEngordeCierre_(S.engordeCorralId, fm);
+  else if (page === 'engorde_historial') h += buildEngordeHistorial_(rodeosEng, fm);
+
+  // Formulario pesada (en Dashboard)
+  if (page === 'engorde') {
+    const rodeoOpts = rodeosEng.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
+    h += `<div class="section-label" style="margin-top:20px">Registrar pesada</div>
+    <div class="panel"><div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="eg-pe-fecha" value="${today()}"></div>
+      <div class="fg"><label>Corral</label><select id="eg-pe-rodeo">${rodeoOpts}</select></div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="eg-pe-cantidad" placeholder="Ej: 185" min="1"></div>
+      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="eg-pe-peso" placeholder="Ej: 480" min="0" step="0.1"></div>
+      <div class="fg"><label>Observación</label><input type="text" id="eg-pe-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="eg-pe-save" style="margin-top:6px">Registrar pesada</button>
+    </div>`;
+    // Historial de pesadas
+    h += '<div class="section-label">Historial de pesadas</div>';
+    const todasPes = (S.cache.pesadas || [])
+      .filter(p => rodeosEng.some(r => String(r.rodeo_id) === String(p.rodeo_id)))
+      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    h += buildEntityTable(todasPes, [
+      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+      { key: 'rodeo_id', label: 'Corral', render: v => rodeoNombre(v) },
+      { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+      { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+      { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+    ], 'pesadas', 'pesada_id');
+  }
 
   return h;
 }
 
+function buildEngordeDashboard_(rodeosEng, fm) {
+  let h = '';
+  // KPIs totales
+  let totAn=0, totKgV=0, totIv=0, totCA=0, totCC=0, totKgG=0;
+  rodeosEng.forEach(r => {
+    totAn += egStock_(r.rodeo_id);
+    totKgV += egKgVend_(r.rodeo_id);
+    totIv += egIngVentas_(r.rodeo_id);
+    totCA += egCostoAlim_(r.rodeo_id);
+    totCC += egCostoCompra_(r.rodeo_id);
+    totKgG += egKgGanadosHastaPesada_(r.rodeo_id);
+  });
+  const gansDiarias = rodeosEng.map(r => egGanDiaria_(r.rodeo_id)).filter(g => g !== null);
+  const ganDiariaProm = gansDiarias.length ? gansDiarias.reduce((s,g)=>s+g,0)/gansDiarias.length : null;
+
+  h += `<div class="kpi-grid" style="margin-bottom:12px">
+    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock total</div><div class="kpi-val">${fn(totAn,0)}</div><div class="kpi-sub">animales en corrales</div></div>
+    <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso ventas</div><div class="kpi-val">${fm(totIv)}</div></div>
+    <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alimentación</div><div class="kpi-val">${fm(totCA)}</div></div>
+    ${totCC>0?`<div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo compra</div><div class="kpi-val">${fm(totCC)}</div></div>`:''}
+    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">GDP prom.</div><div class="kpi-val kpi-pos">${ganDiariaProm!==null?fn(ganDiariaProm,3)+' kg/día':'—'}</div></div>
+    <div class="kpi"><div class="kpi-icon">📊</div><div class="kpi-label">Kg ganados</div><div class="kpi-val kpi-pos">${fn(totKgG,0)}</div><div class="kpi-sub">hasta última pesada</div></div>
+  </div>`;
+
+  // Tarjetas por corral
+  h += '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">';
+  rodeosEng.forEach(r => {
+    const rid = r.rodeo_id;
+    const stk = egStock_(rid);
+    const pes = egPesadas_(rid);
+    const ultima = pes.length ? pes[pes.length-1] : null;
+    const gd = egGanDiaria_(rid);
+    const iv = egIngVentas_(rid);
+    const ca = egCostoAlim_(rid);
+    const cc = egCostoCompra_(rid);
+    const res = iv - ca - cc;
+    const cfg = egConfig_(rid);
+    const kgG = egKgGanadosHastaPesada_(rid);
+    const fi = egFechaIngreso_(rid);
+    const dias = fi ? Math.round((new Date() - new Date(fi)) / 86400000) : null;
+
+    h += `<div style="background:var(--bg2);border:1px solid var(--border);border-left:4px solid ${res>=0?'var(--green)':'var(--clay-text)'};border-radius:10px;padding:14px 16px;min-width:220px;max-width:280px">
+      <div style="font-weight:700;font-size:15px;margin-bottom:2px">${r.nombre}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${campoNombre(r.campo_id)}${dias!==null?' · '+dias+' días':''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px">
+        <div><div style="color:var(--muted);font-size:11px">Stock</div><div style="font-weight:700;color:var(--blue-text)">${fn(stk,0)} cab.</div></div>
+        <div><div style="color:var(--muted);font-size:11px">Última pesada</div><div style="font-weight:600">${ultima?fn(ultima.peso_prom_kg)+' kg':'—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">GDP</div><div style="font-weight:600;color:var(--green-text)">${gd!==null?fn(gd,3)+' kg/día':'—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">Kg ganados</div><div style="font-weight:600;color:var(--green-text)">${fn(kgG,0)} kg</div></div>
+        <div><div style="color:var(--muted);font-size:11px">Costo alim.</div><div style="font-weight:600">${fm(ca)}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">Ingreso ventas</div><div style="font-weight:600">${fm(iv)}</div></div>
+      </div>
+      ${res!==0?`<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);font-size:13px;font-weight:700;color:${res>=0?'var(--green-text)':'var(--clay-text)'}">Resultado: ${fm(res)}</div>`:''}
+    </div>`;
+  });
+  h += '</div>';
+  return h;
+}
+
+function buildEngordeCostos_(rodeoId, fm) {
+  if (!rodeoId) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Seleccioná un corral.</div></div>';
+  const r = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
+  if (!r) return '';
+  const cfg = egConfig_(rodeoId);
+  const stk = egStock_(rodeoId);
+  const pes = egPesadas_(rodeoId);
+  const ultima = pes.length ? pes[pes.length-1] : null;
+  const fi = egFechaIngreso_(rodeoId);
+  const kgIngProm = egKgIngreso_(rodeoId);
+  const cantIng = egCantIngresada_(rodeoId);
+  const kgI = egKgIngresados_(rodeoId);
+  const ca = egCostoAlim_(rodeoId);
+  const caHP = egCostoAlim_(rodeoId, ultima?.fecha);
+  const cc = egCostoCompra_(rodeoId);
+  const iv = egIngVentas_(rodeoId);
+  const kgV = egKgVend_(rodeoId);
+  const kgG = egKgGanadosHastaPesada_(rodeoId);
+  const kgStk = egKgStockEstimado_(rodeoId);
+  const stkPrecio = Number(cfg.precioStock || 0);
+  const ivStock = stkPrecio > 0 && ultima ? stk * Number(ultima.peso_prom_kg) * stkPrecio : 0;
+  const ivTotal = iv + ivStock;
+  const costoTotal = cc + ca;
+  const util = ivTotal - costoTotal;
+  const dias = fi && ultima ? Math.round((new Date(ultima.fecha) - new Date(fi)) / 86400000) : null;
+  const ganDiaria = dias && dias > 0 && kgIngProm > 0 ? (Number(ultima?.peso_prom_kg||0) - kgIngProm) / dias : null;
+  const caXkg = kgG > 0 ? caHP / kgG : null;
+  const ccXkg = kgG > 0 ? cc / kgG : null;
+  const precVentaProm = kgV > 0 ? iv / kgV : null;
+  const totalAnim = (cantIng - stk) + stk;
+  const costoARecuperar = costoTotal - iv;
+  const breakEven = kgStk > 0 ? costoARecuperar / kgStk : null;
+  const margenVsBE = breakEven && precVentaProm ? precVentaProm - breakEven : null;
+
+  let h = '';
+  // Config del corral
+  h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+    <span style="font-size:13px;font-weight:600">⚙ Config. ${r.nombre}</span>
+    <div style="display:flex;align-items:center;gap:6px;font-size:13px">
+      <label>Kg prom. entrada:</label>
+      <input type="number" id="eg-cfg-kg" value="${cfg.kgIngreso||''}" placeholder="Ej: 335" min="0" step="1" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:13px">
+      <label>Precio compra $/kg:</label>
+      <input type="number" id="eg-cfg-precio" value="${cfg.precioCompra||''}" placeholder="Ej: 4500" min="0" step="1" style="width:100px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:13px">
+      <label>Stock valorizado $/kg:</label>
+      <input type="number" id="eg-cfg-stock" value="${cfg.precioStock||''}" placeholder="Ej: 6000" min="0" step="1" style="width:100px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+    </div>
+    <button class="btn btn-secondary" id="eg-cfg-save" data-rodeo="${rodeoId}" style="padding:4px 14px;font-size:12px">✓ Guardar</button>
+    ${ivStock>0?`<span style="font-size:13px;font-weight:700;color:var(--green-text)">Stock valorizado: ${fm(ivStock)}</span>`:''}
+  </div>`;
+
+  // KPIs principales
+  h += `<div class="kpi-grid" style="margin-bottom:8px">
+    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">${fm(cc)}</div><div class="kpi-sub">${fn(cantIng,0)} animales × ${fn(kgIngProm,0)} kg × ${cc>0?fm(cc/Math.max(kgI,1))+'/kg':'sin precio'}</div></div>
+    <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alim. acumulado</div><div class="kpi-val">${fm(ca)}</div><div class="kpi-sub">todos los insumos hasta hoy</div></div>
+    <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alim. hasta pesada</div><div class="kpi-val">${fm(caHP)}</div><div class="kpi-sub">${ultima?'hasta '+fd(ultima.fecha):'igual al total'}</div></div>
+    <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo total</div><div class="kpi-val">${fm(costoTotal)}</div><div class="kpi-sub">compra + alimentación</div></div>
+    <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso ventas</div><div class="kpi-val">${fm(iv)}</div><div class="kpi-sub">${fn(kgV,0)} kg vendidos</div></div>
+  </div>
+  <div class="kpi-grid" style="margin-bottom:8px">
+    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val">${stkPrecio>0?fm(ivStock):'—'}</div><div class="kpi-sub">${fn(stk,0)} anim.${stkPrecio>0?' · '+fm(stkPrecio)+'/kg':' · ingresá precio arriba'}</div></div>
+    <div class="kpi"><div class="kpi-icon">💰</div><div class="kpi-label">Ingresos totales</div><div class="kpi-val kpi-pos">${fm(ivTotal)}</div><div class="kpi-sub">ventas + stock valorizado</div></div>
+    <div class="kpi"><div class="kpi-icon">${util>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${fm(util)}</div><div class="kpi-sub">${util>=0?'✓ Ganancia':'⚠ Pérdida'}</div></div>
+    <div class="kpi"><div class="kpi-icon">🔢</div><div class="kpi-label">% Margen</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${ivTotal>0?egPct_(util,ivTotal):'—'}</div></div>
+  </div>
+  <div class="kpi-grid" style="margin-bottom:8px">
+    <div class="kpi"><div class="kpi-icon">📥</div><div class="kpi-label">Kg ingresados</div><div class="kpi-val">${fn(kgI,0)}</div><div class="kpi-sub">${fn(cantIng,0)} anim. × ${fn(kgIngProm,0)} kg</div></div>
+    <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Kg vendidos</div><div class="kpi-val">${fn(kgV,0)}</div></div>
+    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Kg en stock (pesada)</div><div class="kpi-val">${fn(kgStk,0)}</div><div class="kpi-sub">${fn(stk,0)} anim. × ${ultima?fn(ultima.peso_prom_kg,0)+' kg':'prom. ingreso'}</div></div>
+    <div class="kpi"><div class="kpi-icon">📊</div><div class="kpi-label">Kg ganados</div><div class="kpi-val kpi-pos">${fn(kgG,0)}</div><div class="kpi-sub">${ultima&&kgIngProm?fn(Number(ultima.peso_prom_kg)-kgIngProm,1)+' kg/animal':'sin pesadas'}</div></div>
+    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">GDP</div><div class="kpi-val kpi-pos">${ganDiaria!==null?fn(ganDiaria,3)+' kg/día':'—'}</div><div class="kpi-sub">${fi&&ultima?fd(fi)+' → '+fd(ultima.fecha):''}</div></div>
+  </div>
+  <div class="kpi-grid" style="margin-bottom:16px">
+    <div class="kpi"><div class="kpi-icon">💹</div><div class="kpi-label">Precio venta prom.</div><div class="kpi-val">${precVentaProm?fm(precVentaProm):'—'}</div><div class="kpi-sub">por kg vendido</div></div>
+    <div class="kpi"><div class="kpi-icon">🌾</div><div class="kpi-label">Alim. / kg ganado</div><div class="kpi-val">${caXkg?fm(caXkg):'—'}</div></div>
+    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Compra / kg ganado</div><div class="kpi-val">${ccXkg?fm(ccXkg):'—'}</div></div>
+    <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Break-even</div><div class="kpi-val ${breakEven&&precVentaProm&&precVentaProm<breakEven?'kpi-neg':''}">${breakEven?fm(breakEven):'—'}</div><div class="kpi-sub">precio mín. para recuperar costo</div></div>
+    ${margenVsBE!==null?`<div class="kpi" style="border-top:2px solid ${margenVsBE>=0?'var(--green)':'var(--red)'}"><div class="kpi-icon">${margenVsBE>=0?'✅':'❌'}</div><div class="kpi-label">Precio vs break-even</div><div class="kpi-val ${margenVsBE>=0?'kpi-pos':'kpi-neg'}">${margenVsBE>=0?'+':''}${fm(margenVsBE)}/kg</div></div>`:''}
+  </div>`;
+
+  // Tabla de costos por alimento
+  const productos = (S.catalogs && S.catalogs.productos) || [];
+  const consumosCrl = egConsumos_(rodeoId);
+  const prodIds = [...new Set(consumosCrl.map(c => c.producto_id))];
+  if (prodIds.length) {
+    h += '<div class="section-label">Detalle de costos por insumo</div>';
+    h += '<div class="tw"><table class="dt"><thead><tr><th>Insumo</th><th class="tc">Cantidad</th><th class="tc">Costo total</th><th class="tc">Costo hasta pesada</th><th class="tc">$/kg ganado</th></tr></thead><tbody>';
+    prodIds.forEach(pid => {
+      const prod = productos.find(p => String(p.producto_id) === String(pid));
+      const cUnit = egCostoPromProducto_(pid);
+      const cant = consumosCrl.filter(c => String(c.producto_id)===String(pid)).reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+      const costoTot = cant * cUnit;
+      const costoHP = egConsumos_(rodeoId, ultima?.fecha).filter(c=>String(c.producto_id)===String(pid)).reduce((s,c)=>s+(Number(c.cantidad)||0)*cUnit,0);
+      h += `<tr><td>${prod?.nombre||'Producto '+pid}</td><td class="tc">${fn(cant)} ${prod?.unidad||''}</td><td class="tc">${fm(costoTot)}</td><td class="tc">${fm(costoHP)}</td><td class="tc">${kgG>0?fm(costoHP/kgG):'—'}</td></tr>`;
+    });
+    h += `<tr class="total-row"><td><strong>Total</strong></td><td class="tc">—</td><td class="tc"><strong>${fm(ca)}</strong></td><td class="tc"><strong>${fm(caHP)}</strong></td><td class="tc"><strong>${kgG>0?fm(caHP/kgG):'—'}</strong></td></tr>`;
+    h += '</tbody></table></div>';
+  }
+  return h;
+}
+
+function buildEngordeComparacion_(rodeosEng, fm) {
+  if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
+  const rows = rodeosEng.map(r => {
+    const rid = r.rodeo_id;
+    const stk = egStock_(rid);
+    const cantIng = egCantIngresada_(rid);
+    const kgI = egKgIngresados_(rid);
+    const kgV = egKgVend_(rid);
+    const kgG = egKgGanadosHastaPesada_(rid);
+    const kgStk = egKgStockEstimado_(rid);
+    const ca = egCostoAlim_(rid);
+    const cc = egCostoCompra_(rid);
+    const iv = egIngVentas_(rid);
+    const fi = egFechaIngreso_(rid);
+    const pes = egPesadas_(rid);
+    const ultima = pes.length ? pes[pes.length-1] : null;
+    const gd = egGanDiaria_(rid);
+    const kgIng = egKgIngreso_(rid);
+    const caXkg = kgG > 0 ? egCostoAlim_(rid, ultima?.fecha) / kgG : null;
+    const ccXkg = kgG > 0 ? cc / kgG : null;
+    const cfg = egConfig_(rid);
+    const stkP = Number(cfg.precioStock||0);
+    const ivStock = stkP>0&&ultima ? stk*Number(ultima.peso_prom_kg)*stkP : 0;
+    const util = iv + ivStock - ca - cc;
+    const dias = fi ? Math.round((new Date()-new Date(fi))/86400000) : null;
+    return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, util, gd, caXkg, ccXkg, dias, kgIng, ultima };
+  });
+
+  const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
+  const tag = (v, b, low=false) => (v!==null&&b!==null&&v===b)?` style="color:var(--green);font-weight:700"`:'' ;
+  const bGd = best(r=>r.gd); const bKgG=best(r=>r.kgG); const bUtil=best(r=>r.util); const bCaXkg=best(r=>r.caXkg,true);
+
+  let h = '<div class="tw"><table class="dt"><thead><tr><th>Indicador</th>' + rows.map(r=>`<th class="tc">${r.r.nombre}</th>`).join('') + '</tr></thead><tbody>';
+  const row = (lbl, fn, fmt) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);return`<td class="tc">${v!==null&&v!==undefined?fmt(v):'—'}</td>`;}).join('')}</tr>`;
+  const rowTag = (lbl, fn, fmt, best, low=false) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);return`<td class="tc"${tag(v,best,low)}>${v!==null&&v>0?fmt(v):'—'}</td>`;}).join('')}</tr>`;
+
+  h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>📦 Stock y movimiento</strong></td></tr>`;
+  h += row('Animales ingresados', r=>r.cantIng, v=>fn(v,0));
+  h += row('Stock actual', r=>r.stk, v=>fn(v,0)+' cab.');
+  h += row('Días en corral', r=>r.dias, v=>v+' días');
+  h += row('Kg prom. entrada', r=>r.kgIng, v=>fn(v,0)+' kg');
+  h += row('Kg prom. última pesada', r=>r.ultima?Number(r.ultima.peso_prom_kg):null, v=>fn(v,0)+' kg');
+  h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>⚖️ Kilos</strong></td></tr>`;
+  h += row('Kg ingresados', r=>r.kgI, v=>fn(v,0)+' kg');
+  h += row('Kg vendidos', r=>r.kgV, v=>fn(v,0)+' kg');
+  h += row('Kg en stock', r=>r.kgStk, v=>fn(v,0)+' kg');
+  h += rowTag('Kg ganados', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
+  h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
+  h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
+  h += row('Costo de compra', r=>r.cc, fm);
+  h += row('Costo alimentación', r=>r.ca, fm);
+  h += row('Costo total', r=>r.ca+r.cc, fm);
+  h += rowTag('Alim. / kg ganado', r=>r.caXkg, fm, bCaXkg, true);
+  h += rowTag('Compra / kg ganado', r=>r.ccXkg, fm, best(r=>r.ccXkg,true), true);
+  h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💰 Resultados</strong></td></tr>`;
+  h += row('Ingreso ventas', r=>r.iv, fm);
+  h += row('Stock valorizado', r=>r.ivStock>0?r.ivStock:null, fm);
+  h += rowTag('Utilidad', r=>r.util, fm, bUtil);
+  h += '</tbody></table></div>';
+  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales.</div>`;
+  return h;
+}
+
+function buildEngordeProyeccion_(rodeoId, fm) {
+  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  let h = '';
+  (rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))] : rodeosEng).filter(Boolean).forEach(r => {
+    const rid = r.rodeo_id;
+    const cfg = egConfig_(rid);
+    const stk = egStock_(rid);
+    const pes = egPesadas_(rid);
+    const ultima = pes.length ? pes[pes.length-1] : null;
+    const fi = egFechaIngreso_(rid);
+    const dias = fi ? Math.round((new Date()-new Date(fi))/86400000) : null;
+    const pesoObj = Number(cfg.pesoObjetivo || 520);
+    const precioP = Number(cfg.precioProyectado || 0);
+    const kgActual = ultima ? Number(ultima.peso_prom_kg) : null;
+    const gd = egGanDiaria_(rid);
+    const yaAlcanzo = kgActual !== null && kgActual >= pesoObj;
+    const diasRest = !yaAlcanzo && gd && gd>0 && kgActual!==null ? Math.ceil((pesoObj-kgActual)/gd) : null;
+    const fechaSalida = diasRest!==null&&ultima ? (() => { const d=new Date(ultima.fecha); d.setDate(d.getDate()+diasRest); return d.toISOString().slice(0,10); })() : null;
+    const border = yaAlcanzo?'var(--green)':(fechaSalida?'var(--blue-text)':'var(--border)');
+
+    h += `<div class="panel" style="border-left:4px solid ${border};margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+        <div><div style="font-weight:700;font-size:15px">${r.nombre}</div><div style="font-size:12px;color:var(--muted)">${fn(stk,0)} animales${dias!==null?' · '+dias+' días':''}</div></div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px">
+          <label>Peso objetivo (kg):</label>
+          <input type="number" id="eg-proj-peso-${rid}" value="${pesoObj}" min="1" step="1" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+          <label>Precio estimado $/kg:</label>
+          <input type="number" id="eg-proj-precio-${rid}" value="${precioP||''}" placeholder="$ / kg" min="0" step="1" style="width:100px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+          <button class="btn btn-secondary" id="eg-proj-save-${rid}" data-rodeo="${rid}" style="padding:4px 12px;font-size:12px">✓</button>
+        </div>
+      </div>`;
+    if (!ultima) {
+      h += `<div class="empty-state">Sin pesadas. Registrá al menos una para calcular la proyección.</div>`;
+    } else if (yaAlcanzo) {
+      h += `<div style="background:var(--green-bg);border-radius:8px;padding:12px;margin-bottom:10px"><div style="font-weight:700;color:var(--green-text)">✅ Peso objetivo alcanzado — ${fn(kgActual,1)} kg</div></div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">Kg totales a vender</div><div class="kpi-val">${fn(stk*kgActual,0)} kg</div><div class="kpi-sub">${fn(stk,0)} × ${fn(kgActual,1)} kg</div></div>
+        ${precioP>0?`<div class="kpi"><div class="kpi-label">Ingreso proyectado</div><div class="kpi-val kpi-pos">${fm(stk*kgActual*precioP)}</div></div>`:''}
+      </div>`;
+    } else if (fechaSalida) {
+      h += `<div class="kpi-grid">
+        <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Fecha estimada de salida</div><div class="kpi-val kpi-pos" style="font-size:18px">${fd(fechaSalida)}</div><div class="kpi-sub">en ${diasRest} días</div></div>
+        <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Peso actual → objetivo</div><div class="kpi-val">${fn(kgActual,1)} → ${fn(pesoObj,0)} kg</div><div class="kpi-sub">faltan ${fn(pesoObj-kgActual,1)} kg/animal</div></div>
+        <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">GDP</div><div class="kpi-val">${fn(gd,3)} kg/día</div></div>
+        <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Kg totales al vender</div><div class="kpi-val">${fn(stk*pesoObj,0)} kg</div></div>
+        ${precioP>0?`<div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso proyectado</div><div class="kpi-val kpi-pos">${fm(stk*pesoObj*precioP)}</div></div>`:''}
+      </div>`;
+    } else {
+      h += `<div class="empty-state">No se puede proyectar. Necesitás al menos una pesada y un GDP positivo.</div>`;
+    }
+    h += '</div>';
+  });
+  return h;
+}
+
+function buildEngordeCierre_(rodeoId, fm) {
+  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const lista = rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))].filter(Boolean) : rodeosEng;
+  let h = '';
+  lista.forEach(r => {
+    const rid = r.rodeo_id;
+    const stk = egStock_(rid);
+    const cfg = egConfig_(rid);
+    const pesoObj = Number(cfg.pesoObjetivo||520);
+    const pes = egPesadas_(rid);
+    const ultima = pes.length ? pes[pes.length-1] : null;
+    const gd = egGanDiaria_(rid);
+    const kgActual = ultima ? Number(ultima.peso_prom_kg) : null;
+    // Fecha salida
+    let fSalida = null;
+    if (kgActual && gd && gd>0 && kgActual<pesoObj) {
+      const diasR = Math.ceil((pesoObj-kgActual)/gd);
+      const d = new Date(ultima.fecha); d.setDate(d.getDate()+diasR);
+      fSalida = d.toISOString().slice(0,10);
+    }
+    const hoy = today();
+    const diasHastaSalida = fSalida ? Math.max(0, Math.round((new Date(fSalida)-new Date(hoy))/86400000)) : null;
+    const caAcum = egCostoAlim_(rid);
+    const cc = egCostoCompra_(rid);
+    const hace30 = new Date(hoy); hace30.setDate(hace30.getDate()-30);
+    const f30 = hace30.toISOString().slice(0,10);
+    const cons30 = egConsumos_(rid).filter(c => c.fecha >= f30);
+    const costo30 = cons30.reduce((s,c) => s+(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id), 0);
+    const costoDiario = costo30 / 30;
+    const costoProyect = diasHastaSalida !== null ? Math.round(costoDiario * diasHastaSalida) : null;
+    const costoTotalCierre = costoProyect !== null ? caAcum + costoProyect : null;
+    const costoFinal = costoTotalCierre !== null ? cc + costoTotalCierre : null;
+    const stkP = Number(cfg.precioStock||0);
+    const ivProyect = stkP>0 ? stk*pesoObj*stkP : null;
+    const ivVentas = egIngVentas_(rid);
+    const ivTotal = ivProyect!==null ? ivVentas+ivProyect : null;
+    const utilProyect = ivTotal!==null&&costoFinal!==null ? ivTotal-costoFinal : null;
+    const border = utilProyect!==null?(utilProyect>=0?'var(--green)':'var(--red)'):'var(--border)';
+
+    h += `<div class="panel" style="border-left:4px solid ${border};margin-bottom:12px">
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px">${r.nombre}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Salida proyectada: <strong>${fSalida?fd(fSalida):'sin datos'}</strong>${diasHastaSalida!==null?' ('+diasHastaSalida+' días)':''}</div>`;
+    if (diasHastaSalida===null) {
+      h += '<div class="empty-state">Sin proyección disponible. Necesitás pesadas registradas.</div>';
+    } else {
+      h += `<div class="kpi-grid" style="margin-bottom:8px">
+        <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Alim. acumulada</div><div class="kpi-val">${fm(caAcum)}</div></div>
+        <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Costo diario (30d)</div><div class="kpi-val">${fm(costoDiario)}</div></div>
+        <div class="kpi"><div class="kpi-icon">🔮</div><div class="kpi-label">Alim. proyectada</div><div class="kpi-val">${fm(costoProyect)}</div><div class="kpi-sub">${diasHastaSalida} días × ${fm(costoDiario)}/día</div></div>
+        <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Total alim. al cierre</div><div class="kpi-val">${fm(costoTotalCierre)}</div></div>
+        <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo compra</div><div class="kpi-val">${fm(cc)}</div></div>
+        <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo total al cierre</div><div class="kpi-val">${fm(costoFinal)}</div></div>
+        ${ivProyect!==null?`<div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso proyectado</div><div class="kpi-val">${fm(ivProyect)}</div><div class="kpi-sub">${fn(stk,0)} × ${fn(pesoObj,0)} kg × ${fm(stkP)}/kg</div></div>`:''}
+        ${utilProyect!==null?`<div class="kpi"><div class="kpi-icon">${utilProyect>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad proyectada</div><div class="kpi-val ${utilProyect>=0?'kpi-pos':'kpi-neg'}">${fm(utilProyect)}</div></div>`:''}
+      </div>`;
+    }
+    h += '</div>';
+  });
+  return h;
+}
+
+function buildEngordeHistorial_(rodeosEng, fm) {
+  const lotes = egLotes_().sort((a, b) => String(b.fechaCierre).localeCompare(String(a.fechaCierre)));
+  // Detectar corrales en 0 que no tienen lote cerrado hoy
+  const cerrados = rodeosEng.filter(r => {
+    const stk = egStock_(r.rodeo_id);
+    const yaGuardado = lotes.some(l => l.rodeoId===String(r.rodeo_id) && l.fechaCierre===today());
+    return stk===0 && egCantIngresada_(r.rodeo_id)>0 && !yaGuardado;
+  });
+  let h = '';
+  cerrados.forEach(r => {
+    h += `<div style="background:var(--blue-bg);border-radius:8px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div><div style="font-size:13px;font-weight:600;color:var(--blue-text)">${r.nombre} — lote completado</div>
+      <div style="font-size:12px;color:var(--blue-text)">Stock en 0. Podés guardar este lote en el historial.</div></div>
+      <button class="btn btn-primary" id="eg-cerrar-${r.rodeo_id}" data-rodeo="${r.rodeo_id}" style="font-size:12px;padding:6px 14px">📋 Guardar en historial</button>
+    </div>`;
+  });
+  if (!lotes.length) {
+    h += '<div class="empty-state"><span class="ico">📋</span><div class="msg">No hay lotes cerrados. Cuando un corral llegue a stock 0 podés guardarlo acá.</div></div>';
+    return h;
+  }
+  h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th class="tc">Apertura</th><th class="tc">Cierre</th><th class="tc">Días</th><th class="tc">Animales</th><th class="tc">Kg ganados</th><th class="tc">GDP</th><th class="tc">Costo alim.</th><th class="tc">Ingreso</th><th class="tc">Utilidad</th><th></th></tr></thead><tbody>';
+  lotes.forEach(l => {
+    const dias = Math.round((new Date(l.fechaCierre)-new Date(l.fechaApertura))/86400000);
+    const util = l.ingVentas - l.costoCompra - l.costoAlim;
+    h += `<tr>
+      <td><strong>${l.nombre}</strong></td>
+      <td class="tc">${fd(l.fechaApertura)}</td>
+      <td class="tc">${fd(l.fechaCierre)}</td>
+      <td class="tc">${dias} días</td>
+      <td class="tc">${fn(l.animales,0)} cab.</td>
+      <td class="tc">${fn(l.kgGanados,0)} kg</td>
+      <td class="tc">${l.ganDiaria?fn(l.ganDiaria,3)+' kg/día':'—'}</td>
+      <td class="tc">${fm(l.costoAlim)}</td>
+      <td class="tc">${fm(l.ingVentas)}</td>
+      <td class="tc" style="font-weight:700;color:${util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(util)}</td>
+      <td><button class="btn-del" data-del-lote="${l.id}">🗑</button></td>
+    </tr>`;
+  });
+  h += '</tbody></table></div>';
+  if (lotes.length>1) {
+    const promGD = lotes.filter(l=>l.ganDiaria).reduce((s,l)=>s+l.ganDiaria,0)/lotes.filter(l=>l.ganDiaria).length;
+    const promUtil = lotes.reduce((s,l)=>s+(l.ingVentas-l.costoCompra-l.costoAlim),0)/lotes.length;
+    h += `<div class="section-label" style="margin-top:16px">Promedios históricos (${lotes.length} lotes)</div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">GDP prom.</div><div class="kpi-val">${fn(promGD,3)} kg/día</div></div>
+      <div class="kpi"><div class="kpi-icon">${promUtil>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad prom./lote</div><div class="kpi-val ${promUtil>=0?'kpi-pos':'kpi-neg'}">${fm(promUtil)}</div></div>
+    </div>`;
+  }
+  return h;
+}
+
 function attachEngordeEvents() {
-  const save = document.getElementById('eg-pe-save');
-  if (save) save.onclick = async () => {
+  // Pesada
+  const peSave = document.getElementById('eg-pe-save');
+  if (peSave) peSave.onclick = async () => {
     const fecha = document.getElementById('eg-pe-fecha').value;
     const rodeoId = document.getElementById('eg-pe-rodeo').value;
-    const cantidad = Number(document.getElementById('eg-pe-cantidad').value) || 0;
-    const peso = Number(document.getElementById('eg-pe-peso').value) || 0;
-    if (!fecha || !rodeoId || !cantidad || !peso) { toast('Completá todos los campos.', 'err'); return; }
-    const rodeo = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
-    save.disabled = true;
+    const cantidad = Number(document.getElementById('eg-pe-cantidad').value)||0;
+    const peso = Number(document.getElementById('eg-pe-peso').value)||0;
+    if (!fecha||!rodeoId||!cantidad||!peso) { toast('Completá todos los campos.','err'); return; }
+    const rodeo = rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId));
+    peSave.disabled = true;
     try {
-      await apiCall('create', { body: { entity: 'pesadas', data: {
-        fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
-        cantidad, peso_prom_kg: peso, observacion: document.getElementById('eg-pe-obs').value.trim(),
-      }}});
-      invalidateCache('pesadas');
-      await loadEntity('pesadas', true);
-      toast('Pesada registrada — ' + fn(peso) + ' kg prom.', 'ok');
-      render();
-    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+      await apiCall('create', { body: { entity:'pesadas', data:{ fecha, rodeo_id:rodeoId, campo_id:rodeo?.campo_id||'', cantidad, peso_prom_kg:peso, observacion:document.getElementById('eg-pe-obs').value.trim() }}});
+      invalidateCache('pesadas'); await loadEntity('pesadas',true);
+      toast('Pesada registrada — '+fn(peso)+' kg prom.','ok'); render();
+    } catch(err) { toast(err.message,'err'); } finally { peSave.disabled=false; }
   };
-  attachTableDeleteEvents('pesadas', 'pesada_id');
+
+  // Config corral (Costos)
+  const cfgSave = document.getElementById('eg-cfg-save');
+  if (cfgSave) cfgSave.onclick = () => {
+    const rid = cfgSave.dataset.rodeo;
+    egSaveConfig_(rid, {
+      kgIngreso: document.getElementById('eg-cfg-kg')?.value||'',
+      precioCompra: document.getElementById('eg-cfg-precio')?.value||'',
+      precioStock: document.getElementById('eg-cfg-stock')?.value||'',
+    });
+    toast('Configuración guardada','ok'); render();
+  };
+
+  // Proyección — guardar peso objetivo y precio
+  document.querySelectorAll('[id^="eg-proj-save-"]').forEach(btn => {
+    btn.onclick = () => {
+      const rid = btn.dataset.rodeo;
+      egSaveConfig_(rid, {
+        pesoObjetivo: document.getElementById('eg-proj-peso-'+rid)?.value||'',
+        precioProyectado: document.getElementById('eg-proj-precio-'+rid)?.value||'',
+      });
+      toast('Guardado','ok'); render();
+    };
+  });
+
+  // Cerrar lote (historial)
+  document.querySelectorAll('[id^="eg-cerrar-"]').forEach(btn => {
+    btn.onclick = () => {
+      const rid = btn.dataset.rodeo;
+      const r = rodeosTodos().find(x=>String(x.rodeo_id)===String(rid));
+      if (!r) return;
+      const fi = egFechaIngreso_(rid);
+      const pes = egPesadas_(rid);
+      const kgG = egKgGanadosHastaPesada_(rid);
+      const gd = egGanDiaria_(rid);
+      const lote = {
+        id: Date.now().toString(36), rodeoId: String(rid), nombre: r.nombre,
+        fechaApertura: fi||today(), fechaCierre: today(),
+        animales: egCantIngresada_(rid), kgGanados: kgG, ganDiaria: gd,
+        costoAlim: egCostoAlim_(rid), costoCompra: egCostoCompra_(rid),
+        ingVentas: egIngVentas_(rid),
+      };
+      const lotes = egLotes_(); lotes.push(lote); egSaveLotes_(lotes);
+      toast('Lote guardado en historial','ok'); render();
+    };
+  });
+
+  // Eliminar lote
+  document.querySelectorAll('[data-del-lote]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.delLote;
+      if (!confirm('¿Eliminar este lote del historial?')) return;
+      const lotes = egLotes_().filter(l=>l.id!==id); egSaveLotes_(lotes);
+      toast('Lote eliminado','ok'); render();
+    };
+  });
+
+  attachTableDeleteEvents('pesadas','pesada_id');
 }
 
 function actividadDeRodeo_(rodeoId) {
