@@ -500,6 +500,11 @@ async function goto(page) {
     if (!S.cache.compras_insumos) { try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.movimientos) { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
     if (S.corralesTipoCambio === undefined) { try { await loadCorralesStock(); } catch (err) { /* silencioso */ } }
+    // Inicializar corral seleccionado con el primero de Engorde que tenga animales
+    if (!S.engordeCorralId) {
+      const rEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+      if (rEng.length) S.engordeCorralId = String(rEng[0].rodeo_id);
+    }
   }
   if (page === 'recria') {
     if (!S.resumenRecria) {
@@ -2289,7 +2294,7 @@ function egKgIngreso_(rodeoId) {
 }
 function egCantIngresada_(rodeoId) {
   return (S.cache.movimientos || [])
-    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
 }
 function egKgIngresados_(rodeoId) {
@@ -2375,7 +2380,6 @@ function buildEngorde() {
 
   // Selector de corral (para costos)
   if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
-    if (!S.engordeCorralId && rodeosEng.length) S.engordeCorralId = String(rodeosEng[0].rodeo_id);
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <label style="font-size:13px;font-weight:600">Corral:</label>
       <select id="eg-selector-corral" onchange="S.engordeCorralId=this.value;render()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
