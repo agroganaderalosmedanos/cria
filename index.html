@@ -4323,7 +4323,13 @@ function showLoginScreen(onSuccess) {
   userEl.onkeydown = e => { if (e.key === 'Enter') passEl.focus(); }
   setTimeout(() => userEl.focus(), 100);
 }
-loginRequired(session => { window.__lmSession = session; init(); });
+loginRequired(session => {
+  window.__lmSession = session;
+  window.S = S;
+  window.goto = goto;
+  window.render = render;
+  init();
+});
 </script>
 </body>
 </html>
