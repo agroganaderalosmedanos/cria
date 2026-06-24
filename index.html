@@ -2321,20 +2321,22 @@ function egKgGanadosHastaPesada_(rodeoId) {
 }
 function egGanDiaria_(rodeoId) {
   const pes = egPesadas_(rodeoId);
-  if (!pes.length) return null;
-  const ultima = pes[pes.length-1];
-  if (pes.length >= 2) {
-    const pen = pes[pes.length-2];
-    const dias = Math.round((new Date(ultima.fecha) - new Date(pen.fecha)) / 86400000);
-    if (dias > 0) return (Number(ultima.peso_prom_kg) - Number(pen.peso_prom_kg)) / dias;
+  if (pes.length < 2) {
+    // Con una sola pesada, usar fecha de ingreso y kg de ingreso
+    if (pes.length === 1) {
+      const fi = egFechaIngreso_(rodeoId);
+      const kgIng = egKgIngreso_(rodeoId);
+      if (fi && kgIng) {
+        const dias = Math.round((new Date(pes[0].fecha) - new Date(fi)) / 86400000);
+        if (dias > 0) return (Number(pes[0].peso_prom_kg) - kgIng) / dias;
+      }
+    }
+    return null;
   }
-  const fi = egFechaIngreso_(rodeoId);
-  const kgIng = egKgIngreso_(rodeoId);
-  if (fi && kgIng) {
-    const dias = Math.round((new Date(ultima.fecha) - new Date(fi)) / 86400000);
-    if (dias > 0) return (Number(ultima.peso_prom_kg) - kgIng) / dias;
-  }
-  return null;
+  // Con 2+ pesadas: primera vs última (igual que Corrales)
+  const first = pes[0], last = pes[pes.length-1];
+  const dias = Math.round((new Date(last.fecha) - new Date(first.fecha)) / 86400000);
+  return dias > 0 ? (Number(last.peso_prom_kg) - Number(first.peso_prom_kg)) / dias : null;
 }
 function egFmon_(pesos, moneda) {
   if (moneda === 'USD') {
@@ -2453,9 +2455,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const utilSinVet = totIvTotal - totCC - totCA;
   const utilConVet = totIvTotal - totCC - totCA - totCV;
   const tc = tipoCambioVigente_(today());
+  const tcVal = tc ? Number(tc.valor || tc) : null;
   const moneda = S.engordeMoneda || 'ARS';
-  const tcLabel = tc ? '· TC: $' + fn(tc, 0) + '/USD' : '';
-  const kgGPorAnim = totAn > 0 && totKgG > 0 ? totKgG / rodeosEng.length / (rodeosEng.reduce((s,r)=>s+egCantIngresada_(r.rodeo_id),0)/rodeosEng.length) : null;
+  const tcLabel = tcVal ? '· TC: $' + fn(tcVal, 0) + '/USD' : '';
+  const kgGPorAnim = totKgG > 0 && rodeosEng.length > 0 ? totKgG / rodeosEng.reduce((s,r)=>s+egCantIngresada_(r.rodeo_id),0) : null;
 
   let h = '';
 
@@ -2465,28 +2468,32 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     <button class="btn btn-secondary" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="font-size:12px;padding:5px 14px">${moneda==='USD'?'Ver en ARS':'🇺🇸 Ver en USD'}</button>
   </div>`;
 
-  // KPI grid — fila 1
+  // KPI grid — fila 1: Stock | Ingreso ventas | Stock val. | Costo compra | Costo alim. | Costo vet.
   h += `<div class="kpi-grid">
     <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock total</div><div class="kpi-val">${fn(totAn,0)}</div><div class="kpi-sub">animales en corrales</div></div>
     <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso por ventas</div><div class="kpi-val">${fm(totIv)}</div></div>
-    <div class="kpi"><div class="kpi-icon">🏷️</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val kpi-pos">${totIvStk>0?fm(totIvStk):'—'}</div><div class="kpi-sub">${totIvTotal>0?'ingresos totales: '+fm(totIvTotal):'configurá precio de stock'}</div></div>
-    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">${totCC>0?fm(totCC):'—'}</div><div class="kpi-sub">${totCC===0?'configurá precio de compra':''}</div></div>
+    <div class="kpi"><div class="kpi-icon">🏷️</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val kpi-pos">${totIvStk>0?fm(totIvStk):'—'}</div><div class="kpi-sub">${totIvTotal>0&&totIvStk>0?'ingresos totales: '+fm(totIvTotal):'configurá precio de stock en Costos'}</div></div>
+    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">${totCC>0?fm(totCC):'—'}</div><div class="kpi-sub">${totCC===0?'configurá precio de compra en Costos':''}</div></div>
     <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo de alimentación</div><div class="kpi-val">${fm(totCA)}</div></div>
+    <div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">${totCV>0?fm(totCV):'$ 0'}</div><div class="kpi-sub">sin vet: ${fm(utilSinVet)}</div></div>
   </div>`;
 
-  // KPI grid — fila 2
+  // KPI grid — fila 2: Utilidad neta
   h += `<div class="kpi-grid">
-    <div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">${totCV>0?fm(totCV):'$ 0'}</div><div class="kpi-sub">sin vet: ${fm(utilSinVet)} · con vet: ${fm(utilConVet)}</div></div>
     <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Utilidad neta</div><div class="kpi-val ${utilConVet>=0?'kpi-pos':'kpi-neg'}">${fm(utilConVet)}</div><div class="kpi-sub">ventas + stock valorizado</div></div>
+    <div class="kpi"><div class="kpi-label" style="font-size:10px;margin-bottom:6px">DESGLOSE</div>
+      <div style="font-size:12px">Sin vet: <strong>${fm(utilSinVet)}</strong></div>
+      <div style="font-size:12px">Con vet: <strong>${fm(utilConVet)}</strong></div>
+    </div>
   </div>`;
 
-  // KPI grid — fila 3
+  // KPI grid — fila 3: Kilos y GDP
   h += `<div class="kpi-grid">
     <div class="kpi"><div class="kpi-icon">📥</div><div class="kpi-label">Kg ingresados</div><div class="kpi-val">${fn(totKgI,0)}</div><div class="kpi-sub">kg al entrar al corral</div></div>
     <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Kg vendidos</div><div class="kpi-val">${fn(totKgV,0)}</div><div class="kpi-sub">kg totales egresados</div></div>
     <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Kg en stock</div><div class="kpi-val">${fn(totKgStk,0)}</div><div class="kpi-sub">${fn(totAn,0)} animales · última pesada</div></div>
     <div class="kpi"><div class="kpi-icon">📊</div><div class="kpi-label">Kg ganados</div><div class="kpi-val kpi-pos">${fn(totKgG,0)}</div><div class="kpi-sub">${kgGPorAnim?fn(kgGPorAnim,1)+' kg gan./animal (prom.)':''}</div></div>
-    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Ganancia diaria prom.</div><div class="kpi-val kpi-pos">${gdpProm!==null?fn(gdpProm,3)+' kg/día':'—'}</div><div class="kpi-sub">${rodeosEng.map(r=>campoNombre(r.campo_id).split(' ')[1]||campoNombre(r.campo_id)).join(' · ')}</div></div>
+    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Ganancia diaria prom.</div><div class="kpi-val kpi-pos">${gdpProm!==null?fn(gdpProm,3)+' kg/día':'—'}</div><div class="kpi-sub">${rodeosEng.map(r=>campoNombre(r.campo_id)).join(' · ')}</div></div>
   </div>`;
 
   // Tarjetas por corral
