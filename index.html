@@ -222,7 +222,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 <div id="root"></div>
 <div id="toast-zone"></div>
 <script>
-let S = {
+window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
   apiToken: localStorage.getItem('cria_api_token') || 'LosMedanos2026Cria',
   page: 'movimientos',
@@ -238,8 +238,7 @@ let S = {
   cache: {},
   modal: null,
 };
-// Exponer S y funciones clave en window para que los onclick inline puedan acceder
-window.S = S;
+const S = window.S;
 
 function save() {
   localStorage.setItem('cria_api_url', S.apiUrl);
@@ -503,9 +502,9 @@ async function goto(page) {
     if (!S.cache.movimientos) { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
     if (S.corralesTipoCambio === undefined) { try { await loadCorralesStock(); } catch (err) { /* silencioso */ } }
     // Inicializar corral seleccionado con el primero de Engorde que tenga animales
-    if (!S.engordeCorralId) {
+    if (!egGetCorralId()) {
       const rEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
-      if (rEng.length) S.engordeCorralId = String(rEng[0].rodeo_id);
+      if (rEng.length) egSetCorralId(String(rEng[0].rodeo_id));
     }
   }
   if (page === 'recria') {
@@ -2224,14 +2223,14 @@ function attachEngordePesadasEvents() {
   attachTableDeleteEvents('pesadas', 'pesada_id');
 }
 
-window.egCambiarCorral = function(val) { S.engordeCorralId = val; render(); };
+window.egCambiarCorral = function(val) { egSetCorralId(val); window.render(); };
 
 function attachEngordeEvents() {
   // Selector de corral
   const sel = document.getElementById('eg-selector-corral');
   if (sel) {
     sel.addEventListener('change', function() {
-      S.engordeCorralId = this.value;
+      egSetCorralId(this.value);
       render();
     });
   }
@@ -2311,6 +2310,13 @@ function attachEngordeEvents() {
 }
 
 // ── ENGORDE — funciones auxiliares ───────────────────────────────────────
+function egGetCorralId() {
+  return S.engordeCorralId || localStorage.getItem('eg_corral_sel') || '';
+}
+function egSetCorralId(val) {
+  S.engordeCorralId = val;
+  localStorage.setItem('eg_corral_sel', val);
+}
 function egConfig_(rodeoId) {
   try { return JSON.parse(localStorage.getItem('eg_cfg') || '{}')[rodeoId] || {}; } catch(e) { return {}; }
 }
@@ -2474,16 +2480,16 @@ function buildEngorde() {
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <label style="font-size:13px;font-weight:600">Corral:</label>
       <select id="eg-selector-corral" data-action="cambiar-corral" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
-        ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(S.engordeCorralId)?'selected':''} >${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(egGetCorralId())?'selected':''} >${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
       </select>
     </div>`;
   }
 
   if (page === 'engorde') h += buildEngordeDashboard_(rodeosEng, fm);
-  else if (page === 'engorde_costos') h += buildEngordeCostos_(S.engordeCorralId, fm);
+  else if (page === 'engorde_costos') h += buildEngordeCostos_(egGetCorralId(), fm);
   else if (page === 'engorde_comparacion') h += buildEngordeComparacion_(rodeosEng, fm);
-  else if (page === 'engorde_proyeccion') h += buildEngordeProyeccion_(S.engordeCorralId, fm);
-  else if (page === 'engorde_cierre') h += buildEngordeCierre_(S.engordeCorralId, fm);
+  else if (page === 'engorde_proyeccion') h += buildEngordeProyeccion_(egGetCorralId(), fm);
+  else if (page === 'engorde_cierre') h += buildEngordeCierre_(egGetCorralId(), fm);
   else if (page === 'engorde_historial') h += buildEngordeHistorial_(rodeosEng, fm);
 
   // Formulario pesada (en Dashboard)
