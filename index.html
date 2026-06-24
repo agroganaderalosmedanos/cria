@@ -2382,8 +2382,8 @@ function buildEngorde() {
   if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <label style="font-size:13px;font-weight:600">Corral:</label>
-      <select id="eg-selector-corral" onchange="S.engordeCorralId=this.value;render()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
-        ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(S.engordeCorralId)?'selected':''}>${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+      <select id="eg-selector-corral" onchange="S.engordeCorralId=this.value;S.stock=null;render()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
+        ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(S.engordeCorralId)?'selected':''} >${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
       </select>
     </div>`;
   }
@@ -2893,6 +2893,16 @@ function buildEngordeHistorial_(rodeosEng, fm) {
 }
 
 function attachEngordeEvents() {
+  // Asegurar que el selector de corral funcione correctamente
+  const selectorCorral = document.getElementById('eg-selector-corral');
+  if (selectorCorral) {
+    selectorCorral.value = String(S.engordeCorralId || '');
+    selectorCorral.onchange = function() {
+      S.engordeCorralId = this.value;
+      S.stock = null;
+      render();
+    };
+  }
   // Pesada
   const peSave = document.getElementById('eg-pe-save');
   if (peSave) peSave.onclick = async () => {
