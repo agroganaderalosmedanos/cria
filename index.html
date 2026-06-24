@@ -686,7 +686,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_alim: attachEngordeAlimEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
