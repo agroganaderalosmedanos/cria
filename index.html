@@ -2222,6 +2222,14 @@ function attachEngordePesadasEvents() {
 window.egCambiarCorral = function(val) { S.engordeCorralId = val; render(); };
 
 function attachEngordeEvents() {
+  // Selector de corral
+  const sel = document.getElementById('eg-selector-corral');
+  if (sel) {
+    sel.addEventListener('change', function() {
+      S.engordeCorralId = this.value;
+      render();
+    });
+  }
   // Config corral (Costos)
   const cfgSave = document.getElementById('eg-cfg-save');
   if (cfgSave) cfgSave.onclick = () => {
@@ -2460,7 +2468,7 @@ function buildEngorde() {
   if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <label style="font-size:13px;font-weight:600">Corral:</label>
-      <select id="eg-selector-corral" onchange="egCambiarCorral(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
+      <select id="eg-selector-corral" data-action="cambiar-corral" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
         ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(S.engordeCorralId)?'selected':''} >${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
       </select>
     </div>`;
