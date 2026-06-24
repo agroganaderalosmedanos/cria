@@ -238,6 +238,8 @@ let S = {
   cache: {},
   modal: null,
 };
+// Exponer S y funciones clave en window para que los onclick inline puedan acceder
+window.S = S;
 
 function save() {
   localStorage.setItem('cria_api_url', S.apiUrl);
@@ -539,6 +541,9 @@ function render() {
   root.innerHTML = buildShell();
   attachShellEvents();
 }
+
+// Exponer funciones clave en window para que los onclick inline puedan acceder
+setTimeout(() => { window.goto = goto; window.render = render; }, 0);
 
 function buildShell() {
   const navHtml = NAV.map(sec => `
