@@ -217,7 +217,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 let S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
   apiToken: localStorage.getItem('cria_api_token') || 'LosMedanos2026Cria',
-  page: 'dashboard',
+  page: 'movimientos',
   sidebarOpen: false,
   loading: false,
   syncStatus: 'idle',
@@ -401,18 +401,14 @@ async function init() {
 
 const NAV = [
   { section: 'Panel', items: [
-    { k: 'dashboard', icon: '◈', label: 'Resumen' },
+    { k: 'dashboard', icon: '◈', label: 'Resumen Cría' },
   ]},
   { section: 'Cría', destacada: true, items: [
     { k: 'servicios', icon: '⚭', label: 'Servicios' },
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
-    { k: 'mortandad', icon: '†', label: 'Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
-    { k: 'movimientos', icon: '⇄', label: 'Movimientos/Stock' },
-    { k: 'ventas', icon: '$', label: 'Ventas' },
-    { k: 'insumos', icon: '🌿', label: 'Insumos' },
   ]},
   { section: 'Recría', destacada: true, items: [
     { k: 'recria', icon: '🐄', label: 'Recría' },
@@ -425,6 +421,12 @@ const NAV = [
     { k: 'engorde_proyeccion', icon: '📅', label: 'Proyección de salidas' },
     { k: 'engorde_cierre', icon: '🔮', label: 'Costo proyectado' },
     { k: 'engorde_historial', icon: '📋', label: 'Historial de lotes' },
+  ]},
+  { section: 'General', destacada: true, items: [
+    { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
+    { k: 'ventas', icon: '$', label: 'Ventas' },
+    { k: 'insumos', icon: '🌿', label: 'Insumos y Veterinaria' },
+    { k: 'mortandad', icon: '†', label: 'Mortandad' },
   ]},
   { section: 'Resultados', destacada: true, items: [
     { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
