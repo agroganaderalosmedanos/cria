@@ -2925,15 +2925,82 @@ function buildEngordeCierre_(rodeoId, fm) {
       h += '<div class="empty-state">Sin proyección disponible. Necesitás pesadas registradas.</div>';
     } else {
       h += `<div class="kpi-grid" style="margin-bottom:8px">
-        <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Alim. acumulada</div><div class="kpi-val">${fm(caAcum)}</div></div>
-        <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Costo diario (30d)</div><div class="kpi-val">${fm(costoDiario)}</div></div>
-        <div class="kpi"><div class="kpi-icon">🔮</div><div class="kpi-label">Alim. proyectada</div><div class="kpi-val">${fm(costoProyect)}</div><div class="kpi-sub">${diasHastaSalida} días × ${fm(costoDiario)}/día</div></div>
-        <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Total alim. al cierre</div><div class="kpi-val">${fm(costoTotalCierre)}</div></div>
-        <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo compra</div><div class="kpi-val">${fm(cc)}</div></div>
-        <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo total al cierre</div><div class="kpi-val">${fm(costoFinal)}</div></div>
-        ${ivProyect!==null?`<div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso proyectado</div><div class="kpi-val">${fm(ivProyect)}</div><div class="kpi-sub">${fn(stk,0)} × ${fn(pesoObj,0)} kg × ${fm(stkP)}/kg</div></div>`:''}
-        ${utilProyect!==null?`<div class="kpi"><div class="kpi-icon">${utilProyect>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad proyectada</div><div class="kpi-val ${utilProyect>=0?'kpi-pos':'kpi-neg'}">${fm(utilProyect)}</div></div>`:''}
+        <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Alim. acumulada (ya gastado)</div><div class="kpi-val">${fm(caAcum)}</div><div class="kpi-sub">hasta hoy</div></div>
+        <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Costo diario (últ. 30 días)</div><div class="kpi-val">${fm(costoDiario)}</div><div class="kpi-sub">${fm(costo30)} en 30 días</div></div>
+        <div class="kpi"><div class="kpi-icon">🔮</div><div class="kpi-label">Alim. proyectada (resta)</div><div class="kpi-val">${fm(costoProyect)}</div><div class="kpi-sub">${diasHastaSalida} días × ${fm(costoDiario)}/día</div></div>
+        <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Total alim. al cierre</div><div class="kpi-val">${fm(costoTotalCierre)}</div><div class="kpi-sub">acumulado + proyectado</div></div>
+        <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">${fm(cc)}</div></div>
+        <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo total al cierre</div><div class="kpi-val">${fm(costoFinal)}</div><div class="kpi-sub">compra + alim. total</div></div>
+        ${ivProyect!==null?`<div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso proyectado stock</div><div class="kpi-val">${fm(ivProyect)}</div><div class="kpi-sub">${fn(stk,0)} × ${fn(pesoObj,0)} kg × ${fm(stkP)}/kg</div></div>`:''}
+        ${utilProyect!==null?`<div class="kpi"><div class="kpi-icon">${utilProyect>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad proyectada al cierre</div><div class="kpi-val ${utilProyect>=0?'kpi-pos':'kpi-neg'}">${fm(utilProyect)}</div><div class="kpi-sub">ventas ya realizadas + stock</div></div>`:''}
       </div>`;
+
+      // Desglose por alimento
+      const productos = (S.catalogs && S.catalogs.productos) || [];
+      const consumosTodos = egConsumos_(rid);
+      const prodIds = [...new Set(consumosTodos.map(c => c.producto_id))];
+
+      if (prodIds.length) {
+        h += `<div class="section-label" style="margin-top:16px">Desglose por alimento — proyección al cierre</div>`;
+        h += `<div class="tw"><table class="dt"><thead><tr>
+          <th>Alimento</th>
+          <th class="tc">Costo acumulado</th>
+          <th class="tc">Cant. diaria (30d)</th>
+          <th class="tc">Cant. proyectada</th>
+          <th class="tc">Costo proyectado</th>
+          <th class="tc">Total al cierre</th>
+        </tr></thead><tbody>`;
+
+        const stockNecesario = [];
+        let totalAcum = 0, totalProyect = 0, totalCierre = 0;
+
+        prodIds.forEach(pid => {
+          const prod = productos.find(p => String(p.producto_id) === String(pid));
+          const costoUnit = egCostoPromProducto_(pid);
+          // Acumulado
+          const cantAcum = consumosTodos.filter(c => String(c.producto_id) === String(pid)).reduce((s,c) => s+(Number(c.cantidad)||0), 0);
+          const costoAcum = cantAcum * costoUnit;
+          // Diario últimos 30 días
+          const cons30prod = cons30.filter(c => String(c.producto_id) === String(pid));
+          const cant30 = cons30prod.reduce((s,c) => s+(Number(c.cantidad)||0), 0);
+          const cantDiaria = cant30 / 30;
+          // Proyectado
+          const cantProyect = Math.round(cantDiaria * diasHastaSalida);
+          const costoP = Math.round(cantProyect * costoUnit);
+          const total = costoAcum + costoP;
+
+          totalAcum += costoAcum;
+          totalProyect += costoP;
+          totalCierre += total;
+
+          if (cantProyect > 0) stockNecesario.push(`${fn(cantProyect)} ${prod?.unidad||''} de ${prod?.nombre||'Prod '+pid}`);
+
+          h += `<tr>
+            <td><span class="pill pill-green" style="font-size:11px">${prod?.nombre||'Producto '+pid}</span></td>
+            <td class="tc">${fm(costoAcum)}</td>
+            <td class="tc" style="color:var(--text2)">${fn(cantDiaria,1)} ${prod?.unidad||''}/día</td>
+            <td class="tc" style="color:var(--gold-text);font-weight:600">${fn(cantProyect)} ${prod?.unidad||''}</td>
+            <td class="tc" style="color:var(--gold-text);font-weight:600">${fm(costoP)}</td>
+            <td class="tc"><strong>${fm(total)}</strong></td>
+          </tr>`;
+        });
+
+        h += `<tr style="background:var(--bg2);font-weight:700">
+          <td><strong>Total</strong></td>
+          <td class="tc"><strong>${fm(totalAcum)}</strong></td>
+          <td class="tc">—</td>
+          <td class="tc">—</td>
+          <td class="tc" style="color:var(--gold-text)"><strong>${fm(totalProyect)}</strong></td>
+          <td class="tc"><strong>${fm(totalCierre)}</strong></td>
+        </tr>`;
+        h += '</tbody></table></div>';
+
+        if (stockNecesario.length) {
+          h += `<div style="background:var(--gold-bg);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--gold-text);margin-top:8px">
+            📦 <strong>Stock necesario para el cierre:</strong> ${stockNecesario.join(' · ')}
+          </div>`;
+        }
+      }
     }
     h += '</div>';
   });
