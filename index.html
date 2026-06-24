@@ -419,8 +419,9 @@ const NAV = [
   ]},
   { section: 'Engorde', destacada: true, items: [
     { k: 'engorde', icon: '📊', label: 'Dashboard' },
+    { k: 'engorde_pesadas', icon: '⚖', label: 'Pesadas' },
     { k: 'engorde_costos', icon: '💲', label: 'Costos' },
-    { k: 'engorde_comparacion', icon: '⚖', label: 'Comparación' },
+    { k: 'engorde_comparacion', icon: '⇌', label: 'Comparación' },
     { k: 'engorde_proyeccion', icon: '📅', label: 'Proyección de salidas' },
     { k: 'engorde_cierre', icon: '🔮', label: 'Costo proyectado' },
     { k: 'engorde_historial', icon: '📋', label: 'Historial de lotes' },
@@ -453,7 +454,8 @@ async function goto(page) {
   // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
   // se recarga automáticamente al volver a visitarlo.
   if (page === 'dashboard' && !S.dashboard) {
-    loadDashboard().then(render).catch(err => { S.dashboardError = err.message; render(); });
+    const t = setTimeout(() => { if (!S.dashboard) { S.dashboardError = 'La conexión tardó demasiado. Verificá que el Código.gs esté desplegado con "Nueva versión".'; render(); } }, 15000);
+    loadDashboard().then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
   }
   if (page === 'movimientos' && !S.stock) {
     try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
@@ -616,6 +618,7 @@ function buildPage(page) {
     case 'engorde_proyeccion':
     case 'engorde_cierre':
     case 'engorde_historial': return buildEngorde();
+    case 'engorde_pesadas':   return buildEngordePesadasPage();
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
     case 'config':     return buildConfig();
@@ -2140,6 +2143,64 @@ function attachRecriaEvents() {
   attachTableDeleteEvents('pesadas', 'pesada_id');
   attachTableDeleteEvents('ventas', 'venta_id');
   attachTableDeleteEvents('egresos_recria', 'egreso_id');
+}
+
+function buildEngordePesadasPage() {
+  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const rodeoOpts = rodeosEng.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
+  const todasPes = (S.cache.pesadas || [])
+    .filter(p => rodeosEng.some(r => String(r.rodeo_id) === String(p.rodeo_id)))
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+
+  let h = '<div class="page-header"><div class="page-title">Pesadas — Engorde</div><div class="page-sub">Pesadas por corral de engorde</div></div>';
+  h += `<div class="panel">
+    <div class="panel-title">Registrar pesada</div>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="egp-fecha" value="${today()}"></div>
+      <div class="fg"><label>Corral</label><select id="egp-rodeo">${rodeoOpts}</select></div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="egp-cantidad" placeholder="Ej: 185" min="1"></div>
+      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="egp-peso" placeholder="Ej: 480" min="0" step="0.1"></div>
+      <div class="fg"><label>Observación</label><input type="text" id="egp-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="egp-save" style="margin-top:6px">Registrar pesada</button>
+  </div>`;
+
+  h += '<div class="section-label">Historial de pesadas por corral</div>';
+  rodeosEng.forEach(r => {
+    const pes = todasPes.filter(p => String(p.rodeo_id) === String(r.rodeo_id));
+    if (!pes.length) return;
+    h += `<div style="font-weight:600;font-size:13px;margin:12px 0 6px">${r.nombre} <span style="color:var(--muted);font-weight:400">${campoNombre(r.campo_id)}</span></div>`;
+    h += buildEntityTable(pes, [
+      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+      { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+      { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+      { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+    ], 'pesadas', 'pesada_id');
+  });
+  if (!todasPes.length) h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pesadas registradas.</div></div>';
+  return h;
+}
+
+function attachEngordePesadasEvents() {
+  const save = document.getElementById('egp-save');
+  if (save) save.onclick = async () => {
+    const fecha = document.getElementById('egp-fecha').value;
+    const rodeoId = document.getElementById('egp-rodeo').value;
+    const cantidad = Number(document.getElementById('egp-cantidad').value) || 0;
+    const peso = Number(document.getElementById('egp-peso').value) || 0;
+    if (!fecha || !rodeoId || !cantidad || !peso) { toast('Completá todos los campos.', 'err'); return; }
+    const rodeo = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'pesadas', data: {
+        fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
+        cantidad, peso_prom_kg: peso, observacion: document.getElementById('egp-obs').value.trim(),
+      }}});
+      invalidateCache('pesadas'); await loadEntity('pesadas', true);
+      toast('Pesada registrada — ' + fn(peso) + ' kg prom.', 'ok'); render();
+    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('pesadas', 'pesada_id');
 }
 
 // ── ENGORDE — funciones auxiliares ───────────────────────────────────────
