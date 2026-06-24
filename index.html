@@ -2219,6 +2219,84 @@ function attachEngordePesadasEvents() {
   attachTableDeleteEvents('pesadas', 'pesada_id');
 }
 
+window.egCambiarCorral = function(val) { S.engordeCorralId = val; render(); };
+
+function attachEngordeEvents() {
+  // Config corral (Costos)
+  const cfgSave = document.getElementById('eg-cfg-save');
+  if (cfgSave) cfgSave.onclick = () => {
+    const rid = cfgSave.dataset.rodeo;
+    egSaveConfig_(rid, {
+      kgIngreso: document.getElementById('eg-cfg-kg')?.value||'',
+      precioCompra: document.getElementById('eg-cfg-precio')?.value||'',
+      precioStock: document.getElementById('eg-cfg-stock')?.value||'',
+    });
+    toast('Configuración guardada','ok'); render();
+  };
+
+  // Pesada desde Dashboard
+  const peSave = document.getElementById('eg-pe-save');
+  if (peSave) peSave.onclick = async () => {
+    const fecha = document.getElementById('eg-pe-fecha').value;
+    const rodeoId = document.getElementById('eg-pe-rodeo').value;
+    const cantidad = Number(document.getElementById('eg-pe-cantidad').value)||0;
+    const peso = Number(document.getElementById('eg-pe-peso').value)||0;
+    if (!fecha||!rodeoId||!cantidad||!peso) { toast('Completá todos los campos.','err'); return; }
+    const rodeo = rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId));
+    peSave.disabled = true;
+    try {
+      await apiCall('create', { body: { entity:'pesadas', data:{ fecha, rodeo_id:rodeoId, campo_id:rodeo?.campo_id||'', cantidad, peso_prom_kg:peso, observacion:document.getElementById('eg-pe-obs').value.trim() }}});
+      invalidateCache('pesadas'); await loadEntity('pesadas',true);
+      toast('Pesada registrada — '+fn(peso)+' kg prom.','ok'); render();
+    } catch(err) { toast(err.message,'err'); } finally { peSave.disabled=false; }
+  };
+
+  // Proyección — guardar peso objetivo y precio
+  document.querySelectorAll('[id^="eg-proj-save-"]').forEach(btn => {
+    btn.onclick = () => {
+      const rid = btn.dataset.rodeo;
+      egSaveConfig_(rid, {
+        pesoObjetivo: document.getElementById('eg-proj-peso-'+rid)?.value||'',
+        precioProyectado: document.getElementById('eg-proj-precio-'+rid)?.value||'',
+      });
+      toast('Guardado','ok'); render();
+    };
+  });
+
+  // Cerrar lote (historial)
+  document.querySelectorAll('[id^="eg-cerrar-"]').forEach(btn => {
+    btn.onclick = () => {
+      const rid = btn.dataset.rodeo;
+      const r = rodeosTodos().find(x=>String(x.rodeo_id)===String(rid));
+      if (!r) return;
+      const fi = egFechaIngreso_(rid);
+      const kgG = egKgGanadosHastaPesada_(rid);
+      const gd = egGanDiaria_(rid);
+      const lote = {
+        id: Date.now().toString(36), rodeoId: String(rid), nombre: r.nombre,
+        fechaApertura: fi||today(), fechaCierre: today(),
+        animales: egCantIngresada_(rid), kgGanados: kgG, ganDiaria: gd,
+        costoAlim: egCostoAlim_(rid), costoCompra: egCostoCompra_(rid),
+        ingVentas: egIngVentas_(rid),
+      };
+      const lotes = egLotes_(); lotes.push(lote); egSaveLotes_(lotes);
+      toast('Lote guardado en historial','ok'); render();
+    };
+  });
+
+  // Eliminar lote
+  document.querySelectorAll('[data-del-lote]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.delLote;
+      if (!confirm('¿Eliminar este lote del historial?')) return;
+      const lotes = egLotes_().filter(l=>l.id!==id); egSaveLotes_(lotes);
+      toast('Lote eliminado','ok'); render();
+    };
+  });
+
+  attachTableDeleteEvents('pesadas','pesada_id');
+}
+
 // ── ENGORDE — funciones auxiliares ───────────────────────────────────────
 function egConfig_(rodeoId) {
   try { return JSON.parse(localStorage.getItem('eg_cfg') || '{}')[rodeoId] || {}; } catch(e) { return {}; }
@@ -2382,7 +2460,7 @@ function buildEngorde() {
   if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <label style="font-size:13px;font-weight:600">Corral:</label>
-      <select id="eg-selector-corral" onchange="S.engordeCorralId=this.value;S.stock=null;render()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
+      <select id="eg-selector-corral" onchange="egCambiarCorral(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
         ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(S.engordeCorralId)?'selected':''} >${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
       </select>
     </div>`;
@@ -2892,17 +2970,8 @@ function buildEngordeHistorial_(rodeosEng, fm) {
   return h;
 }
 
-function attachEngordeEvents() {
-  // Asegurar que el selector de corral funcione correctamente
-  const selectorCorral = document.getElementById('eg-selector-corral');
-  if (selectorCorral) {
-    selectorCorral.value = String(S.engordeCorralId || '');
-    selectorCorral.onchange = function() {
-      S.engordeCorralId = this.value;
-      S.stock = null;
-      render();
-    };
-  }
+window.egCambiarCorral = function(val) { S.engordeCorralId = val; render(); };
+function attachEngordeEvents_old_() {
   // Pesada
   const peSave = document.getElementById('eg-pe-save');
   if (peSave) peSave.onclick = async () => {
