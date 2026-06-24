@@ -2656,6 +2656,8 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 }
 
 function buildEngordeCostos_(rodeoId, fm) {
+  // DEBUG TEMPORAL
+  localStorage.setItem('eg_debug_rodeoId', rodeoId);
   if (!rodeoId) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Seleccioná un corral.</div></div>';
   const r = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
   if (!r) return '';
