@@ -2370,21 +2370,36 @@ function egIngVentas_(rodeoId) {
   }, 0);
 }
 function egFechaIngreso_(rodeoId) {
+  // Solo "Saldo inicial" define la fecha de ingreso al corral.
+  // Los traslados posteriores (Traslado en bloque, Traslado individual) no cuentan
+  // porque distorsionarían la GDP al acortar artificialmente los días.
+  const TIPOS_INGRESO = ['Saldo inicial'];
   const movs = (S.cache.movimientos || [])
-    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && TIPOS_INGRESO.includes(m.tipo))
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-  return movs.length ? movs[0].fecha : null;
+  // Fallback: si no hay Saldo inicial, tomar cualquier movimiento como antes
+  if (!movs.length) {
+    const todos = (S.cache.movimientos || [])
+      .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+      .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+    return todos.length ? todos[0].fecha : null;
+  }
+  return movs[0].fecha;
 }
 function egKgIngreso_(rodeoId) {
   // Primero intentamos de la config
   const cfg = egConfig_(rodeoId);
   if (cfg.kgIngreso) return Number(cfg.kgIngreso);
-  // Fallback: parsear de las observaciones del primer movimiento
+  // Fallback: parsear de las observaciones del primer movimiento de Saldo inicial
+  const TIPOS_INGRESO = ['Saldo inicial'];
   const movs = (S.cache.movimientos || [])
-    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && TIPOS_INGRESO.includes(m.tipo))
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-  if (movs.length) {
-    const match = (movs[0].observaciones || '').match(/(\d+)\s*kg/);
+  const mov = movs.length ? movs[0] : (S.cache.movimientos || [])
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))[0];
+  if (mov) {
+    const match = (mov.observaciones || '').match(/(\d+)\s*kg/);
     if (match) return Number(match[1]);
   }
   return 0;
