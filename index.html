@@ -2423,22 +2423,14 @@ function egKgGanadosHastaPesada_(rodeoId) {
 }
 function egGanDiaria_(rodeoId) {
   const pes = egPesadas_(rodeoId);
-  if (pes.length < 2) {
-    // Con una sola pesada, usar fecha de ingreso y kg de ingreso
-    if (pes.length === 1) {
-      const fi = egFechaIngreso_(rodeoId);
-      const kgIng = egKgIngreso_(rodeoId);
-      if (fi && kgIng) {
-        const dias = Math.round((new Date(pes[0].fecha) - new Date(fi)) / 86400000);
-        if (dias > 0) return (Number(pes[0].peso_prom_kg) - kgIng) / dias;
-      }
-    }
-    return null;
-  }
-  // Con 2+ pesadas: primera vs última (igual que Corrales)
-  const first = pes[0], last = pes[pes.length-1];
-  const dias = Math.round((new Date(last.fecha) - new Date(first.fecha)) / 86400000);
-  return dias > 0 ? (Number(last.peso_prom_kg) - Number(first.peso_prom_kg)) / dias : null;
+  const fi = egFechaIngreso_(rodeoId);
+  const kgIng = egKgIngreso_(rodeoId);
+  if (!pes.length || !fi || !kgIng) return null;
+  // Siempre: última pesada vs. kg y fecha de ingreso
+  // Así se mide el crecimiento real desde que entró el animal al corral
+  const last = pes[pes.length - 1];
+  const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
+  return dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
 }
 function egFmon_(pesos, moneda) {
   if (moneda === 'USD') {
