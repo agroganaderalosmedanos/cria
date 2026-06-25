@@ -2426,11 +2426,20 @@ function egGanDiaria_(rodeoId) {
   const fi = egFechaIngreso_(rodeoId);
   const kgIng = egKgIngreso_(rodeoId);
   if (!pes.length || !fi || !kgIng) return null;
-  // Siempre: última pesada vs. kg y fecha de ingreso
-  // Así se mide el crecimiento real desde que entró el animal al corral
   const last = pes[pes.length - 1];
   const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
   return dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
+}
+function egGanDiariaInfo_(rodeoId) {
+  // Devuelve objeto con detalle para mostrar en tooltip/debug
+  const pes = egPesadas_(rodeoId);
+  const fi = egFechaIngreso_(rodeoId);
+  const kgIng = egKgIngreso_(rodeoId);
+  if (!pes.length || !fi || !kgIng) return null;
+  const last = pes[pes.length - 1];
+  const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
+  const gd = dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
+  return { gd, dias, kgIng, kgUltima: Number(last.peso_prom_kg), fechaIng: fi, fechaUltPesada: last.fecha };
 }
 function egFmon_(pesos, moneda) {
   if (moneda === 'USD') {
@@ -2800,7 +2809,15 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   h += row('Kg vendidos', r=>r.kgV, v=>fn(v,0)+' kg');
   h += row('Kg en stock', r=>r.kgStk, v=>fn(v,0)+' kg');
   h += rowTag('Kg ganados', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
-  h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
+  h += `<tr><td>GDP</td>${rows.map(r => {
+    const info = egGanDiariaInfo_(r.rid);
+    const v = r.gd;
+    const isB = v !== null && bGd !== null && v === bGd;
+    const style = isB ? ' style="color:var(--green);font-weight:700"' : '';
+    const val = v !== null && v > 0 ? fn(v,3)+' kg/día' : '—';
+    const tip = info ? `title="${fn(info.kgUltima,0)} kg − ${fn(info.kgIng,0)} kg = ${fn(info.kgUltima-info.kgIng,1)} kg en ${info.dias} días (${info.fechaIng} → ${info.fechaUltPesada})"` : '';
+    return `<td class="tc"${style} ${tip} style="cursor:help${isB?';color:var(--green);font-weight:700':''}">${val}</td>`;
+  }).join('')}</tr>`;
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
   h += row('Costo de compra', r=>r.cc, fm);
   h += row('Costo alimentación', r=>r.ca, fm);
