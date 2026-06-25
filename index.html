@@ -2810,7 +2810,19 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   h += row('Kg vendidos', r=>r.kgV, v=>fn(v,0)+' kg');
   h += row('Kg en stock', r=>r.kgStk, v=>fn(v,0)+' kg');
   h += rowTag('Kg ganados', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
-  h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
+  h += `<tr><td>GDP</td>${rows.map(r => {
+    const pes = egPesadas_(r.rid);
+    const fi = egFechaIngreso_(r.rid);
+    const kgIng = egKgIngreso_(r.rid);
+    const last = pes.length ? pes[pes.length-1] : null;
+    const diasCalc = (fi && last) ? Math.round((new Date(last.fecha) - new Date(fi)) / 86400000) : null;
+    const v = r.gd;
+    const isB = v !== null && bGd !== null && v === bGd;
+    const colorStyle = isB ? 'color:var(--green);font-weight:700' : '';
+    const val = (v !== null && v > 0) ? fn(v,3)+' kg/día' : '—';
+    const tip = (last && fi && kgIng) ? \`title="\${fn(Number(last.peso_prom_kg),0)} kg − \${fn(kgIng,0)} kg = \${fn(Number(last.peso_prom_kg)-kgIng,1)} kg / \${diasCalc} días (ingreso: \${fi} | pesada: \${last.fecha})"\` : '';
+    return \`<td class="tc" \${tip} style="cursor:help;\${colorStyle}">\${val}</td>\`;
+  }).join('')}</tr>\`;
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
   h += row('Costo de compra', r=>r.cc, fm);
   h += row('Costo alimentación', r=>r.ca, fm);
