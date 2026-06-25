@@ -2371,29 +2371,24 @@ function egIngVentas_(rodeoId) {
 }
 function egFechaIngreso_(rodeoId) {
   // Solo "Saldo inicial" define la fecha de ingreso al corral.
-  // Los traslados posteriores (Traslado en bloque, Traslado individual) no cuentan
-  // porque distorsionarían la GDP al acortar artificialmente los días.
-  const TIPOS_INGRESO = ['Saldo inicial'];
+  // Los traslados posteriores distorsionan la GDP al acortar los días.
   const movs = (S.cache.movimientos || [])
-    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && TIPOS_INGRESO.includes(m.tipo))
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-  // Fallback: si no hay Saldo inicial, tomar cualquier movimiento como antes
-  if (!movs.length) {
-    const todos = (S.cache.movimientos || [])
-      .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
-      .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-    return todos.length ? todos[0].fecha : null;
-  }
-  return movs[0].fecha;
+  if (movs.length) return movs[0].fecha;
+  // Fallback: cualquier movimiento si no hay Saldo inicial
+  const todos = (S.cache.movimientos || [])
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  return todos.length ? todos[0].fecha : null;
 }
 function egKgIngreso_(rodeoId) {
   // Primero intentamos de la config
   const cfg = egConfig_(rodeoId);
   if (cfg.kgIngreso) return Number(cfg.kgIngreso);
-  // Fallback: parsear de las observaciones del primer movimiento de Saldo inicial
-  const TIPOS_INGRESO = ['Saldo inicial'];
+  // Fallback: observaciones del primer movimiento de Saldo inicial
   const movs = (S.cache.movimientos || [])
-    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && TIPOS_INGRESO.includes(m.tipo))
+    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
   const mov = movs.length ? movs[0] : (S.cache.movimientos || [])
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
@@ -2441,20 +2436,11 @@ function egGanDiaria_(rodeoId) {
   const fi = egFechaIngreso_(rodeoId);
   const kgIng = egKgIngreso_(rodeoId);
   if (!pes.length || !fi || !kgIng) return null;
+  // Siempre: última pesada vs kg y fecha de ingreso al corral
+  // Mide el crecimiento real desde el día 0, independientemente de cuántas pesadas haya
   const last = pes[pes.length - 1];
   const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
   return dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
-}
-function egGanDiariaInfo_(rodeoId) {
-  // Devuelve objeto con detalle para mostrar en tooltip/debug
-  const pes = egPesadas_(rodeoId);
-  const fi = egFechaIngreso_(rodeoId);
-  const kgIng = egKgIngreso_(rodeoId);
-  if (!pes.length || !fi || !kgIng) return null;
-  const last = pes[pes.length - 1];
-  const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
-  const gd = dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
-  return { gd, dias, kgIng, kgUltima: Number(last.peso_prom_kg), fechaIng: fi, fechaUltPesada: last.fecha };
 }
 function egFmon_(pesos, moneda) {
   if (moneda === 'USD') {
@@ -2824,15 +2810,7 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   h += row('Kg vendidos', r=>r.kgV, v=>fn(v,0)+' kg');
   h += row('Kg en stock', r=>r.kgStk, v=>fn(v,0)+' kg');
   h += rowTag('Kg ganados', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
-  h += `<tr><td>GDP</td>${rows.map(r => {
-    const info = egGanDiariaInfo_(r.rid);
-    const v = r.gd;
-    const isB = v !== null && bGd !== null && v === bGd;
-    const style = isB ? ' style="color:var(--green);font-weight:700"' : '';
-    const val = v !== null && v > 0 ? fn(v,3)+' kg/día' : '—';
-    const tip = info ? `title="${fn(info.kgUltima,0)} kg − ${fn(info.kgIng,0)} kg = ${fn(info.kgUltima-info.kgIng,1)} kg en ${info.dias} días (${info.fechaIng} → ${info.fechaUltPesada})"` : '';
-    return `<td class="tc"${style} ${tip} style="cursor:help${isB?';color:var(--green);font-weight:700':''}">${val}</td>`;
-  }).join('')}</tr>`;
+  h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
   h += row('Costo de compra', r=>r.cc, fm);
   h += row('Costo alimentación', r=>r.ca, fm);
@@ -2919,19 +2897,17 @@ function buildProyeccionInsumos_(rodeoId, diasRestantes, fm) {
   const prodIds = [...new Set(cons30.map(c => c.producto_id))];
   if (!prodIds.length) return '';
 
-  // ── Agrupar productos con nombre similar (ej: "Silo 1 Picado", "Silo 2 Picado" → "Picado")
-  // Detecta palabras clave comunes para agrupar; ignora números y prefijos tipo "Silo N"
-  function claveAgrupacion(nombre) {
-    return nombre
-      .replace(/silo\s*\d+/gi, '')   // quita "Silo 1", "Silo 2", etc.
-      .replace(/\d+/g, '')           // quita números sueltos
-      .replace(/\s+/g, ' ')
-      .trim().toLowerCase();
-  }
+  let h = `<div class="section-label" style="margin-top:18px">🌿 Insumos necesarios para llegar al peso objetivo</div>`;
+  h += `<div class="tw"><table class="dt"><thead><tr>
+    <th>Alimento / Insumo</th>
+    <th class="tc">Consumo diario<br><span style="font-weight:400;font-size:10px">(prom. 30 días)</span></th>
+    <th class="tc">Cantidad necesaria<br><span style="font-weight:400;font-size:10px">${diasRestantes} días</span></th>
+    <th class="tc">Costo unitario prom.</th>
+    <th class="tc">Costo proyectado</th>
+  </tr></thead><tbody>`;
 
-  // Construir filas: primero individuales, luego detectar grupos
-  const filas = [];
-  const grupos = {}; // clave → { label, unidad, pids, cantDiaria, cantNecesaria, costoTotal, silos[] }
+  let totalCosto = 0;
+  const resumen = [];
 
   prodIds.forEach(pid => {
     const prod = productos.find(p => String(p.producto_id) === String(pid));
@@ -2942,46 +2918,15 @@ function buildProyeccionInsumos_(rodeoId, diasRestantes, fm) {
     const cantDiaria = cant30 / 30;
     const cantNecesaria = Math.round(cantDiaria * diasRestantes);
     const costoTotal = Math.round(cantNecesaria * costoUnit);
-    const clave = claveAgrupacion(nombre);
-
-    if (!grupos[clave]) grupos[clave] = { label: clave, unidad, cantDiaria: 0, cantNecesaria: 0, costoTotal: 0, silos: [] };
-    grupos[clave].cantDiaria   += cantDiaria;
-    grupos[clave].cantNecesaria += cantNecesaria;
-    grupos[clave].costoTotal   += costoTotal;
-    grupos[clave].silos.push({ nombre, cantNecesaria, cantDiaria, costoUnit, costoTotal, unidad });
-  });
-
-  // Capitalizar label del grupo
-  function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-
-  let totalCosto = 0;
-  const resumen = [];
-
-  let h = `<div class="section-label" style="margin-top:18px">🌿 Insumos necesarios para llegar al peso objetivo</div>`;
-  h += `<div class="tw"><table class="dt"><thead><tr>
-    <th>Alimento / Insumo</th>
-    <th class="tc">Consumo diario<br><span style="font-weight:400;font-size:10px">(prom. 30 días)</span></th>
-    <th class="tc">Cantidad necesaria<br><span style="font-weight:400;font-size:10px">${diasRestantes} días</span></th>
-    <th class="tc">Costo unitario prom.</th>
-    <th class="tc">Costo proyectado</th>
-  </tr></thead><tbody>`;
-
-  Object.values(grupos).forEach(g => {
-    const esGrupo = g.silos.length > 1;
-    const label = capitalize(g.label) || g.silos[0].nombre;
-    const costoUnitProm = g.cantNecesaria > 0 ? Math.round(g.costoTotal / g.cantNecesaria) : 0;
-    totalCosto += g.costoTotal;
-    resumen.push({ nombre: label, unidad: g.unidad, cantNecesaria: g.cantNecesaria });
+    totalCosto += costoTotal;
+    resumen.push({ nombre, unidad, cantNecesaria, cantDiaria });
 
     h += `<tr>
-      <td>
-        <span class="pill pill-green" style="font-size:11px">${label}</span>
-        ${esGrupo ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${g.silos.map(s => s.nombre + ': ' + fn(s.cantNecesaria) + ' ' + s.unidad).join(' · ')}</div>` : ''}
-      </td>
-      <td class="tc" style="color:var(--text2)">${fn(g.cantDiaria,1)} ${g.unidad}/día${esGrupo ? `<div style="font-size:10px;color:var(--text3)">${g.silos.length} silos</div>` : ''}</td>
-      <td class="tc"><strong style="color:var(--gold-text)">${fn(g.cantNecesaria)} ${g.unidad}</strong></td>
-      <td class="tc" style="color:var(--text2)">${costoUnitProm > 0 ? fm(costoUnitProm) + '/' + g.unidad : '—'}</td>
-      <td class="tc"><strong>${g.costoTotal > 0 ? fm(g.costoTotal) : '—'}</strong></td>
+      <td><span class="pill pill-green" style="font-size:11px">${nombre}</span></td>
+      <td class="tc" style="color:var(--text2)">${fn(cantDiaria,1)} ${unidad}/día</td>
+      <td class="tc"><strong style="color:var(--gold-text)">${fn(cantNecesaria)} ${unidad}</strong></td>
+      <td class="tc" style="color:var(--text2)">${costoUnit > 0 ? fm(costoUnit) + '/' + unidad : '—'}</td>
+      <td class="tc"><strong>${costoUnit > 0 ? fm(costoTotal) : '—'}</strong></td>
     </tr>`;
   });
 
@@ -2994,7 +2939,7 @@ function buildProyeccionInsumos_(rodeoId, diasRestantes, fm) {
   </tr>`;
   h += '</tbody></table></div>';
 
-  // Cartel resumen
+  // Cartel resumen tipo "stock a acopiar"
   const items = resumen.filter(x => x.cantNecesaria > 0).map(x => `<strong>${fn(x.cantNecesaria)} ${x.unidad}</strong> de ${x.nombre}`).join(' &nbsp;·&nbsp; ');
   if (items) {
     h += `<div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px;font-size:12.5px;color:var(--gold-text);margin-top:8px;line-height:1.7">
@@ -3329,7 +3274,6 @@ function buildVentas() {
     { key: 'kg_liquidados', label: 'Kg liq.', render: v => v ? fn(v) : '—' },
     { key: 'precio_liq', label: '$/kg liq.', render: v => v ? fn(v) : '—' },
     { key: 'importe_liq', label: 'Importe', render: v => v ? '$ ' + fn(v) : '—' },
-    { key: 'venta_id', label: '', render: v => `<button class="btn btn-ghost btn-sm" onclick="abrirLiquidacion_('${v}')" title="Corregir liquidación">✏️</button>` },
   ], 'ventas', 'venta_id');
 
   // Modal de liquidación (oculto)
@@ -3346,7 +3290,7 @@ function buildVentas() {
         <div class="fg"><label>Kg liquidados</label><input type="number" id="liq-kg" placeholder="Ej: 16800" min="0" oninput="calcLiqPreview_()"></div>
         <div class="fg" id="liq-rinde-wrap"><label>Rinde %</label><input type="number" id="liq-rinde" placeholder="Ej: 56" min="0" max="100" step="0.1"></div>
         <div class="fg"><label>Precio $/kg liquidado</label><input type="number" id="liq-precio" placeholder="Ej: 4800" min="0" oninput="calcLiqPreview_()"></div>
-        <div class="fg"><label>Importe liquidación $</label><input type="number" id="liq-importe" placeholder="Se calcula solo" readonly style="background:var(--bg2);color:var(--green-text);font-weight:700;cursor:default"></div>
+        <div class="fg"><label>Importe total $</label><input type="number" id="liq-importe" placeholder="Se calcula solo"></div>
       </div>
       <div id="liq-preview" style="font-size:14px;font-weight:600;color:var(--green-text);margin:8px 0"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
@@ -3374,25 +3318,10 @@ function attachVentasEvents() {
     S._liquidandoId = id;
     const modal = document.getElementById('modal-liquidacion');
     if (modal) modal.style.display = 'flex';
-    // Pre-cargar datos si la venta ya tiene liquidación
-    const venta = (S.cache.ventas || []).find(v => String(v.venta_id) === String(id));
-    if (venta) {
-      if (venta.tipo_liquidacion) document.getElementById('liq-tipo').value = venta.tipo_liquidacion;
-      if (venta.kg_liquidados) document.getElementById('liq-kg').value = venta.kg_liquidados;
-      if (venta.rinde_pct) document.getElementById('liq-rinde').value = venta.rinde_pct;
-      if (venta.precio_liq) document.getElementById('liq-precio').value = venta.precio_liq;
-    } else {
-      // Limpiar campos si es nueva
-      document.getElementById('liq-kg').value = '';
-      document.getElementById('liq-precio').value = '';
-      document.getElementById('liq-rinde').value = '';
-    }
     document.getElementById('liq-tipo').onchange = () => {
       const esFrigo = document.getElementById('liq-tipo').value === 'frigorifico';
       document.getElementById('liq-rinde-wrap').style.display = esFrigo ? 'flex' : 'none';
     };
-    // Disparar tipo para mostrar/ocultar rinde
-    document.getElementById('liq-tipo').onchange();
     calcLiqPreview_();
     document.getElementById('liq-save').onclick = guardarLiquidacion_;
   };
@@ -3410,15 +3339,8 @@ function attachVentasEvents() {
     const impEl = document.getElementById('liq-importe');
     if (kg && precio) {
       const imp = Math.round(kg * precio);
-      if (impEl) impEl.value = imp;
-      if (prev) {
-        prev.innerHTML = `<span style="color:var(--text2)">${fn(kg)} kg &times; $${fn(precio)}/kg</span> = <strong style="color:var(--green-text);font-size:16px">$ ${fn(imp)}</strong>`;
-      }
-    } else {
-      const impEl2 = document.getElementById('liq-importe');
-      if (impEl2) impEl2.value = '';
-      const prev2 = document.getElementById('liq-preview');
-      if (prev2) prev2.innerHTML = '<span style="color:var(--text3);font-size:12px">Ingresá kg y precio para calcular el importe</span>';
+      if (impEl && !impEl.value) impEl.value = imp;
+      if (prev) prev.textContent = fn(kg) + ' kg × $ ' + fn(precio) + '/kg = $ ' + fn(imp);
     }
   };
 
