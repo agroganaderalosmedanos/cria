@@ -1791,19 +1791,30 @@ async function loadStockProductos() {
   S.stockProductos = await apiCall('stockProductos');
 }
 async function loadCorralesStock() {
+  // Corrales ya no existe — la cotización se trae directo de dolarapi.com
+  S.corralesStock = {};
+  S.corralesVentas = [];
+  await loadTipoCambio();
+}
+
+async function loadTipoCambio() {
+  // Si ya tenemos cotización de hoy, no volvemos a buscar
+  const hoy = today();
+  const yaHoy = (S.corralesTipoCambio || []).find(t => t.fecha === hoy);
+  if (yaHoy) return;
   try {
-    const res = await fetch('https://raw.githubusercontent.com/agroganaderalosmedanos/corrales/main/datos.json');
+    const res = await fetch('https://dolarapi.com/v1/dolares/oficial', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Sin respuesta');
     const data = await res.json();
-    const porCorral = {};
-    (data.ingresos || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) + (Number(x.cant) || 0); });
-    (data.ventas || []).forEach(x => { porCorral[x.cid] = (porCorral[x.cid] || 0) - (Number(x.cant) || 0); });
-    S.corralesStock = porCorral; // { cid: stock_actual }
-    S.corralesVentas = data.ventas || []; // detalle de ventas/bajas para mostrarlas en el historial de Movimientos
-    S.corralesTipoCambio = data.tipoCambio || []; // cotización BNA por fecha, cargada en Corrales
+    const valor = data.venta || data.promedio || null;
+    if (!valor) throw new Error('Sin valor');
+    // Agregamos la cotización de hoy a la lista (mantenemos historial para cálculos anteriores)
+    const lista = (S.corralesTipoCambio || []).filter(t => t.fecha !== hoy);
+    lista.push({ fecha: hoy, valor: Number(valor) });
+    S.corralesTipoCambio = lista;
   } catch (err) {
-    S.corralesStock = null; // si falla la consulta, no se muestra el dato pero no rompe la página
-    S.corralesVentas = null;
-    S.corralesTipoCambio = null;
+    // Si falla, dejamos lo que había (puede haber cotizaciones anteriores)
+    if (!S.corralesTipoCambio) S.corralesTipoCambio = [];
   }
 }
 // Busca la cotización BNA vigente a una fecha (la última cargada en Corrales con fecha <= fecha dada)
