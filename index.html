@@ -431,6 +431,7 @@ const NAV = [
     { k: 'engorde_historial', icon: '📋', label: 'Historial de lotes' },
   ]},
   { section: 'General', destacada: true, items: [
+    { k: 'ia', icon: '✦', label: 'Análisis IA' },
     { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
     { k: 'insumos', icon: '🌿', label: 'Insumos y Veterinaria' },
@@ -642,6 +643,7 @@ function buildPage(page) {
     case 'engorde_pesadas':   return buildEngordePesadasPage();
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
+    case 'ia':           return buildIA();
     case 'pesadas':      return buildPesadas();
     case 'cotizacion':  return buildCotizacion();
     case 'config':     return buildConfig();
@@ -709,7 +711,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -4401,6 +4403,189 @@ function attachMargenBrutoEvents() {
     S.margenBrutoMoneda = p.dataset.moneda;
     render();
   });
+}
+
+function buildIA() {
+  const msgs = S.iaMsgs || [];
+  let h = '<div class="page-header"><div class="page-title">Analisis IA</div><div class="page-sub">Preguntale a Claude sobre tus datos ganaderos</div></div>';
+
+  // Chat history
+  h += '<div id="ia-chat" style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px;min-height:120px">';
+  if (!msgs.length) {
+    h += '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:13px">' +
+      '<div style="font-size:28px;margin-bottom:8px">✦</div>' +
+      '<div style="font-weight:600;margin-bottom:6px">Preguntame sobre tus datos</div>' +
+      '<div style="font-size:12px">Ejemplos: ¿Cual es el GDP promedio del Corral 1? / Mostrame la evolucion de peso de El Cencerro / ¿Cuanto gastamos en alimentacion este mes?</div>' +
+      '</div>';
+  }
+  msgs.forEach(function(m) {
+    if (m.role === 'user') {
+      h += '<div style="display:flex;justify-content:flex-end">' +
+        '<div style="background:var(--green);color:#fff;border-radius:16px 16px 4px 16px;padding:10px 16px;max-width:75%;font-size:13px">' + m.content + '</div></div>';
+    } else {
+      h += '<div style="display:flex;gap:10px;align-items:flex-start">' +
+        '<div style="width:28px;height:28px;border-radius:50%;background:var(--green-bg);border:1px solid var(--green);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">✦</div>' +
+        '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px 16px 16px 16px;padding:12px 16px;max-width:85%;font-size:13px;line-height:1.6" id="ia-msg-' + m.id + '">' + (m.html || m.content) + '</div></div>';
+    }
+  });
+  h += '</div>';
+
+  // Input
+  h += '<div style="display:flex;gap:8px;align-items:flex-end;position:sticky;bottom:0;background:var(--bg);padding:12px 0">' +
+    '<textarea id="ia-input" rows="2" placeholder="Preguntame algo sobre tus corrales, pesadas, consumos, ventas..." ' +
+    'style="flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:12px;font-size:13px;font-family:var(--sans);resize:none;background:var(--bg2);color:var(--text);line-height:1.5"></textarea>' +
+    '<button id="ia-send" class="btn btn-primary" style="padding:10px 18px;border-radius:12px;height:44px">Enviar</button>' +
+    '<button id="ia-clear" class="btn btn-secondary" style="padding:10px 14px;border-radius:12px;height:44px;font-size:12px">Limpiar</button>' +
+    '</div>';
+
+  return h;
+}
+
+function iaContexto_() {
+  // Armar resumen de datos para pasarle a Claude
+  const rodeos = rodeosTodos();
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const pesadas = (S.cache.pesadas || []).slice().sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+  const consumos = (S.cache.consumos_insumos || []);
+  const compras = (S.cache.compras_insumos || []);
+  const ventas = (S.cache.ventas || []);
+  const movimientos = (S.cache.movimientos || []);
+  const productos = (S.catalogs && S.catalogs.productos) || [];
+  const rodeosEng = rodeos.filter(r => r.actividad === 'Engorde');
+
+  // Calcular KPIs por corral de engorde
+  const corralesData = rodeosEng.map(function(r) {
+    const rid = r.rodeo_id;
+    const pes = egPesadas_(rid);
+    const ultima = pes.length ? pes[pes.length-1] : null;
+    const gd = egGanDiaria_(rid);
+    const fi = egFechaIngreso_(rid);
+    const dias = fi ? Math.round((new Date() - new Date(fi)) / 86400000) : null;
+    return {
+      nombre: r.nombre,
+      campo: campoNombre(r.campo_id),
+      stock: egStock_(rid),
+      kgIngreso: egKgIngreso_(rid),
+      ultimaPesada: ultima ? { fecha: ultima.fecha, peso: ultima.peso_prom_kg } : null,
+      gdp: gd,
+      diasEnCorral: dias,
+      kgGanados: egKgGanadosHastaPesada_(rid),
+      costoAlim: egCostoAlim_(rid),
+      costoCompra: egCostoCompra_(rid),
+      ingVentas: egIngVentas_(rid),
+    };
+  });
+
+  const ctx = {
+    fecha_hoy: today(),
+    campos: campos.map(function(c){ return { id: c.campo_id, nombre: c.nombre }; }),
+    rodeos: rodeos.map(function(r){ return { id: r.rodeo_id, nombre: r.nombre, campo: campoNombre(r.campo_id), actividad: r.actividad }; }),
+    corrales_engorde: corralesData,
+    pesadas_recientes: pesadas.slice(-50).map(function(p){ return { fecha: p.fecha, rodeo: rodeoNombre(p.rodeo_id), campo: campoNombre(p.campo_id), cantidad: p.cantidad, peso_prom_kg: p.peso_prom_kg }; }),
+    consumos_recientes: consumos.slice(-100).map(function(c){ const prod = productos.find(function(p){ return String(p.producto_id)===String(c.producto_id); }); return { fecha: c.fecha, producto: prod ? prod.nombre : c.producto_id, unidad: prod ? prod.unidad : '', cantidad: c.cantidad, rodeo: rodeoNombre(c.rodeo_id), campo: campoNombre(c.campo_id) }; }),
+    ventas: ventas.map(function(v){ return { fecha: v.fecha_salida, rodeo: rodeoNombre(v.rodeo_id), cant_animales: v.cant_animales, kg_campo: v.peso_campo_kg, precio_kg: v.precio_pactado, importe: v.importe_liq || (v.precio_pactado * v.peso_campo_kg) }; }),
+    stock_insumos: (S.stockProductos || []).map(function(p){ return { producto: p.nombre, unidad: p.unidad, stock: p.stock }; }),
+  };
+  return JSON.stringify(ctx, null, 1);
+}
+
+function attachIAEvents() {
+  const sendBtn = document.getElementById('ia-send');
+  const clearBtn = document.getElementById('ia-clear');
+  const input = document.getElementById('ia-input');
+  if (!S.iaMsgs) S.iaMsgs = [];
+
+  // Enter to send
+  if (input) input.onkeydown = function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn && sendBtn.click(); }
+  };
+
+  if (clearBtn) clearBtn.onclick = function() {
+    S.iaMsgs = [];
+    render();
+  };
+
+  if (sendBtn) sendBtn.onclick = async function() {
+    const txt = (input ? input.value.trim() : '');
+    if (!txt) return;
+    if (input) input.value = '';
+    if (!S.iaMsgs) S.iaMsgs = [];
+
+    // Add user message
+    S.iaMsgs.push({ role: 'user', content: txt });
+    render();
+
+    // Scroll to bottom
+    setTimeout(function() {
+      const chat = document.getElementById('ia-chat');
+      if (chat) chat.scrollTop = chat.scrollHeight;
+    }, 100);
+
+    // Show thinking indicator
+    const thinkId = 'thinking-' + Date.now();
+    S.iaMsgs.push({ role: 'assistant', id: thinkId, content: '', html: '<span style="color:var(--text3);font-size:12px">Analizando datos...</span>' });
+    render();
+
+    try {
+      const contexto = iaContexto_();
+      const historial = S.iaMsgs
+        .filter(function(m){ return m.id !== thinkId; })
+        .slice(-10)
+        .map(function(m){ return { role: m.role, content: m.content || '' }; });
+
+      const sysprompt = 'Sos un asistente de analisis ganadero para Agroganadera Los Medanos (Argentina). ' +
+        'Tenes acceso a los datos en tiempo real del sistema. Responde siempre en español, de forma concisa y util. ' +
+        'Si la pregunta amerita un grafico, generá el SVG directamente en tu respuesta usando elementos SVG validos (sin markdown, solo el SVG puro). ' +
+        'Para graficos de linea usa path, para barras usa rect. Usa colores: verde #3F5A2A, terracota #D46A33, dorado #6A7F3F. ' +
+        'Incluí titulos y etiquetas en los SVGs. Maximo 600x300 px. ' +
+        'Si no hay datos suficientes para responder, decilo claramente. ' +
+        'No inventes datos. Solo usa los datos del contexto.' +
+        '\n\nDATOS ACTUALES DEL SISTEMA:\n' + contexto;
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1000,
+          system: sysprompt,
+          messages: historial,
+        })
+      });
+
+      const data = await resp.json();
+      const respText = (data.content && data.content[0] && data.content[0].text) || 'Sin respuesta.';
+
+      // Replace thinking with real response
+      const idx = S.iaMsgs.findIndex(function(m){ return m.id === thinkId; });
+      if (idx !== -1) {
+        // Render SVG inline if present
+        let html;
+        if (respText.includes('<svg')) {
+          // Respuesta con SVG — renderizar directamente
+          html = respText;
+        } else {
+          // Texto plano — escapar HTML y convertir saltos de linea
+          html = respText
+            .replace(/&/g,'&amp;')
+            .replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;')
+            .split('\n').join('<br>');
+        }
+        S.iaMsgs[idx] = { role: 'assistant', id: thinkId, content: respText, html: html };
+      }
+      render();
+      setTimeout(function() {
+        const chat = document.getElementById('ia-chat');
+        if (chat) chat.scrollTop = chat.scrollHeight;
+      }, 100);
+
+    } catch(err) {
+      const idx = S.iaMsgs.findIndex(function(m){ return m.id === thinkId; });
+      if (idx !== -1) S.iaMsgs[idx] = { role: 'assistant', id: thinkId, content: 'Error: ' + err.message, html: '<span style="color:var(--clay-text)">Error: ' + err.message + '</span>' };
+      render();
+    }
+  };
 }
 
 function buildPesadas() {
