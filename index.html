@@ -4452,10 +4452,11 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
 
   function getMonths(d1, d2) {
     var meses = [];
-    var cur = new Date(d1 + '-01');
-    var end = new Date(d2.slice(0,7) + '-01');
+    // d1 y d2 pueden ser 'YYYY-MM-DD' o 'YYYY-MM' — tomar solo YYYY-MM
+    var cur = new Date(d1.slice(0,7) + '-01T12:00:00');
+    var end = new Date(d2.slice(0,7) + '-01T12:00:00');
     while (cur <= end) {
-      meses.push(cur.toISOString().slice(0,7));
+      meses.push(cur.getFullYear() + '-' + String(cur.getMonth()+1).padStart(2,'0'));
       cur.setMonth(cur.getMonth()+1);
     }
     return meses;
