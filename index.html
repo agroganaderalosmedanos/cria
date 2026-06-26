@@ -424,7 +424,6 @@ const NAV = [
   ]},
   { section: 'Engorde', destacada: true, items: [
     { k: 'engorde', icon: '📊', label: 'Dashboard' },
-    { k: 'engorde_pesadas', icon: '⚖', label: 'Pesadas' },
     { k: 'engorde_costos', icon: '💲', label: 'Costos' },
     { k: 'engorde_comparacion', icon: '⇌', label: 'Comparación' },
     { k: 'engorde_proyeccion', icon: '📅', label: 'Proyección de salidas' },
@@ -435,6 +434,7 @@ const NAV = [
     { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
     { k: 'insumos', icon: '🌿', label: 'Insumos y Veterinaria' },
+    { k: 'pesadas', icon: '⚖', label: 'Pesadas' },
     { k: 'mortandad', icon: '†', label: 'Mortandad' },
   ]},
   { section: 'Resultados', destacada: true, items: [
@@ -642,6 +642,7 @@ function buildPage(page) {
     case 'engorde_pesadas':   return buildEngordePesadasPage();
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
+    case 'pesadas':      return buildPesadas();
     case 'cotizacion':  return buildCotizacion();
     case 'config':     return buildConfig();
     default: return '';
@@ -708,7 +709,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -4400,6 +4401,105 @@ function attachMargenBrutoEvents() {
     S.margenBrutoMoneda = p.dataset.moneda;
     render();
   });
+}
+
+function buildPesadas() {
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const primerCampo = campos[0]?.campo_id || '';
+  const rodeosFiltrados = primerCampo ? rodeosTodos().filter(r => String(r.campo_id) === String(primerCampo)) : rodeosTodos();
+  const todasPes = (S.cache.pesadas || []).slice().sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+
+  let h = '<div class="page-header"><div class="page-title">Pesadas</div><div class="page-sub">Registrá pesadas de cualquier rodeo — Cría, Recría o Engorde</div></div>';
+
+  h += `<div class="panel">
+    <div class="panel-title">Registrar pesada</div>
+    <div class="fgrid">
+      <div class="fg"><label>Campo</label>
+        <select id="pes-campo" onchange="document.getElementById('pes-rodeo').innerHTML = rodeoOptionsHtml(rodeosTodos().filter(r => String(r.campo_id) === this.value))">
+          ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Rodeo</label>
+        <select id="pes-rodeo">${rodeoOptionsHtml(rodeosFiltrados)}</select>
+      </div>
+      <div class="fg"><label>Fecha</label><input type="date" id="pes-fecha" value="${today()}"></div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="pes-cantidad" placeholder="Ej: 185" min="1"></div>
+      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="pes-peso" placeholder="Ej: 380" min="0" step="0.1"></div>
+      <div class="fg"><label>Observación <span class="opt">(opcional)</span></label><input type="text" id="pes-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="pes-save" style="margin-top:6px">Registrar pesada</button>
+  </div>`;
+
+  // Historial filtrado por campo/rodeo
+  h += `<div class="fgrid" style="margin-bottom:10px;max-width:500px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="pes-filtro-campo" onchange="window.filtrarPesadas_()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="pes-filtro-rodeo" onchange="window.filtrarPesadas_()">
+        <option value="">Todos los rodeos</option>
+        ${rodeosTodos().map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
+
+  h += '<div id="pes-historial">';
+  h += buildPesadasHistorial_(todasPes);
+  h += '</div>';
+  return h;
+}
+
+function buildPesadasHistorial_(pes) {
+  if (!pes.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pesadas registradas.</div></div>';
+  return buildEntityTable(pes, [
+    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+    { key: 'campo_id', label: 'Campo', render: v => v ? campoNombre(v) : '—' },
+    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+    { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+  ], 'pesadas', 'pesada_id');
+}
+
+function attachPesadasEvents() {
+  window.filtrarPesadas_ = function() {
+    const campoId = document.getElementById('pes-filtro-campo')?.value || '';
+    const rodeoId = document.getElementById('pes-filtro-rodeo')?.value || '';
+    let pes = (S.cache.pesadas || []).slice().sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+    if (campoId) pes = pes.filter(p => String(p.campo_id) === campoId);
+    if (rodeoId) pes = pes.filter(p => String(p.rodeo_id) === rodeoId);
+    const el = document.getElementById('pes-historial');
+    if (el) {
+      el.innerHTML = buildPesadasHistorial_(pes);
+      attachTableDeleteEvents('pesadas', 'pesada_id');
+    }
+  };
+
+  const save = document.getElementById('pes-save');
+  if (save) save.onclick = async () => {
+    const fecha = document.getElementById('pes-fecha').value;
+    const campoId = document.getElementById('pes-campo').value;
+    const rodeoId = document.getElementById('pes-rodeo').value;
+    const cantidad = Number(document.getElementById('pes-cantidad').value) || 0;
+    const peso = Number(document.getElementById('pes-peso').value) || 0;
+    if (!fecha || !rodeoId || !cantidad || !peso) { toast('Completá todos los campos.', 'err'); return; }
+    save.disabled = true;
+    try {
+      await apiCall('create', { body: { entity: 'pesadas', data: {
+        fecha, rodeo_id: rodeoId, campo_id: campoId,
+        cantidad, peso_prom_kg: peso,
+        observacion: document.getElementById('pes-obs').value.trim(),
+      }}});
+      invalidateCache('pesadas');
+      await loadEntity('pesadas', true);
+      toast('Pesada registrada — ' + fn(peso) + ' kg prom.', 'ok');
+      render();
+    } catch(err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+  };
+  attachTableDeleteEvents('pesadas', 'pesada_id');
 }
 
 function buildCotizacion() {
