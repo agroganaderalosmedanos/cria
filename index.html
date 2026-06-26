@@ -1943,6 +1943,11 @@ function buildMovimientos() {
     <div class="fgrid" style="margin-top:8px">
       <div class="fg" id="mv-caravana-wrap" style="display:none"><label>Caravana</label><input type="text" id="mv-caravana" placeholder="Ej: 982000..."></div>
       <div class="fg" id="mv-cantidad-wrap"><label>Cantidad</label><input type="number" id="mv-cantidad" placeholder="Ej: 50" min="1"></div>
+      <div class="fg" id="mv-precio-wrap" style="display:none">
+        <label>Precio por cabeza ($) <span class="opt">— solo saldo inicial</span></label>
+        <input type="number" id="mv-precio-cabeza" placeholder="Ej: 900000" min="0" step="1000">
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">Se usa para valorizar el stock inicial de la campaña</div>
+      </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="mv-obs" placeholder="Opcional"></div>
     </div>
     <button class="btn btn-primary" id="mv-save" style="margin-top:6px">Registrar movimiento</button>
@@ -2021,6 +2026,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       campoOrigen: v.campo_id ? campoNombre(v.campo_id) : '—', rodeoOrigen: v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—',
       campoDestino: '—', rodeoDestino: '—',
       cantidad: Number(v.cant_animales) || 0, obs: v.comprador ? 'Venta a ' + v.comprador : (v.observaciones || '—'),
+      precio_cabeza: 0,
       entity: 'ventas', idCol: 'venta_id', id: v.venta_id, editable: true,
     })),
     ...corralesF.map(v => {
@@ -2032,6 +2038,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
         campoOrigen: CORRAL_CAMPO_NOMBRE_[String(v.cid)] || 'Sin campo asignado', rodeoOrigen: 'Corral ' + v.cid,
         campoDestino: '—', rodeoDestino: '—',
         cantidad: Number(v.cant) || 0, obs: esBaja ? 'Baja registrada en Corrales' : (v.precio ? `Venta en Corrales — $${fn(v.precio)}/kg` : 'Venta en Corrales'),
+        precio_cabeza: 0,
         entity: null, idCol: null, id: null, editable: false,
       };
     }),
@@ -2056,7 +2063,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
     { key: 'fecha', label: 'Fecha' }, { key: 'tipoLabel', label: 'Tipo' }, { key: 'caravana', label: 'Caravana' },
     { key: 'campoOrigen', label: 'Campo origen' }, { key: 'rodeoOrigen', label: 'Rodeo origen' },
     { key: 'campoDestino', label: 'Campo destino' }, { key: 'rodeoDestino', label: 'Rodeo destino' },
-    { key: 'cantidad', label: 'Cant.' }, { key: 'obs', label: 'Obs.' },
+    { key: 'cantidad', label: 'Cant.' }, { key: 'precio_cabeza', label: 'Precio/cab.' }, { key: 'obs', label: 'Obs.' },
   ];
 
   let h = `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${filas.length}</span></div>
@@ -2078,6 +2085,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       <td>${f.campoDestino}</td>
       <td>${f.rodeoDestino}</td>
       <td class="tc">${fn(f.cantidad)}</td>
+      <td class="tr">${f.precio_cabeza ? '$ '+fn(f.precio_cabeza) : '—'}</td>
       <td>${f.obs}</td>
       <td>${f.editable ? `<div class="row-actions">
         <button class="icon-btn" data-edit="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Editar">✎</button>
@@ -2185,6 +2193,7 @@ function attachMovimientosEvents() {
     document.getElementById('mv-origen-wrap').style.display = (esIndividual || esBloque) ? 'flex' : 'none';
     document.getElementById('mv-caravana-wrap').style.display = esIndividual ? 'flex' : 'none';
     document.getElementById('mv-cantidad-wrap').style.display = esIndividual ? 'none' : 'flex';
+    document.getElementById('mv-precio-wrap').style.display = esSaldoInicial ? 'flex' : 'none';
     document.getElementById('mv-destino-label').textContent = esSaldoInicial ? 'Rodeo' : 'Rodeo destino';
   }
   document.querySelectorAll('#mv-tipo-group .radio-pill').forEach(p => p.onclick = () => {
@@ -2229,6 +2238,7 @@ function attachMovimientosEvents() {
       rodeo_origen_id: !esSaldoInicial ? document.getElementById('mv-origen').value : '',
       rodeo_destino_id: rodeoDestinoId,
       cantidad: esIndividual ? 1 : (Number(document.getElementById('mv-cantidad').value) || 0),
+      precio_cabeza: esSaldoInicial ? (Number(document.getElementById('mv-precio-cabeza').value) || 0) : 0,
       observaciones: document.getElementById('mv-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_destino_id) { toast('Completá fecha y rodeo destino.', 'err'); return; }
