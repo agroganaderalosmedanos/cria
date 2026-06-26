@@ -2581,7 +2581,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // Barra de moneda
   h += `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
     <div style="font-size:13px;color:var(--text2)">Moneda: <strong>${moneda==='USD'?'🇺🇸 Dólares (USD) '+tcLabel:'🇦🇷 Pesos (ARS)'}</strong></div>
-    <button class="btn btn-secondary" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="font-size:12px;padding:5px 14px">${moneda==='USD'?'Ver en ARS':'🇺🇸 Ver en USD'}</button>
+
   </div>`;
 
   // Cálculos de porcentajes
@@ -2614,6 +2614,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     '<div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">' + (totCC>0?fm(totCC)+pct(pctCC):'—') + '</div><div class="kpi-sub">' + (totCC===0?'configurá en Costos':'del costo total') + '</div></div>' +
     '<div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo de alimentación</div><div class="kpi-val">' + fm(totCA) + pct(pctCA) + '</div><div class="kpi-sub">del costo total</div></div>' +
     '<div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">' + (totCV>0?fm(totCV)+pct(pctCV):'$ 0') + '</div><div class="kpi-sub">del costo total</div></div>' +
+    '<div class="kpi" style="border-top:3px solid var(--clay)"><div class="kpi-icon">💲</div><div class="kpi-label">Costos totales</div><div class="kpi-val kpi-neg">' + fm(totCostos) + '</div><div class="kpi-sub">compra + alim. + vet.</div></div>' +
     '</div>';
 
   // KPI grid — fila 3: Utilidad neta + % ganancia neta
