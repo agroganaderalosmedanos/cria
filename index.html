@@ -2910,7 +2910,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const tcLabel = tcVal ? '· TC: $' + fn(tcVal, 0) + '/USD' : '';
   const kgGPorAnim = totKgG > 0 && rodeosEng.length > 0 ? totKgG / rodeosEng.reduce((s,r)=>s+egCantIngresada_(r.rodeo_id),0) : null;
 
-  let h = '';
+  h += '';
 
   // Barra de moneda
   h += `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
