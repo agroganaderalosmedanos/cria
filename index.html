@@ -432,6 +432,7 @@ const NAV = [
   ]},
   { section: 'General', destacada: true, items: [
     { k: 'ia', icon: '✦', label: 'Análisis IA' },
+    { k: 'stock_hacienda', icon: '📋', label: 'Stock Hacienda' },
     { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
     { k: 'insumos', icon: '🌿', label: 'Insumos y Veterinaria' },
@@ -644,6 +645,7 @@ function buildPage(page) {
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
     case 'ia':           return buildIA();
+    case 'stock_hacienda': return buildStockHacienda();
     case 'pesadas':      return buildPesadas();
     case 'cotizacion':  return buildCotizacion();
     case 'config':     return buildConfig();
@@ -711,7 +713,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -4403,6 +4405,303 @@ function attachMargenBrutoEvents() {
     S.margenBrutoMoneda = p.dataset.moneda;
     render();
   });
+}
+
+function buildStockHacienda() {
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const hoy = today();
+  const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+  const f30 = hace30.toISOString().slice(0,10);
+
+  let h = '<div class="page-header"><div class="page-title">Stock de Hacienda</div><div class="page-sub">Reporte de existencias entre periodos por campo y categoria</div></div>';
+
+  h += '<div class="panel"><div class="panel-title">Configurar reporte</div><div class="fgrid">' +
+    '<div class="fg"><label>Fecha desde</label><input type="date" id="sh-desde" value="' + hoy.slice(0,8) + '01"></div>' +
+    '<div class="fg"><label>Fecha hasta</label><input type="date" id="sh-hasta" value="' + hoy + '"></div>' +
+    '<div class="fg"><label>Campo</label><select id="sh-campo"><option value="">Todos los campos</option>' +
+    campos.map(function(c){ return '<option value="' + c.campo_id + '">' + c.nombre + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div class="fg"><label>Detalle mensual</label><select id="sh-mensual"><option value="no">No — solo el periodo</option><option value="si">Si — una columna por mes</option></select></div>' +
+    '</div>' +
+    '<button class="btn btn-primary" id="sh-preview" style="margin-top:8px">Ver reporte</button>' +
+    '<button class="btn btn-secondary" id="sh-export" style="margin-top:8px;margin-left:8px">Descargar Excel</button>' +
+    '</div>';
+
+  h += '<div id="sh-resultado"></div>';
+  return h;
+}
+
+function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
+  const rodeos = rodeosTodos().filter(function(r){ return campoFiltro ? String(r.campo_id) === String(campoFiltro) : true; });
+  const movs = (S.cache.movimientos || []);
+  const ventas = (S.cache.ventas || []);
+  const pariciones = (S.cache.pariciones || []);
+  const mortandad = (S.cache.mortandad || []);
+  const destetes = (S.cache.destetes || []);
+
+  // Categorias en orden logico
+  const CATS = ['Toro', 'Vaca', 'Vaquillona', 'Vaquillona proximo servicio', 'Vaquilloncita', 'Novillito', 'Ternero', 'Ternera', 'Novillo'];
+
+  function getCat(r) {
+    const c = String(r.categoria || '').trim();
+    for (var i=0; i<CATS.length; i++) {
+      if (c.toLowerCase().indexOf(CATS[i].toLowerCase()) !== -1) return CATS[i];
+    }
+    return c || 'Otros';
+  }
+
+  function getMonths(d1, d2) {
+    var meses = [];
+    var cur = new Date(d1 + '-01');
+    var end = new Date(d2.slice(0,7) + '-01');
+    while (cur <= end) {
+      meses.push(cur.toISOString().slice(0,7));
+      cur.setMonth(cur.getMonth()+1);
+    }
+    return meses;
+  }
+
+  // Calcular stock inicial de cada rodeo (movs con fecha < desde)
+  function stockInicial(rodeoId) {
+    var total = 0;
+    movs.filter(function(m){ return m.fecha < desde; }).forEach(function(m) {
+      if (String(m.rodeo_destino_id) === String(rodeoId)) total += Number(m.cantidad) || 0;
+      if (String(m.rodeo_origen_id) === String(rodeoId)) total -= Number(m.cantidad) || 0;
+    });
+    ventas.filter(function(v){ return v.fecha_salida < desde && String(v.rodeo_id) === String(rodeoId); })
+      .forEach(function(v){ total -= Number(v.cant_animales) || 0; });
+    pariciones.filter(function(p){ return p.fecha < desde && String(p.rodeo_id) === String(rodeoId); })
+      .forEach(function(p){ total += Number(p.nacidos_vivos) || 0; });
+    mortandad.filter(function(m){ return m.fecha < desde && String(m.rodeo_id) === String(rodeoId); })
+      .forEach(function(m){ total -= Number(m.cantidad) || 0; });
+    destetes.filter(function(d){ return d.fecha < desde && String(d.rodeo_id) === String(rodeoId); })
+      .forEach(function(d){ total -= Number(d.cantidad) || 0; });
+    return Math.max(0, total);
+  }
+
+  function movsPeriodo(rodeoId, fDesde, fHasta) {
+    var compras=0, ventas_=0, nacimientos=0, muertes=0, destetar=0, traslados_e=0, traslados_s=0, ajustes=0;
+    movs.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta; }).forEach(function(m) {
+      const cant = Number(m.cantidad) || 0;
+      if (m.tipo === 'Saldo inicial') return;
+      if (String(m.rodeo_destino_id) === String(rodeoId)) {
+        if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') traslados_e += cant;
+        else compras += cant;
+      }
+      if (String(m.rodeo_origen_id) === String(rodeoId)) {
+        if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') traslados_s += cant;
+        else ajustes += cant;
+      }
+    });
+    ventas.filter(function(v){ return v.fecha_salida >= fDesde && v.fecha_salida <= fHasta && String(v.rodeo_id) === String(rodeoId); })
+      .forEach(function(v){ ventas_ += Number(v.cant_animales) || 0; });
+    pariciones.filter(function(p){ return p.fecha >= fDesde && p.fecha <= fHasta && String(p.rodeo_id) === String(rodeoId); })
+      .forEach(function(p){ nacimientos += Number(p.nacidos_vivos) || 0; });
+    mortandad.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta && String(m.rodeo_id) === String(rodeoId); })
+      .forEach(function(m){ muertes += Number(m.cantidad) || 0; });
+    destetes.filter(function(d){ return d.fecha >= fDesde && d.fecha <= fHasta && String(d.rodeo_id) === String(rodeoId); })
+      .forEach(function(d){ destetar += Number(d.cantidad) || 0; });
+    return { compras, ventas: ventas_, nacimientos, muertes, destetes: destetar, traslados_e, traslados_s, ajustes };
+  }
+
+  // Agrupar por categoria
+  var result = {};
+  var cats = [...new Set(rodeos.map(getCat))].sort(function(a,b){
+    return CATS.indexOf(a) - CATS.indexOf(b);
+  });
+
+  var meses = mensual ? getMonths(desde, hasta) : [null];
+
+  cats.forEach(function(cat) {
+    var rodeoscat = rodeos.filter(function(r){ return getCat(r) === cat; });
+    var fila = { categoria: cat, si: 0, compras:0, ventas:0, nacimientos:0, muertes:0, destetes:0, traslados_e:0, traslados_s:0, ajustes:0, sf:0 };
+    if (mensual) { fila.meses = {}; meses.forEach(function(m){ fila.meses[m] = {compras:0,ventas:0,nacimientos:0,muertes:0,destetes:0,traslados_e:0,traslados_s:0}; }); }
+
+    rodeoscat.forEach(function(r) {
+      fila.si += stockInicial(r.rodeo_id);
+      var mp = movsPeriodo(r.rodeo_id, desde, hasta);
+      fila.compras += mp.compras; fila.ventas += mp.ventas; fila.nacimientos += mp.nacimientos;
+      fila.muertes += mp.muertes; fila.destetes += mp.destetes;
+      fila.traslados_e += mp.traslados_e; fila.traslados_s += mp.traslados_s; fila.ajustes += mp.ajustes;
+
+      if (mensual) {
+        meses.forEach(function(mes) {
+          var fd = mes + '-01', fh = mes + '-' + new Date(mes.slice(0,4), mes.slice(5,7), 0).getDate().toString().padStart(2,'0');
+          var mp2 = movsPeriodo(r.rodeo_id, fd, fh);
+          fila.meses[mes].compras += mp2.compras; fila.meses[mes].ventas += mp2.ventas;
+          fila.meses[mes].nacimientos += mp2.nacimientos; fila.meses[mes].muertes += mp2.muertes;
+          fila.meses[mes].destetes += mp2.destetes; fila.meses[mes].traslados_e += mp2.traslados_e;
+          fila.meses[mes].traslados_s += mp2.traslados_s;
+        });
+      }
+    });
+    fila.sf = fila.si + fila.compras + fila.nacimientos + fila.traslados_e - fila.ventas - fila.muertes - fila.destetes - fila.traslados_s + fila.ajustes;
+    result[cat] = fila;
+  });
+  return { filas: result, meses };
+}
+
+function buildStockHaciendaTable_(data, desde, hasta, campoLabel, mensual) {
+  const { filas, meses } = data;
+  const cats = Object.keys(filas);
+  if (!cats.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin datos para el periodo seleccionado.</div></div>';
+
+  var thead = '<tr><th>Categoria</th><th class="tc">Exist. Inicial</th>';
+  if (mensual) {
+    meses.forEach(function(m){ thead += '<th class="tc" colspan="7" style="background:var(--bg2)">' + m + '</th>'; });
+  } else {
+    thead += '<th class="tc">Compras</th><th class="tc">Nacimientos</th><th class="tc">Trasl. entrada</th><th class="tc">Ventas</th><th class="tc">Muertes</th><th class="tc">Destetes</th><th class="tc">Trasl. salida</th><th class="tc">Ajustes</th>';
+  }
+  thead += '<th class="tc" style="background:var(--green-bg)">Exist. Final</th></tr>';
+
+  if (mensual) {
+    thead += '<tr><th></th><th></th>';
+    meses.forEach(function(){ thead += '<th class="tc">Compras</th><th class="tc">Nacim.</th><th class="tc">T.Entr.</th><th class="tc">Ventas</th><th class="tc">Muertes</th><th class="tc">Destetes</th><th class="tc">T.Sal.</th>'; });
+    thead += '<th></th></tr>';
+  }
+
+  var tbody = '';
+  var totSI=0, totComp=0, totNac=0, totTE=0, totVta=0, totMu=0, totDe=0, totTS=0, totAj=0, totSF=0;
+  cats.forEach(function(cat) {
+    var f = filas[cat];
+    tbody += '<tr><td><strong>' + cat + '</strong></td><td class="tc">' + fn(f.si,0) + '</td>';
+    if (mensual) {
+      meses.forEach(function(m){
+        var mm = f.meses[m];
+        tbody += '<td class="tc">' + (mm.compras||'-') + '</td><td class="tc">' + (mm.nacimientos||'-') + '</td><td class="tc">' + (mm.traslados_e||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mm.ventas||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mm.muertes||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mm.destetes||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mm.traslados_s||'-') + '</td>';
+      });
+    } else {
+      tbody += '<td class="tc">' + (f.compras||'-') + '</td><td class="tc">' + (f.nacimientos||'-') + '</td><td class="tc">' + (f.traslados_e||'-') + '</td>';
+      tbody += '<td class="tc" style="color:var(--clay-text)">' + (f.ventas||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (f.muertes||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (f.destetes||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (f.traslados_s||'-') + '</td><td class="tc">' + (f.ajustes||'-') + '</td>';
+    }
+    tbody += '<td class="tc" style="font-weight:700;color:var(--green-text)">' + fn(f.sf,0) + '</td></tr>';
+    totSI+=f.si; totComp+=f.compras; totNac+=f.nacimientos; totTE+=f.traslados_e;
+    totVta+=f.ventas; totMu+=f.muertes; totDe+=f.destetes; totTS+=f.traslados_s; totAj+=f.ajustes; totSF+=f.sf;
+  });
+
+  // Total row
+  tbody += '<tr style="background:var(--bg2);font-weight:700"><td>TOTAL</td><td class="tc">' + fn(totSI,0) + '</td>';
+  if (!mensual) {
+    tbody += '<td class="tc">' + (totComp||'-') + '</td><td class="tc">' + (totNac||'-') + '</td><td class="tc">' + (totTE||'-') + '</td>';
+    tbody += '<td class="tc">' + (totVta||'-') + '</td><td class="tc">' + (totMu||'-') + '</td><td class="tc">' + (totDe||'-') + '</td><td class="tc">' + (totTS||'-') + '</td><td class="tc">' + (totAj||'-') + '</td>';
+  } else { meses.forEach(function(){ tbody += '<td></td><td></td><td></td><td></td><td></td><td></td><td></td>'; }); }
+  tbody += '<td class="tc" style="font-weight:700;color:var(--green-text)">' + fn(totSF,0) + '</td></tr>';
+
+  var titulo = 'Stock de Hacienda — ' + (campoLabel || 'Todos los campos') + ' — ' + desde + ' al ' + hasta;
+  return '<div class="section-label" style="margin-top:16px">' + titulo + '</div><div class="tw"><table class="dt"><thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table></div>';
+}
+
+function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
+  const { filas, meses } = data;
+  const cats = Object.keys(filas);
+  const XLSX = window.XLSX;
+  if (!XLSX) { toast('SheetJS no disponible', 'err'); return; }
+
+  var wb = XLSX.utils.book_new();
+  var campos_ = (S.catalogs && S.catalogs.campos) || [];
+
+  function makeSheet(data2, titulo) {
+    var rows = [];
+    // Titulo
+    rows.push([titulo]);
+    rows.push([]);
+    // Header
+    var hdr = ['Categoria', 'Exist. Inicial'];
+    if (mensual) {
+      meses.forEach(function(m){ hdr = hdr.concat([m+' Compras', m+' Nacim.', m+' T.Entr.', m+' Ventas', m+' Muertes', m+' Destetes', m+' T.Sal.']); });
+    } else {
+      hdr = hdr.concat(['Compras','Nacimientos','Trasl. entrada','Ventas','Muertes','Destetes','Trasl. salida','Ajustes']);
+    }
+    hdr.push('Exist. Final');
+    rows.push(hdr);
+
+    var totSI=0,totSF=0;
+    Object.keys(data2).forEach(function(cat) {
+      var f = data2[cat];
+      var row = [cat, f.si];
+      if (mensual) {
+        meses.forEach(function(m){ var mm=f.meses[m]; row=row.concat([mm.compras,mm.nacimientos,mm.traslados_e,mm.ventas,mm.muertes,mm.destetes,mm.traslados_s]); });
+      } else {
+        row = row.concat([f.compras,f.nacimientos,f.traslados_e,f.ventas,f.muertes,f.destetes,f.traslados_s,f.ajustes]);
+      }
+      row.push(f.sf);
+      rows.push(row);
+      totSI+=f.si; totSF+=f.sf;
+    });
+    // Total
+    var totRow = ['TOTAL', totSI];
+    if (mensual) { meses.forEach(function(){ totRow=totRow.concat(['','','','','','','']); }); }
+    else { totRow=totRow.concat(['','','','','','','','']); }
+    totRow.push(totSF);
+    rows.push(totRow);
+
+    return XLSX.utils.aoa_to_sheet(rows);
+  }
+
+  // Hoja total
+  var titulo = 'Stock Hacienda ' + (campoLabel || 'Todos') + ' ' + desde + ' al ' + hasta;
+  var ws = makeSheet(filas, titulo);
+  ws['!cols'] = [{wch:28},{wch:14},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Stock Hacienda');
+
+  // Hoja por campo si es "todos"
+  if (!campoLabel) {
+    campos_.forEach(function(c) {
+      var rodeosC = rodeosTodos().filter(function(r){ return String(r.campo_id) === String(c.campo_id); });
+      if (!rodeosC.length) return;
+      var dataC = calcStockHacienda_(desde, hasta, c.campo_id, mensual);
+      if (!Object.keys(dataC.filas).length) return;
+      var wsC = makeSheet(dataC.filas, 'Stock ' + c.nombre + ' ' + desde + ' al ' + hasta);
+      XLSX.utils.book_append_sheet(wb, wsC, c.nombre.slice(0,28));
+    });
+  }
+
+  XLSX.writeFile(wb, 'Stock_Hacienda_' + desde + '_' + hasta + '.xlsx');
+  toast('Excel descargado', 'ok');
+}
+
+function attachStockHaciendaEvents() {
+  function getParams() {
+    return {
+      desde: document.getElementById('sh-desde')?.value || '',
+      hasta: document.getElementById('sh-hasta')?.value || '',
+      campoId: document.getElementById('sh-campo')?.value || '',
+      mensual: document.getElementById('sh-mensual')?.value === 'si',
+    };
+  }
+
+  const prevBtn = document.getElementById('sh-preview');
+  if (prevBtn) prevBtn.onclick = function() {
+    const p = getParams();
+    if (!p.desde || !p.hasta) { toast('Ingresa las fechas', 'err'); return; }
+    const campos_ = (S.catalogs && S.catalogs.campos) || [];
+    const campo = campos_.find(function(c){ return String(c.campo_id) === String(p.campoId); });
+    const data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+    const el = document.getElementById('sh-resultado');
+    if (el) el.innerHTML = buildStockHaciendaTable_(data, p.desde, p.hasta, campo?.nombre || '', p.mensual);
+  };
+
+  const expBtn = document.getElementById('sh-export');
+  if (expBtn) expBtn.onclick = function() {
+    const p = getParams();
+    if (!p.desde || !p.hasta) { toast('Ingresa las fechas', 'err'); return; }
+    if (!window.XLSX) {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = function() {
+        const campos_ = (S.catalogs && S.catalogs.campos) || [];
+        const campo = campos_.find(function(c){ return String(c.campo_id) === String(p.campoId); });
+        const data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+        exportStockHaciendaXLSX_(data, p.desde, p.hasta, campo?.nombre || '', p.mensual);
+      };
+      document.head.appendChild(s);
+    } else {
+      const campos_ = (S.catalogs && S.catalogs.campos) || [];
+      const campo = campos_.find(function(c){ return String(c.campo_id) === String(p.campoId); });
+      const data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+      exportStockHaciendaXLSX_(data, p.desde, p.hasta, campo?.nombre || '', p.mensual);
+    }
+  };
 }
 
 function buildIA() {
