@@ -2759,104 +2759,98 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 
   const maxVal = Math.max(...ingresos, ...egresos, 1);
   const maxGdpVal = Math.max(...gdpsPorCorral.filter(v=>v!==null), 1);
-  // Gráficos verticales lado a lado
+
+  // Graficos verticales lado a lado
   function fmShort(v) {
     if (Math.abs(v) >= 1e9) return '$' + fn(v/1e9,1) + 'B';
     if (Math.abs(v) >= 1e6) return '$' + fn(v/1e6,1) + 'M';
     return '$' + fn(v/1e3,0) + 'k';
   }
 
-  // Dimensiones gráfico vertical
-  const n = rodeosEng.length;
-  const bW = Math.min(60, Math.floor(260 / n) - 12); // ancho de barra
-  const bGap = 10;
-  const chartHt = 180; // altura del área de barras
-  const padL = 44; // margen izquierdo para etiquetas Y
-  const padB = 52; // margen inferior para nombres
-  const padT = 30; // margen superior para título
-  const totalW = padL + n * (bW*2 + bGap + 12) + 20;
-  const totalH = padT + chartHt + padB;
+  var n = rodeosEng.length;
+  var bW = Math.min(55, Math.floor(220/n) - 8);
+  var chartHt = 180;
+  var padL = 44;
+  var padB = 52;
+  var padT = 30;
+  var totalW = padL + n * (bW*2 + 18) + 20;
+  var totalH = padT + chartHt + padB;
+  var bWgdp = Math.min(65, Math.floor(260/n) - 8);
+  var totalWgdp = padL + n*(bWgdp+10) + 20;
+  var nombres = rodeosEng.map(function(r){ return r.nombre; });
 
-  function buildBarChart(titulo, series, colores, totalW, totalH, chartHt, padL, padT, padB, bW, bGap, n, nombres) {
-    const maxV = Math.max.apply(null, series.reduce(function(a,s){ return a.concat(s); }, []).filter(function(v){ return v > 0; }).concat([1]));
-    let s = '<svg viewBox="0 0 ' + totalW + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
-    s += '<text x="' + (totalW/2) + '" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">' + titulo + '</text>';
-    // Líneas guía
+  function svgGuias(maxV, isMoney) {
+    var s = '';
     [0.25,0.5,0.75,1].forEach(function(pct) {
-      const y = padT + chartHt - chartHt*pct;
+      var y = padT + chartHt - chartHt*pct;
       s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (totalW-10) + '" y2="' + y + '" stroke="var(--border)" stroke-width="0.5"/>';
-      s += '<text x="' + (padL-4) + '" y="' + (y+3) + '" text-anchor="end" font-size="8" fill="var(--text3)">' + fmShort(maxV*pct) + '</text>';
+      var lbl = isMoney ? fmShort(maxV*pct) : fn(maxV*pct,2);
+      s += '<text x="' + (padL-4) + '" y="' + (y+3) + '" text-anchor="end" font-size="8" fill="var(--text3)">' + lbl + '</text>';
     });
-    // Barras
-    nombres.forEach(function(nombre, i) {
-      const groupX = padL + i * (bW * series.length + bGap + 8);
-      series.forEach(function(serie, si) {
-        const val = serie[i] || 0;
-        const barH2 = val > 0 ? Math.max(2, (val/maxV)*chartHt) : 2;
-        const x = groupX + si * (bW + 3);
-        const y = padT + chartHt - barH2;
-        s += '<rect x="' + x + '" y="' + y + '" width="' + bW + '" height="' + barH2 + '" rx="3" fill="' + colores[si] + '" opacity="0.88"/>';
-        s += '<text x="' + (x+bW/2) + '" y="' + (y-3) + '" text-anchor="middle" font-size="8" fill="' + colores[si] + '" font-weight="600">' + fmShort(val) + '</text>';
-      });
-      // Nombre corral — partido en dos líneas si es largo
-      const partes = nombre.replace(' - ', '
-').split('
-');
-      partes.forEach(function(p, pi) {
-        s += '<text x="' + (groupX + (bW*series.length+3)/2) + '" y="' + (padT+chartHt+12+pi*11) + '" text-anchor="middle" font-size="8" fill="var(--text2)">' + (p.length>12?p.slice(0,11)+'…':p) + '</text>';
-      });
-    });
-    s += '</svg>';
     return s;
   }
 
-  function buildGdpChart(titulo, gdps, nombres, totalW, totalH, chartHt, padL, padT, padB, bW, n) {
-    const maxV = Math.max.apply(null, gdps.filter(function(v){ return v!==null; }).concat([1]));
-    let s = '<svg viewBox="0 0 ' + totalW + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
-    s += '<text x="' + (totalW/2) + '" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">' + titulo + '</text>';
-    [0.25,0.5,0.75,1].forEach(function(pct) {
-      const y = padT + chartHt - chartHt*pct;
-      s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (totalW-10) + '" y2="' + y + '" stroke="var(--border)" stroke-width="0.5"/>';
-      s += '<text x="' + (padL-4) + '" y="' + (y+3) + '" text-anchor="end" font-size="8" fill="var(--text3)">' + fn(maxV*pct,2) + '</text>';
+  // Grafico 1: Ingresos vs Egresos
+  var maxIE = Math.max.apply(null, ingresos.concat(egresos).concat([1]));
+  var svgIE = '<svg viewBox="0 0 ' + totalW + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
+  svgIE += '<text x="' + (totalW/2) + '" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">Ingresos vs Egresos</text>';
+  svgIE += svgGuias(maxIE, true);
+  nombres.forEach(function(nombre, i) {
+    var x1 = padL + i*(bW*2+18);
+    var x2 = x1 + bW + 4;
+    var hIng = Math.max(2, (ingresos[i]/maxIE)*chartHt);
+    var hEgr = Math.max(2, (egresos[i]/maxIE)*chartHt);
+    var yIng = padT + chartHt - hIng;
+    var yEgr = padT + chartHt - hEgr;
+    svgIE += '<rect x="' + x1 + '" y="' + yIng + '" width="' + bW + '" height="' + hIng + '" rx="3" fill="var(--green)" opacity="0.88"/>';
+    svgIE += '<text x="' + (x1+bW/2) + '" y="' + (yIng-3) + '" text-anchor="middle" font-size="8" fill="var(--green-text)" font-weight="600">' + fmShort(ingresos[i]) + '</text>';
+    svgIE += '<rect x="' + x2 + '" y="' + yEgr + '" width="' + bW + '" height="' + hEgr + '" rx="3" fill="var(--clay)" opacity="0.88"/>';
+    svgIE += '<text x="' + (x2+bW/2) + '" y="' + (yEgr-3) + '" text-anchor="middle" font-size="8" fill="var(--clay-text)" font-weight="600">' + fmShort(egresos[i]) + '</text>';
+    var partes = nombre.replace(' - ','|').split('|');
+    partes.forEach(function(p,pi) {
+      svgIE += '<text x="' + (x1+bW) + '" y="' + (padT+chartHt+12+pi*11) + '" text-anchor="middle" font-size="8" fill="var(--text2)">' + (p.length>14?p.slice(0,13)+'...':p) + '</text>';
     });
-    const maxG = maxV;
+  });
+  svgIE += '</svg>';
+
+  // Grafico 2: GDP
+  var gdpFiltrados2 = gdpsPorCorral.filter(function(v){ return v!==null; });
+  var svgGDP = '';
+  if (gdpFiltrados2.length > 0) {
+    var maxG = Math.max.apply(null, gdpFiltrados2.concat([1]));
+    svgGDP = '<svg viewBox="0 0 ' + totalWgdp + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
+    svgGDP += '<text x="' + (totalWgdp/2) + '" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">GDP por corral (kg/dia)</text>';
+    [0.25,0.5,0.75,1].forEach(function(pct) {
+      var y = padT + chartHt - chartHt*pct;
+      svgGDP += '<line x1="' + padL + '" y1="' + y + '" x2="' + (totalWgdp-10) + '" y2="' + y + '" stroke="var(--border)" stroke-width="0.5"/>';
+      svgGDP += '<text x="' + (padL-4) + '" y="' + (y+3) + '" text-anchor="end" font-size="8" fill="var(--text3)">' + fn(maxG*pct,2) + '</text>';
+    });
     nombres.forEach(function(nombre, i) {
-      const gd = gdps[i];
-      const x = padL + i * (bW + 10);
-      const isBest = gd === maxG;
-      const barH2 = gd !== null ? Math.max(2, (gd/maxG)*chartHt) : 2;
-      const y = padT + chartHt - barH2;
-      const color = isBest ? 'var(--green)' : '#6A7F3F';
-      s += '<rect x="' + x + '" y="' + y + '" width="' + bW + '" height="' + barH2 + '" rx="3" fill="' + color + '" opacity="0.88"/>';
-      if (gd !== null) s += '<text x="' + (x+bW/2) + '" y="' + (y-3) + '" text-anchor="middle" font-size="8" fill="' + color + '" font-weight="' + (isBest?'700':'400') + '">' + fn(gd,3) + '</text>';
-      const partes = nombre.replace(' - ', '
-').split('
-');
-      partes.forEach(function(p, pi) {
-        s += '<text x="' + (x+bW/2) + '" y="' + (padT+chartHt+12+pi*11) + '" text-anchor="middle" font-size="8" fill="var(--text2)">' + (p.length>12?p.slice(0,11)+'…':p) + '</text>';
+      var gd = gdpsPorCorral[i];
+      var x = padL + i*(bWgdp+10);
+      var isBest = gd !== null && gd === maxG;
+      var hBar = gd !== null ? Math.max(2, (gd/maxG)*chartHt) : 2;
+      var yBar = padT + chartHt - hBar;
+      var color = isBest ? 'var(--green)' : '#6A7F3F';
+      svgGDP += '<rect x="' + x + '" y="' + yBar + '" width="' + bWgdp + '" height="' + hBar + '" rx="3" fill="' + color + '" opacity="0.88"/>';
+      if (gd !== null) svgGDP += '<text x="' + (x+bWgdp/2) + '" y="' + (yBar-3) + '" text-anchor="middle" font-size="8" fill="' + color + '" font-weight="' + (isBest?'700':'400') + '">' + fn(gd,3) + '</text>';
+      var partes = nombre.replace(' - ','|').split('|');
+      partes.forEach(function(p,pi) {
+        svgGDP += '<text x="' + (x+bWgdp/2) + '" y="' + (padT+chartHt+12+pi*11) + '" text-anchor="middle" font-size="8" fill="var(--text2)">' + (p.length>14?p.slice(0,13)+'...':p) + '</text>';
       });
     });
-    s += '</svg>';
-    return s;
+    svgGDP += '</svg>';
   }
 
-  const nombres = rodeosEng.map(function(r){ return r.nombre; });
-  const bWgdp = Math.min(70, Math.floor(260/n)-8);
-  const totalWgdp = padL + n*(bWgdp+10) + 20;
-
-  const svgIng = buildBarChart('Ingresos vs Egresos por corral', [ingresos, egresos], ['var(--green)','var(--clay)'], totalW, totalH, chartHt, padL, padT, padB, bW, bGap, n, nombres);
-  const svgGdp2 = buildGdpChart('GDP por corral (kg/día)', gdpsPorCorral, nombres, totalWgdp, totalH, chartHt, padL, padT, padB, bWgdp, n);
-
-  // Leyenda
-  const leyenda = '<div style="display:flex;gap:16px;font-size:11px;color:var(--text2);margin-top:8px;justify-content:center">' +
+  var leyenda = '<div style="display:flex;gap:16px;font-size:11px;color:var(--text2);margin-top:6px;justify-content:center">' +
     '<span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px;opacity:0.88"></span>Ingresos</span>' +
     '<span><span style="display:inline-block;width:10px;height:10px;background:var(--clay);border-radius:2px;margin-right:4px;opacity:0.88"></span>Egresos</span>' +
     '</div>';
 
-  h += '<div class="panel" style="margin-top:16px"><div class="panel-title">📊 Rendimiento por corral</div>' +
+  h += '<div class="panel" style="margin-top:16px"><div class="panel-title">Rendimiento por corral</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:end">' +
-    '<div>' + svgIng + leyenda + '</div>' +
-    '<div>' + svgGdp2 + '</div>' +
+    '<div>' + svgIE + leyenda + '</div>' +
+    '<div>' + svgGDP + '</div>' +
     '</div></div>';
 
   return h;
