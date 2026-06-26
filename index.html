@@ -4594,7 +4594,19 @@ function buildStockHaciendaTable_(data, desde, hasta, campoLabel, mensual) {
   if (!mensual) {
     tbody += '<td class="tc">' + (totComp||'-') + '</td><td class="tc">' + (totNac||'-') + '</td><td class="tc">' + (totTE||'-') + '</td>';
     tbody += '<td class="tc">' + (totVta||'-') + '</td><td class="tc">' + (totMu||'-') + '</td><td class="tc">' + (totDe||'-') + '</td><td class="tc">' + (totTS||'-') + '</td><td class="tc">' + (totAj||'-') + '</td>';
-  } else { meses.forEach(function(){ tbody += '<td></td><td></td><td></td><td></td><td></td><td></td><td></td>'; }); }
+  } else {
+    // Sumar totales por mes
+    meses.forEach(function(mes) {
+      var mComp=0,mNac=0,mTE=0,mVta=0,mMu=0,mDe=0,mTS=0;
+      cats.forEach(function(cat) {
+        var mm = filas[cat].meses[mes];
+        mComp+=mm.compras; mNac+=mm.nacimientos; mTE+=mm.traslados_e;
+        mVta+=mm.ventas; mMu+=mm.muertes; mDe+=mm.destetes; mTS+=mm.traslados_s;
+      });
+      tbody += '<td class="tc">' + (mComp||'-') + '</td><td class="tc">' + (mNac||'-') + '</td><td class="tc">' + (mTE||'-') + '</td>';
+      tbody += '<td class="tc" style="color:var(--clay-text)">' + (mVta||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mMu||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mDe||'-') + '</td><td class="tc" style="color:var(--clay-text)">' + (mTS||'-') + '</td>';
+    });
+  }
   tbody += '<td class="tc" style="font-weight:700;color:var(--green-text)">' + fn(totSF,0) + '</td></tr>';
 
   var titulo = 'Stock de Hacienda — ' + (campoLabel || 'Todos los campos') + ' — ' + desde + ' al ' + hasta;
@@ -4640,8 +4652,20 @@ function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
     });
     // Total
     var totRow = ['TOTAL', totSI];
-    if (mensual) { meses.forEach(function(){ totRow=totRow.concat(['','','','','','','']); }); }
-    else { totRow=totRow.concat(['','','','','','','','']); }
+    if (mensual) {
+      meses.forEach(function(mes) {
+        var mComp=0,mNac=0,mTE=0,mVta=0,mMu=0,mDe=0,mTS=0;
+        Object.keys(data2).forEach(function(cat) {
+          var mm = data2[cat].meses && data2[cat].meses[mes];
+          if (mm) { mComp+=mm.compras; mNac+=mm.nacimientos; mTE+=mm.traslados_e; mVta+=mm.ventas; mMu+=mm.muertes; mDe+=mm.destetes; mTS+=mm.traslados_s; }
+        });
+        totRow=totRow.concat([mComp||0,mNac||0,mTE||0,mVta||0,mMu||0,mDe||0,mTS||0]);
+      });
+    } else {
+      var tComp=0,tNac=0,tTE=0,tVta=0,tMu=0,tDe=0,tTS=0,tAj=0;
+      Object.keys(data2).forEach(function(cat){ var f=data2[cat]; tComp+=f.compras; tNac+=f.nacimientos; tTE+=f.traslados_e; tVta+=f.ventas; tMu+=f.muertes; tDe+=f.destetes; tTS+=f.traslados_s; tAj+=f.ajustes; });
+      totRow=totRow.concat([tComp,tNac,tTE,tVta,tMu,tDe,tTS,tAj]);
+    }
     totRow.push(totSF);
     rows.push(totRow);
 
