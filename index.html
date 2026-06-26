@@ -2918,9 +2918,9 @@ function buildEngordeCostos_(rodeoId, fm) {
     <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alim. acumulado</div><div class="kpi-val">${fm(ca)}</div><div class="kpi-sub">todos los insumos hasta hoy</div></div>
     <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alim. hasta pesada</div><div class="kpi-val">${fm(caHP)}</div><div class="kpi-sub">${ultima?'hasta '+fd(ultima.fecha):'igual al total'}</div></div>
     <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo total</div><div class="kpi-val">${fm(costoTotal)}</div><div class="kpi-sub">compra + alimentación</div></div>
-    <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso ventas</div><div class="kpi-val">${fm(iv)}</div><div class="kpi-sub">${fn(kgV,0)} kg vendidos</div></div>
   </div>
   <div class="kpi-grid" style="margin-bottom:8px">
+    <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso ventas</div><div class="kpi-val">${fm(iv)}</div><div class="kpi-sub">${fn(kgV,0)} kg vendidos</div></div>
     <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val">${stkPrecio>0?fm(ivStock):'—'}</div><div class="kpi-sub">${fn(stk,0)} anim.${stkPrecio>0?' · '+fm(stkPrecio)+'/kg':' · ingresá precio arriba'}</div></div>
     <div class="kpi"><div class="kpi-icon">💰</div><div class="kpi-label">Ingresos totales</div><div class="kpi-val kpi-pos">${fm(ivTotal)}</div><div class="kpi-sub">ventas + stock valorizado</div></div>
     <div class="kpi"><div class="kpi-icon">${util>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${fm(util)}</div><div class="kpi-sub">${util>=0?'✓ Ganancia':'⚠ Pérdida'}</div></div>
