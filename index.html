@@ -4463,20 +4463,30 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
 
   // Calcular stock inicial de cada rodeo (movs con fecha < desde)
   function stockInicial(rodeoId) {
-    var total = 0;
-    movs.filter(function(m){ return m.fecha < desde; }).forEach(function(m) {
-      if (String(m.rodeo_destino_id) === String(rodeoId)) total += Number(m.cantidad) || 0;
-      if (String(m.rodeo_origen_id) === String(rodeoId)) total -= Number(m.cantidad) || 0;
+    // El Saldo inicial es el punto de partida del sistema — no tiene fecha historica real.
+    // Existencia inicial = suma de todos los Saldos iniciales del rodeo
+    //   + movimientos de entrada ANTES de "desde" (excepto Saldo inicial)
+    //   - movimientos de salida ANTES de "desde"
+    //   + nacimientos antes de "desde"
+    //   - ventas/muertes/destetes antes de "desde"
+    var saldoBase = 0;
+    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(rodeoId); })
+      .forEach(function(m){ saldoBase += Number(m.cantidad) || 0; });
+
+    var ajuste = 0;
+    movs.filter(function(m){ return m.fecha < desde && m.tipo !== 'Saldo inicial'; }).forEach(function(m) {
+      if (String(m.rodeo_destino_id) === String(rodeoId)) ajuste += Number(m.cantidad) || 0;
+      if (String(m.rodeo_origen_id) === String(rodeoId)) ajuste -= Number(m.cantidad) || 0;
     });
     ventas.filter(function(v){ return v.fecha_salida < desde && String(v.rodeo_id) === String(rodeoId); })
-      .forEach(function(v){ total -= Number(v.cant_animales) || 0; });
+      .forEach(function(v){ ajuste -= Number(v.cant_animales) || 0; });
     pariciones.filter(function(p){ return p.fecha < desde && String(p.rodeo_id) === String(rodeoId); })
-      .forEach(function(p){ total += Number(p.nacidos_vivos) || 0; });
+      .forEach(function(p){ ajuste += Number(p.nacidos_vivos) || 0; });
     mortandad.filter(function(m){ return m.fecha < desde && String(m.rodeo_id) === String(rodeoId); })
-      .forEach(function(m){ total -= Number(m.cantidad) || 0; });
+      .forEach(function(m){ ajuste -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return d.fecha < desde && String(d.rodeo_id) === String(rodeoId); })
-      .forEach(function(d){ total -= Number(d.cantidad) || 0; });
-    return Math.max(0, total);
+      .forEach(function(d){ ajuste -= Number(d.cantidad) || 0; });
+    return Math.max(0, saldoBase + ajuste);
   }
 
   function movsPeriodo(rodeoId, fDesde, fHasta) {
