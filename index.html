@@ -441,6 +441,7 @@ const NAV = [
     { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
   ]},
   { section: 'Sistema', items: [
+    { k: 'cotizacion', icon: '💵', label: 'Cotización U$S' },
     { k: 'config', icon: '⚙', label: 'Configuración' },
   ]},
 ];
@@ -641,6 +642,7 @@ function buildPage(page) {
     case 'engorde_pesadas':   return buildEngordePesadasPage();
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
+    case 'cotizacion':  return buildCotizacion();
     case 'config':     return buildConfig();
     default: return '';
   }
@@ -706,7 +708,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -2579,7 +2581,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // Barra de moneda
   h += `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
     <div style="font-size:13px;color:var(--text2)">Moneda: <strong>${moneda==='USD'?'🇺🇸 Dólares (USD) '+tcLabel:'🇦🇷 Pesos (ARS)'}</strong></div>
-
+    <button class="btn btn-secondary" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="font-size:12px;padding:5px 14px">${moneda==='USD'?'Ver en ARS':'🇺🇸 Ver en USD'}</button>
   </div>`;
 
   // KPI grid — fila 1: Stock | Ingreso ventas | Stock val. | Costo compra | Costo alim. | Costo vet.
@@ -4212,6 +4214,84 @@ function attachMargenBrutoEvents() {
     S.margenBrutoMoneda = p.dataset.moneda;
     render();
   });
+}
+
+function buildCotizacion() {
+  const lista = (S.corralesTipoCambio || [])
+    .slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  const ultima = lista[0] || null;
+  const tcHoy = tipoCambioVigente_(today());
+
+  let h = `<div class="page-header">
+    <div class="page-title">Cotización U$S</div>
+    <div class="page-sub">Dólar BNA oficial — se actualiza automáticamente al ingresar al sistema</div>
+  </div>`;
+
+  // KPI cotización actual
+  h += `<div class="kpi-grid" style="margin-bottom:16px">
+    <div class="kpi">
+      <div class="kpi-icon">💵</div>
+      <div class="kpi-label">Cotización vigente</div>
+      <div class="kpi-val kpi-pos">${tcHoy ? '$ ' + fn(tcHoy.valor, 2) + ' / U$S' : '—'}</div>
+      <div class="kpi-sub">${tcHoy ? 'al ' + fd(tcHoy.fecha) : 'Sin datos — reintentá en unos segundos'}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon">🔄</div>
+      <div class="kpi-label">Fuente</div>
+      <div class="kpi-val" style="font-size:13px">Banco Nación Argentina</div>
+      <div class="kpi-sub">Tipo de cambio oficial (venta)</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon">📅</div>
+      <div class="kpi-label">Registros históricos</div>
+      <div class="kpi-val">${lista.length}</div>
+      <div class="kpi-sub">fechas disponibles para conversión</div>
+    </div>
+  </div>`;
+
+  // Botón actualizar
+  h += `<div style="margin-bottom:16px">
+    <button class="btn btn-primary" onclick="window.actualizarCotizacion_()">🔄 Actualizar cotización ahora</button>
+  </div>`;
+
+  // Historial
+  if (!lista.length) {
+    h += '<div class="empty-state"><span class="ico">💵</span><div class="msg">Sin cotizaciones cargadas aún. Ingresá al sistema con conexión a internet para traer la cotización automáticamente.</div></div>';
+  } else {
+    h += `<div class="section-label">Historial de cotizaciones</div>
+    <div class="tw"><table class="dt"><thead><tr>
+      <th>Fecha</th><th class="tc">$ / U$S (venta BNA)</th>
+    </tr></thead><tbody>`;
+    lista.forEach(t => {
+      h += `<tr>
+        <td>${fd(t.fecha)}</td>
+        <td class="tc"><strong>$ ${fn(t.valor, 2)}</strong></td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+
+  return h;
+}
+
+function attachCotizacionEvents() {
+  window.actualizarCotizacion_ = async function() {
+    try {
+      const res = await fetch('https://dolarapi.com/v1/dolares/oficial', { cache: 'no-store' });
+      if (!res.ok) throw new Error('Sin respuesta de la API');
+      const data = await res.json();
+      const valor = data.venta || data.promedio || null;
+      if (!valor) throw new Error('Sin valor en la respuesta');
+      const hoy = today();
+      const lista = (S.corralesTipoCambio || []).filter(t => t.fecha !== hoy);
+      lista.push({ fecha: hoy, valor: Number(valor) });
+      S.corralesTipoCambio = lista;
+      toast('Cotización actualizada: $ ' + fn(valor, 2) + ' / U$S', 'ok');
+      render();
+    } catch (err) {
+      toast('No se pudo actualizar: ' + err.message, 'err');
+    }
+  };
 }
 
 function buildConfig() {
