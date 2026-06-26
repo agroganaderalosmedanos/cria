@@ -2584,21 +2584,40 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     <button class="btn btn-secondary" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="font-size:12px;padding:5px 14px">${moneda==='USD'?'Ver en ARS':'🇺🇸 Ver en USD'}</button>
   </div>`;
 
-  // KPI grid — fila 1: Stock | Ingreso ventas | Stock val. | Costo compra | Costo alim. | Costo vet.
-  h += `<div class="kpi-grid">
-    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock total</div><div class="kpi-val">${fn(totAn,0)}</div><div class="kpi-sub">animales en corrales</div></div>
-    <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso por ventas</div><div class="kpi-val">${fm(totIv)}</div></div>
-    <div class="kpi"><div class="kpi-icon">🏷️</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val kpi-pos">${totIvStk>0?fm(totIvStk):'—'}</div><div class="kpi-sub">${totIvTotal>0&&totIvStk>0?'ingresos totales: '+fm(totIvTotal):'configurá precio de stock en Costos'}</div></div>
-    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">${totCC>0?fm(totCC):'—'}</div><div class="kpi-sub">${totCC===0?'configurá precio de compra en Costos':''}</div></div>
-    <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo de alimentación</div><div class="kpi-val">${fm(totCA)}</div></div>
-    <div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">${totCV>0?fm(totCV):'$ 0'}</div><div class="kpi-sub">sin vet: ${fm(utilSinVet)}</div></div>
-  </div>`;
+  // Cálculos de porcentajes
+  const pctIv     = totIvTotal > 0 ? (totIv / totIvTotal * 100) : null;
+  const pctStk    = totIvTotal > 0 ? (totIvStk / totIvTotal * 100) : null;
+  const totCostos = totCC + totCA + totCV;
+  const pctCC     = totCostos > 0 ? (totCC / totCostos * 100) : null;
+  const pctCA     = totCostos > 0 ? (totCA / totCostos * 100) : null;
+  const pctCV     = totCostos > 0 ? (totCV / totCostos * 100) : null;
+  const pctMB     = totIvTotal > 0 ? ((totIvTotal - totCostos) / totIvTotal * 100) : null;
+  const pctUtilSV = totCostos > 0 ? (utilSinVet / totCostos * 100) : null;
+  const pctUtilCV = totCostos > 0 ? (utilConVet / totCostos * 100) : null;
+  const pctGanNeta = totCostos > 0 ? (utilConVet / totCostos * 100) : null;
+  function pct(v, pos) {
+    if (v === null) return '';
+    const color = pos === undefined ? '' : (v >= 0 ? 'color:var(--green-text)' : 'color:var(--clay-text)');
+    return '<span style="font-size:11px;font-weight:600;margin-left:4px;' + color + '">' + (v>=0?'+':'') + fn(v,1) + '%</span>';
+  }
 
-  // KPI grid — fila 2: Utilidad neta (dos KPIs separados)
-  h += `<div class="kpi-grid">
-    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Util. Neta sin Vet.</div><div class="kpi-val ${utilSinVet>=0?'kpi-pos':'kpi-neg'}">${fm(utilSinVet)}</div><div class="kpi-sub">ventas + stock − compra − alim.</div></div>
-    <div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Util. Neta con Vet.</div><div class="kpi-val ${utilConVet>=0?'kpi-pos':'kpi-neg'}">${fm(utilConVet)}</div><div class="kpi-sub">incluye costo veterinario</div></div>
-  </div>`;
+  // KPI grid — fila 1
+  h += '<div class="kpi-grid">' +
+    '<div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock total</div><div class="kpi-val">' + fn(totAn,0) + '</div><div class="kpi-sub">animales en corrales</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso por ventas</div><div class="kpi-val">' + fm(totIv) + pct(pctIv) + '</div><div class="kpi-sub">del ingreso total</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">🏷️</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val kpi-pos">' + (totIvStk>0 ? fm(totIvStk)+pct(pctStk) : '—') + '</div><div class="kpi-sub">' + (totIvTotal>0&&totIvStk>0 ? 'total: '+fm(totIvTotal) : 'configurá precio en Costos') + '</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">📊</div><div class="kpi-label">% Margen Bruto</div><div class="kpi-val ' + (pctMB!==null&&pctMB>=0?'kpi-pos':'kpi-neg') + '" style="font-size:22px">' + (pctMB!==null ? fn(pctMB,1)+'%' : '—') + '</div><div class="kpi-sub">(ingresos − costos) / ingresos</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">' + (totCC>0?fm(totCC)+pct(pctCC):'—') + '</div><div class="kpi-sub">' + (totCC===0?'configurá en Costos':'del costo total') + '</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo de alimentación</div><div class="kpi-val">' + fm(totCA) + pct(pctCA) + '</div><div class="kpi-sub">del costo total</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">' + (totCV>0?fm(totCV)+pct(pctCV):'$ 0') + '</div><div class="kpi-sub">del costo total</div></div>' +
+    '</div>';
+
+  // KPI grid — fila 2: Utilidad + % ganancia neta
+  h += '<div class="kpi-grid">' +
+    '<div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Util. Neta sin Vet.</div><div class="kpi-val ' + (utilSinVet>=0?'kpi-pos':'kpi-neg') + '">' + fm(utilSinVet) + pct(pctUtilSV, true) + '</div><div class="kpi-sub">ventas + stock − compra − alim.</div></div>' +
+    '<div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Util. Neta con Vet.</div><div class="kpi-val ' + (utilConVet>=0?'kpi-pos':'kpi-neg') + '">' + fm(utilConVet) + pct(pctUtilCV, true) + '</div><div class="kpi-sub">incluye costo veterinario</div></div>' +
+    '<div class="kpi" style="border:2px solid ' + (pctGanNeta!==null&&pctGanNeta>=0?'var(--green)':'var(--clay)') + ';border-radius:var(--radius)"><div class="kpi-icon">🏆</div><div class="kpi-label">% Ganancia Neta</div><div class="kpi-val ' + (pctGanNeta!==null&&pctGanNeta>=0?'kpi-pos':'kpi-neg') + '" style="font-size:26px">' + (pctGanNeta!==null?fn(pctGanNeta,1)+'%':'—') + '</div><div class="kpi-sub">utilidad neta / costos totales</div></div>' +
+    '</div>';
 
   // KPI grid — fila 3: Kilos y GDP
   h += `<div class="kpi-grid">
