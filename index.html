@@ -2594,13 +2594,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     <div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">${totCV>0?fm(totCV):'$ 0'}</div><div class="kpi-sub">sin vet: ${fm(utilSinVet)}</div></div>
   </div>`;
 
-  // KPI grid — fila 2: Utilidad neta
+  // KPI grid — fila 2: Utilidad neta (dos KPIs separados)
   h += `<div class="kpi-grid">
-    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Utilidad neta</div><div class="kpi-val ${utilConVet>=0?'kpi-pos':'kpi-neg'}">${fm(utilConVet)}</div><div class="kpi-sub">ventas + stock valorizado</div></div>
-    <div class="kpi"><div class="kpi-label" style="font-size:10px;margin-bottom:6px">DESGLOSE</div>
-      <div style="font-size:12px">Sin vet: <strong>${fm(utilSinVet)}</strong></div>
-      <div style="font-size:12px">Con vet: <strong>${fm(utilConVet)}</strong></div>
-    </div>
+    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Util. Neta sin Vet.</div><div class="kpi-val ${utilSinVet>=0?'kpi-pos':'kpi-neg'}">${fm(utilSinVet)}</div><div class="kpi-sub">ventas + stock − compra − alim.</div></div>
+    <div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Util. Neta con Vet.</div><div class="kpi-val ${utilConVet>=0?'kpi-pos':'kpi-neg'}">${fm(utilConVet)}</div><div class="kpi-sub">incluye costo veterinario</div></div>
   </div>`;
 
   // KPI grid — fila 3: Kilos y GDP
@@ -2667,6 +2664,135 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     </div>`;
   });
   h += '</div>';
+
+  // ── Tabla comparativa de corrales ──
+  const corralesConDatos = rodeosEng.filter(r => egPesadas_(r.rodeo_id).length > 0);
+  if (corralesConDatos.length > 1) {
+    h += `<div class="section-label" style="margin-top:20px">📊 Comparación entre corrales</div>`;
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Corral</th>
+      <th class="tc">Animales</th>
+      <th class="tc">Días</th>
+      <th class="tc">Últ. pesada</th>
+      <th class="tc">GDP</th>
+      <th class="tc">Kg ganados</th>
+      <th class="tc">Alim./kg gan.</th>
+      <th class="tc">Resultado</th>
+    </tr></thead><tbody>`;
+
+    rodeosEng.forEach(r => {
+      const rid = r.rodeo_id;
+      const stk = egStock_(rid);
+      const pes = egPesadas_(rid);
+      const ultima = pes.length ? pes[pes.length-1] : null;
+      const gd = egGanDiaria_(rid);
+      const fi = egFechaIngreso_(rid);
+      const dias = fi ? Math.round((new Date() - new Date(fi)) / 86400000) : null;
+      const ca = egCostoAlim_(rid);
+      const cv = egCostoAlim_(rid, null, 'Veterinaria');
+      const cc = egCostoCompra_(rid);
+      const iv = egIngVentas_(rid);
+      const cfg = egConfig_(rid);
+      const stkP = Number(cfg.precioStock || 0);
+      const ivStk = stkP > 0 && ultima ? stk * Number(ultima.peso_prom_kg) * stkP : 0;
+      const util = iv + ivStk - cc - ca - cv;
+      const kgG = egKgGanadosHastaPesada_(rid);
+      const caXkgG = kgG > 0 ? ca / kgG : null;
+      const gdpBest = rodeosEng.map(x => egGanDiaria_(x.rodeo_id)).filter(v => v !== null);
+      const maxGdp = gdpBest.length ? Math.max(...gdpBest) : null;
+      const isGdpBest = gd !== null && maxGdp !== null && gd === maxGdp;
+
+      h += `<tr>
+        <td><strong>${r.nombre}</strong><div style="font-size:10px;color:var(--text3)">${campoNombre(r.campo_id)}</div></td>
+        <td class="tc">${fn(stk,0)}</td>
+        <td class="tc">${dias !== null ? dias + ' d.' : '—'}</td>
+        <td class="tc">${ultima ? fn(Number(ultima.peso_prom_kg),0) + ' kg' : '—'}</td>
+        <td class="tc" ${isGdpBest ? 'style="color:var(--green);font-weight:700"' : ''}>${gd !== null ? fn(gd,3) + ' kg/día' : '—'}</td>
+        <td class="tc">${fn(kgG,0)} kg</td>
+        <td class="tc">${caXkgG ? fm(caXkgG) + '/kg' : '—'}</td>
+        <td class="tc" style="font-weight:700;color:${util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(util)}</td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+
+  // ── Gráficos de barras ──
+  const nombresC = rodeosEng.map(r => r.nombre.replace('Novillos ', '').replace(' - ', '\n'));
+  const ingresos = rodeosEng.map(r => {
+    const rid = r.rodeo_id; const stk = egStock_(rid);
+    const iv = egIngVentas_(rid); const cfg = egConfig_(rid);
+    const pes = egPesadas_(rid); const ultima = pes.length ? pes[pes.length-1] : null;
+    const stkP = Number(cfg.precioStock||0);
+    return iv + (stkP>0&&ultima ? stk*Number(ultima.peso_prom_kg)*stkP : 0);
+  });
+  const egresos = rodeosEng.map(r => {
+    const rid = r.rodeo_id;
+    return egCostoCompra_(rid) + egCostoAlim_(rid);
+  });
+  const utilidades = ingresos.map((ing, i) => ing - egresos[i]);
+  const gdpsPorCorral = rodeosEng.map(r => egGanDiaria_(r.rodeo_id));
+
+  const maxVal = Math.max(...ingresos, ...egresos, 1);
+  const maxGdpVal = Math.max(...gdpsPorCorral.filter(v=>v!==null), 1);
+  const barH = 28;
+  const barGap = 10;
+  const labelW = 120;
+  const chartW = 520;
+
+  function fmShort(v) {
+    if (Math.abs(v) >= 1e9) return '$' + fn(v/1e9,1) + 'B';
+    if (Math.abs(v) >= 1e6) return '$' + fn(v/1e6,1) + 'M';
+    return '$' + fn(v/1e3,0) + 'k';
+  }
+
+  // Gráfico ingresos vs egresos
+  const svgH = rodeosEng.length * (barH*2 + barGap + 14) + 40;
+  let svg = '<svg viewBox="0 0 ' + (labelW+chartW+80) + ' ' + svgH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:700px;display:block;margin:0 auto">';
+  svg += '<text x="' + (labelW+chartW/2) + '" y="18" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text)">Ingresos vs Egresos por corral</text>';
+  rodeosEng.forEach(function(r, i) {
+    const y = 30 + i * (barH*2 + barGap + 14);
+    const wIng = (ingresos[i] / maxVal) * chartW;
+    const wEgr = (egresos[i] / maxVal) * chartW;
+    const nombre = r.nombre.length > 18 ? r.nombre.slice(0,17)+'…' : r.nombre;
+    svg += '<text x="' + (labelW-6) + '" y="' + (y+barH/2+4) + '" text-anchor="end" font-size="10" fill="var(--text2)">' + nombre + '</text>';
+    svg += '<rect x="' + labelW + '" y="' + y + '" width="' + Math.max(wIng,2) + '" height="' + barH + '" rx="4" fill="var(--green)" opacity="0.85"/>';
+    svg += '<text x="' + (labelW+wIng+4) + '" y="' + (y+barH/2+4) + '" font-size="10" fill="var(--green-text)" font-weight="600">' + fmShort(ingresos[i]) + '</text>';
+    svg += '<rect x="' + labelW + '" y="' + (y+barH+4) + '" width="' + Math.max(wEgr,2) + '" height="' + barH + '" rx="4" fill="var(--clay)" opacity="0.75"/>';
+    svg += '<text x="' + (labelW+wEgr+4) + '" y="' + (y+barH+4+barH/2+4) + '" font-size="10" fill="var(--clay-text)" font-weight="600">' + fmShort(egresos[i]) + '</text>';
+  });
+  svg += '<rect x="' + labelW + '" y="' + (svgH-16) + '" width="12" height="10" rx="2" fill="var(--green)" opacity="0.85"/>';
+  svg += '<text x="' + (labelW+16) + '" y="' + (svgH-7) + '" font-size="10" fill="var(--text2)">Ingresos (ventas + stock val.)</text>';
+  svg += '<rect x="' + (labelW+200) + '" y="' + (svgH-16) + '" width="12" height="10" rx="2" fill="var(--clay)" opacity="0.75"/>';
+  svg += '<text x="' + (labelW+216) + '" y="' + (svgH-7) + '" font-size="10" fill="var(--text2)">Egresos (compra + alim.)</text>';
+  svg += '</svg>';
+
+  // Gráfico GDP
+  const gdpFiltrados = gdpsPorCorral.filter(function(v) { return v !== null; });
+  let svgGdp = '';
+  if (gdpFiltrados.length > 1) {
+    const maxG = Math.max.apply(null, gdpFiltrados);
+    const gdpH = rodeosEng.length * (barH + barGap) + 50;
+    svgGdp = '<svg viewBox="0 0 ' + (labelW+chartW+80) + ' ' + gdpH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:700px;display:block;margin:16px auto 0">';
+    svgGdp += '<text x="' + (labelW+chartW/2) + '" y="18" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text)">GDP por corral (kg/día)</text>';
+    rodeosEng.forEach(function(r, i) {
+      const gd = gdpsPorCorral[i];
+      const y = 28 + i * (barH + barGap);
+      const w = gd !== null ? (gd / maxG) * chartW : 0;
+      const nombre = r.nombre.length > 18 ? r.nombre.slice(0,17)+'…' : r.nombre;
+      const isBest = gd === maxG;
+      svgGdp += '<text x="' + (labelW-6) + '" y="' + (y+barH/2+4) + '" text-anchor="end" font-size="10" fill="var(--text2)">' + nombre + '</text>';
+      svgGdp += '<rect x="' + labelW + '" y="' + y + '" width="' + Math.max(w,2) + '" height="' + barH + '" rx="4" fill="' + (isBest?'var(--green)':'var(--gold)') + '" opacity="0.85"/>';
+      if (gd !== null) {
+        svgGdp += '<text x="' + (labelW+w+4) + '" y="' + (y+barH/2+4) + '" font-size="10" fill="var(--green-text)" font-weight="' + (isBest?'700':'400') + '">' + fn(gd,3) + ' kg/día</text>';
+      } else {
+        svgGdp += '<text x="' + (labelW+6) + '" y="' + (y+barH/2+4) + '" font-size="10" fill="var(--text3)">Sin datos</text>';
+      }
+    });
+    svgGdp += '</svg>';
+  }
+
+  h += '<div class="panel" style="margin-top:16px"><div class="panel-title">📊 Rendimiento económico por corral</div>' + svg + svgGdp + '</div>';
+
   return h;
 }
 
