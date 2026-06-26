@@ -4671,6 +4671,16 @@ function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
 }
 
 function attachStockHaciendaEvents() {
+  // Cargar entidades necesarias si no están en cache
+  const entidades = ['movimientos', 'ventas', 'pariciones', 'mortandad', 'destetes'];
+  Promise.all(entidades.map(function(e) {
+    return (S.cache[e] && S.cache[e].length) ? Promise.resolve() : loadEntity(e, true);
+  })).then(function() {
+    // Re-render para mostrar el reporte si ya habia parametros
+    const el = document.getElementById('sh-resultado');
+    if (el && el.innerHTML) render();
+  }).catch(function(){});
+
   function getParams() {
     return {
       desde: document.getElementById('sh-desde')?.value || '',
