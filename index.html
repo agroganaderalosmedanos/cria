@@ -413,6 +413,8 @@ const NAV = [
     { k: 'dashboard', icon: '◈', label: 'Resumen Cría' },
   ]},
   { section: 'Cría', destacada: true, items: [
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
     { k: 'servicios', icon: '⚭', label: 'Servicios' },
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
@@ -645,7 +647,9 @@ function buildPage(page) {
     case 'engorde_pesadas':   return buildEngordePesadasPage();
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
-    case 'sueldos':     return buildSueldos();
+    case 'sueldos':          return buildSueldos();
+    case 'indices_reproduccion': return buildIndicesReproduccion();
+    case 'compras_hacienda':     return buildComprasHacienda();
     case 'ia':           return buildIA();
     case 'stock_hacienda': return buildStockHacienda();
     case 'pesadas':      return buildPesadas();
@@ -715,9 +719,330 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents,
   };
   if (fns[page]) fns[page]();
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ÍNDICES DE REPRODUCCIÓN (antes era el "Resumen Cría" del panel)
+// ══════════════════════════════════════════════════════════════════════
+function buildIndicesReproduccion() {
+  if (S.dashboardError) return `<div class="empty-state"><span class="ico">⚠</span><div class="msg">Error: ${S.dashboardError}<br><br><button class="btn btn-secondary" onclick="S.dashboardError=null;S.dashboard=null;render()">Reintentar</button></div></div>`;
+  if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Calculando índices…</div>';
+  const g = S.dashboard.general;
+  const rodeosList = S.dashboard.rodeos || [];
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+
+  let h = `<div class="page-header">
+    <div class="page-title">📈 Índices de reproducción</div>
+    <div class="page-sub">Preñez, parición y destete — todos los rodeos de Cría</div>
+  </div>`;
+
+  h += '<div class="section-label">Establecimiento — índices generales</div>';
+  h += buildKpiRow(g);
+
+  h += '<div class="section-label">Filtrar por campo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedCampoId ? 'active' : ''}" data-campo=""><div class="rc-name">Todos los campos</div></div>`;
+  campos.forEach(c => {
+    h += `<div class="rodeo-chip ${String(S.selectedCampoId) === String(c.campo_id) ? 'active' : ''}" data-campo="${c.campo_id}"><div class="rc-name">${c.nombre}</div></div>`;
+  });
+  h += '</div>';
+
+  const rodeosFiltrados = (S.selectedCampoId
+    ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
+    : rodeosList
+  ).slice().sort((a, b) => {
+    const cmp = campoNombre(a.rodeo.campo_id).localeCompare(campoNombre(b.rodeo.campo_id), 'es', { sensitivity: 'base' });
+    return cmp !== 0 ? cmp : a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
+  });
+
+  if (S.selectedCampoId) {
+    const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
+    h += `<div class="panel"><div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>${buildKpiRow(aggregateKpis_(rodeosFiltrados))}</div>`;
+  }
+
+  h += '<div class="section-label">Por rodeo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo=""><div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
+  rodeosFiltrados.forEach(r => {
+    h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}"><div class="rc-name">${r.rodeo.nombre}</div><div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div></div>`;
+  });
+  h += '</div>';
+
+  if (S.selectedRodeoId) {
+    const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
+    if (sel) h += `<div class="panel"><div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>${buildKpiRow(sel.kpis)}</div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Campo</th>
+      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th>
+      <th class="tc">Nacidos vivos</th><th class="tc">Destetados</th>
+    </tr></thead><tbody>`;
+    rodeosFiltrados.forEach(r => {
+      const k = r.kpis;
+      h += `<tr>
+        <td><strong>${r.rodeo.nombre}</strong></td>
+        <td>${campoNombre(r.rodeo.campo_id)}</td>
+        <td class="tc">${pct(k.servicio.indice_prenez)}</td>
+        <td class="tc">${pct(k.paricion.indice_paricion)}</td>
+        <td class="tc">${pct(k.destete.indice_destete)}</td>
+        <td class="tc">${fn(k.paricion.nacidos_vivos)}</td>
+        <td class="tc">${fn(k.destete.total_destetados)}</td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  return h;
+}
+
+function attachIndicesReproduccionEvents() {
+  document.querySelectorAll('[data-campo]').forEach(el => el.onclick = () => {
+    S.selectedCampoId = el.dataset.campo || null;
+    S.selectedRodeoId = null;
+    render();
+  });
+  document.querySelectorAll('[data-rodeo]').forEach(el => el.onclick = () => {
+    S.selectedRodeoId = el.dataset.rodeo || null;
+    render();
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COMPRAS DE HACIENDA
+// ══════════════════════════════════════════════════════════════════════
+// Persistencia local (igual que sueldos — hasta tener hoja en Sheets)
+function comprasHacGetAll_() {
+  try { return JSON.parse(localStorage.getItem('lm_compras_hac') || '[]'); } catch(e) { return []; }
+}
+function comprasHacSave_(lista) {
+  try { localStorage.setItem('lm_compras_hac', JSON.stringify(lista)); } catch(e) {}
+}
+
+function buildComprasHacienda() {
+  const compras = comprasHacGetAll_().sort((a,b) => b.fecha.localeCompare(a.fecha));
+  const campos  = (S.catalogs && S.catalogs.campos) || [];
+  const campanas = [...new Set([
+    ...compras.map(c => c.campana),
+    ...((S.cache.ventas||[]).map(v => v.campana))
+  ].filter(Boolean))].sort((a,b) => b.localeCompare(a));
+
+  // KPIs
+  const totalMadres = compras.filter(c=>c.categoria==='Vientres').reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+  const totalToros  = compras.filter(c=>c.categoria==='Toros').reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+  const totalImporte= compras.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
+
+  let h = `<div class="page-header">
+    <div class="page-title">🛒 Compras de hacienda</div>
+    <div class="page-sub">Vientres y toros incorporados al rodeo de Cría</div>
+  </div>`;
+
+  h += `<div class="kpi-grid" style="margin-bottom:20px">
+    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Vientres comprados</div><div class="kpi-val">${fn(totalMadres)}</div><div class="kpi-sub">cabezas en total</div></div>
+    <div class="kpi"><div class="kpi-icon">🐂</div><div class="kpi-label">Toros comprados</div><div class="kpi-val">${fn(totalToros)}</div><div class="kpi-sub">cabezas en total</div></div>
+    <div class="kpi"><div class="kpi-icon">💰</div><div class="kpi-label">Inversión total</div><div class="kpi-val">$ ${fn(totalImporte)}</div><div class="kpi-sub">${compras.length} registros</div></div>
+  </div>`;
+
+  // Formulario
+  h += `<div class="panel">
+    <div class="panel-title">➕ Registrar compra</div>
+    <div class="fgrid">
+      <div class="fg">
+        <label>Fecha</label>
+        <input type="date" id="ch-fecha" value="${today()}">
+      </div>
+      <div class="fg">
+        <label>Campaña</label>
+        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list">
+        <datalist id="ch-campana-list">${campanas.map(c=>`<option value="${c}">`).join('')}</datalist>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">Campaña a la que se imputa este costo</div>
+      </div>
+      <div class="fg">
+        <label>Campo</label>
+        <select id="ch-campo">${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg">
+        <label>Categoría</label>
+        <select id="ch-categoria" onchange="window.chCategChange_()">
+          <option value="Vientres">🐄 Vientres</option>
+          <option value="Toros">🐂 Toros</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Cantidad (cabezas)</label>
+        <input type="number" id="ch-cantidad" placeholder="Ej: 50" min="1" oninput="window.chCalcImporte_()">
+      </div>
+      <div class="fg">
+        <label>Precio por cabeza ($)</label>
+        <input type="number" id="ch-precio" placeholder="Ej: 850000" min="0" step="1000" oninput="window.chCalcImporte_()">
+      </div>
+      <div class="fg" id="ch-importe-wrap">
+        <label>Importe total</label>
+        <div id="ch-importe-preview" style="font-size:18px;font-weight:700;padding:8px 0;color:var(--green-text)">—</div>
+      </div>
+      <div class="fg">
+        <label>Vendedor / Procedencia</label>
+        <input type="text" id="ch-vendedor" placeholder="Nombre del vendedor o establecimiento">
+      </div>
+      <div class="fg" style="flex:2">
+        <label>Observación</label>
+        <input type="text" id="ch-obs" placeholder="Raza, condición corporal, preñez, etc.">
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary" onclick="window.compraHacGuardar_()">💾 Registrar compra</button>
+      <span id="ch-msg" style="font-size:13px;color:var(--green)"></span>
+    </div>
+  </div>`;
+
+  // Historial
+  h += `<div class="panel">
+    <div class="panel-title">📋 Historial de compras</div>`;
+
+  if (!compras.length) {
+    h += '<div class="empty-state"><span class="ico">🛒</span><div class="msg">No hay compras registradas aún.</div></div>';
+  } else {
+    // Agrupar por campaña
+    const porCampana = {};
+    compras.forEach(c => {
+      const k = c.campana || 'Sin campaña';
+      if (!porCampana[k]) porCampana[k] = [];
+      porCampana[k].push(c);
+    });
+    Object.entries(porCampana).sort((a,b)=>b[0].localeCompare(a[0])).forEach(([camp, items]) => {
+      const totCamp = items.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
+      h += `<div style="margin-bottom:6px;font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px">
+        <span>📅 Campaña ${camp}</span>
+        <span style="color:var(--clay-text)">$ ${fn(totCamp)}</span>
+      </div>`;
+      h += `<div class="tw" style="margin-bottom:16px"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Categoría</th><th>Campo</th><th class="tc">Cant.</th>
+        <th class="tr">Precio/cab.</th><th class="tr">Total</th><th>Vendedor</th><th>Obs.</th><th></th>
+      </tr></thead><tbody>`;
+      items.forEach((c,i) => {
+        const idx = compras.indexOf(c);
+        h += `<tr>
+          <td>${fd(c.fecha)}</td>
+          <td><span class="pill ${c.categoria==='Toros'?'pill-clay':'pill-green'}">${c.categoria}</span></td>
+          <td>${campos.find(f=>String(f.campo_id)===String(c.campo_id))?.nombre || c.campo_id || '—'}</td>
+          <td class="tc"><strong>${fn(c.cantidad)}</strong></td>
+          <td class="tr">$ ${fn(c.precio_cabeza)}</td>
+          <td class="tr"><strong>$ ${fn(c.importe_total)}</strong></td>
+          <td>${c.vendedor||'—'}</td>
+          <td style="font-size:12px;color:var(--text3)">${c.observacion||'—'}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="window.compraHacEliminar_(${idx})">🗑</button></td>
+        </tr>`;
+      });
+      h += '</tbody></table></div>';
+    });
+  }
+  h += '</div>';
+  return h;
+}
+
+function attachComprasHaciendaEvents() {
+  window.chCalcImporte_ = function() {
+    const cant   = Number(document.getElementById('ch-cantidad')?.value) || 0;
+    const precio = Number(document.getElementById('ch-precio')?.value) || 0;
+    const el = document.getElementById('ch-importe-preview');
+    if (el) el.textContent = (cant && precio) ? '$ ' + fn(cant * precio) : '—';
+  };
+  window.chCategChange_ = function() {
+    // Podría usarse para cambiar labels en el futuro
+  };
+  window.compraHacGuardar_ = function() {
+    const fecha     = document.getElementById('ch-fecha')?.value || '';
+    const campana   = document.getElementById('ch-campana')?.value.trim() || '';
+    const campo_id  = document.getElementById('ch-campo')?.value || '';
+    const categoria = document.getElementById('ch-categoria')?.value || '';
+    const cantidad  = Number(document.getElementById('ch-cantidad')?.value) || 0;
+    const precio    = Number(document.getElementById('ch-precio')?.value) || 0;
+    const vendedor  = document.getElementById('ch-vendedor')?.value.trim() || '';
+    const obs       = document.getElementById('ch-obs')?.value.trim() || '';
+    const msg       = document.getElementById('ch-msg');
+    if (!fecha)    { if(msg) msg.textContent='⚠ Ingresá la fecha.'; return; }
+    if (!campana)  { if(msg) msg.textContent='⚠ Ingresá la campaña.'; return; }
+    if (!cantidad) { if(msg) msg.textContent='⚠ Ingresá la cantidad.'; return; }
+    if (!precio)   { if(msg) msg.textContent='⚠ Ingresá el precio por cabeza.'; return; }
+    const lista = comprasHacGetAll_();
+    lista.push({
+      id: Date.now(),
+      fecha, campana, campo_id, categoria,
+      cantidad, precio_cabeza: precio,
+      importe_total: cantidad * precio,
+      vendedor, observacion: obs,
+      fecha_carga: today(),
+    });
+    comprasHacSave_(lista);
+    if(msg) { msg.textContent='✅ Compra registrada'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+    toast('Compra registrada — ' + fn(cantidad) + ' ' + categoria + ' · $ ' + fn(cantidad*precio), 'ok');
+    render();
+  };
+  window.compraHacEliminar_ = function(i) {
+    if (!confirm('¿Eliminar esta compra?')) return;
+    const lista = comprasHacGetAll_().sort((a,b)=>b.fecha.localeCompare(a.fecha));
+    lista.splice(i, 1);
+    comprasHacSave_(lista);
+    toast('Registro eliminado', 'ok');
+    render();
+  };
+}
+
+// ── Helper: KPI de sueldos para cada actividad ────────────────────────
+// actividad: 'cria' | 'recria' | 'engorde'
+function buildSueldoKpiPanel_(actividad) {
+  const sueldos = sueldosGetAll_();
+  const mesActual = today().slice(0, 7);
+  const anio = today().slice(0, 4);
+
+  // Calcula el importe imputado a esta actividad para un sueldo dado
+  function importeActividad(s) {
+    const monto = Number(s.monto) || 0;
+    const d = distVigente_(s.periodo);
+    return monto * (d[actividad] || 0) / 100;
+  }
+
+  const sueldoMes    = sueldos.find(s => s.periodo === mesActual);
+  const importeMes   = sueldoMes ? importeActividad(sueldoMes) : null;
+  const pctMes       = sueldoMes ? (distVigente_(mesActual)[actividad] || 0) : null;
+
+  const sueldosAnio  = sueldos.filter(s => s.periodo.startsWith(anio));
+  const totalAnio    = sueldosAnio.reduce((sum, s) => sum + importeActividad(s), 0);
+
+  const labels = { cria: '🐄 Cría', recria: '🐃 Recría', engorde: '🥩 Engorde' };
+  const colors = { cria: 'var(--green)', recria: 'var(--gold)', engorde: 'var(--clay)' };
+  const bgColors = { cria: 'var(--green-bg)', recria: 'var(--gold-bg)', engorde: 'var(--clay-bg)' };
+
+  const color = colors[actividad];
+  const bg    = bgColors[actividad];
+  const label = labels[actividad];
+
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <div style="background:${bg};border-radius:10px;padding:12px 20px;display:flex;align-items:center;gap:16px;flex:1;min-width:240px">
+      <div style="font-size:28px">👤</div>
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${color};margin-bottom:2px">Sueldos imputados — ${label}</div>
+        <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:10px;color:var(--text2)">Mes actual (${mesActual})</div>
+            <div style="font-size:20px;font-weight:800;color:${color}">${importeMes !== null ? '$ ' + fn(importeMes) : '—'}</div>
+            ${pctMes !== null ? `<div style="font-size:11px;color:var(--text3)">${pctMes}% del total</div>` : ''}
+          </div>
+          <div style="width:1px;background:var(--border);align-self:stretch;margin:2px 0"></div>
+          <div>
+            <div style="font-size:10px;color:var(--text2)">Acumulado ${anio}</div>
+            <div style="font-size:20px;font-weight:800;color:${color}">${totalAnio ? '$ ' + fn(totalAnio) : '—'}</div>
+            <div style="font-size:11px;color:var(--text3)">${sueldosAnio.length} ${sueldosAnio.length === 1 ? 'mes' : 'meses'}</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-left:auto">
+        <button class="btn btn-sm btn-ghost" onclick="goto('sueldos')" style="font-size:11px;white-space:nowrap">Ver detalle →</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function buildDashboard() {
@@ -729,6 +1054,7 @@ function buildDashboard() {
 
   let h = '<div class="section-label">Establecimiento — todos los rodeos de cría</div>';
   h += buildKpiRow(g);
+  h += buildSueldoKpiPanel_('cria');
 
   h += '<div class="section-label">Filtrar por campo</div>';
   h += '<div class="rodeo-strip">';
@@ -1954,6 +2280,7 @@ function buildRecria() {
   const rodeosRecria = rodeosAll.filter(r => r.actividad === 'Recría');
 
   let h = '<div class="page-header"><div class="page-title">Recría</div><div class="page-sub">Pesadas, movimientos, ventas y egresos de animales en recría</div></div>';
+  h += buildSueldoKpiPanel_('recria');
 
   // ── Tarjetas resumen por rodeo
   h += '<div class="section-label">Rodeos en Recría</div>';
@@ -2547,7 +2874,7 @@ function buildEngorde() {
 function buildEngordeDashboard_(rodeosEng, fm) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde. Creá rodeos con actividad "Engorde" en la hoja Rodeos.</div></div>';
 
-  // Acumular totales
+  let h = buildSueldoKpiPanel_('engorde');
   let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
   let totCC=0, totCA=0, totCV=0, totIv=0, totIvStk=0;
   const gdps=[];
@@ -3450,6 +3777,11 @@ function buildVentas() {
       <div class="fg"><label>Peso total en campo (kg) <span class="opt">(opcional)</span></label><input type="number" id="ve-peso" placeholder="Ej: 12650" min="0" oninput="actualizarImporteVenta_()"></div>
       <div class="fg"><label>Precio pactado $/kg <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 2850" min="0" oninput="actualizarImporteVenta_()"></div>
       <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe estimado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
+      <div class="fg"><label>Campaña</label>
+        <input type="text" id="ve-campana" placeholder="Ej: 2025/2026" list="ve-campana-list">
+        <datalist id="ve-campana-list">${[...new Set((S.cache.ventas||[]).map(v=>v.campana).filter(Boolean))].map(c=>`<option value="${c}">`).join('')}</datalist>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">Asigná la campaña a la que pertenece esta venta</div>
+      </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
     </div>
     <button class="btn btn-primary" id="ve-save" style="margin-top:6px">Registrar salida</button>
@@ -3460,6 +3792,7 @@ function buildVentas() {
     h += `<div class="section-label" style="color:var(--clay-text)">⏳ Pendientes de liquidación</div>`;
     h += buildEntityTable(pendientes, [
       { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
+      { key: 'campana', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
       { key: 'rodeo_id', label: 'Rodeo', render: v => `${rodeoNombre(v)} <span class="pill pill-gold" style="font-size:10px">${actividadDeRodeo_(v)}</span>` },
       { key: 'comprador', label: 'Comprador', render: v => v || '—' },
       { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
@@ -3473,6 +3806,7 @@ function buildVentas() {
   h += `<div class="section-label">Historial de ventas</div>`;
   h += buildEntityTable(liquidadas, [
     { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
+    { key: 'campana', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
     { key: 'rodeo_id', label: 'Rodeo', render: v => `${rodeoNombre(v)} <span class="pill pill-gold" style="font-size:10px">${actividadDeRodeo_(v)}</span>` },
     { key: 'comprador', label: 'Comprador', render: v => v || '—' },
     { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
@@ -3587,8 +3921,10 @@ function attachVentasEvents() {
       peso_campo_kg: peso,
       precio_pactado: precio,
       observaciones: document.getElementById('ve-obs').value.trim(),
+      campana: document.getElementById('ve-campana')?.value.trim() || '',
     };
     if (!data.fecha_salida || !data.rodeo_id || !data.cant_animales) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    if (!data.campana) { toast('Completá la campaña antes de registrar.', 'err'); return; }
     save.disabled = true;
     try {
       await apiCall('create', { body: { entity: 'ventas', data } });
@@ -5454,6 +5790,15 @@ function attachCotizacionEvents() {
   };
 }
 
+
+// ── Precios de valorización por actividad (localStorage) ──────────────
+function preciosValGet_() {
+  try { return JSON.parse(localStorage.getItem('lm_precios_val') || '{}'); } catch(e) { return {}; }
+}
+function preciosValSave_(obj) {
+  try { localStorage.setItem('lm_precios_val', JSON.stringify(obj)); } catch(e) {} 
+}
+
 function buildConfig() {
   return `
   <div class="panel">
@@ -5471,9 +5816,61 @@ function buildConfig() {
   <div class="panel">
     <div class="panel-title">Catálogos cargados</div>
     <p class="helper-text">Rodeos: ${(S.catalogs && S.catalogs.rodeos || []).length} · Campos: ${(S.catalogs && S.catalogs.campos || []).length} · Compradores: ${(S.catalogs && S.catalogs.compradores || []).length}</p>
+  </div>
+  ${buildPreciosValPanel_()}`;
+}
+
+function buildPreciosValPanel_() {
+  const p = preciosValGet_();
+  return `<div class="panel">
+    <div class="panel-title">💲 Precios de valorización de stock</div>
+    <p class="helper-text" style="margin-bottom:16px">
+      Estos precios se usan para calcular el valor del stock al cierre de cada campaña.
+      Las madres y toros se valorizan por cabeza; los terneros por kg vivo × precio.
+    </p>
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.04em;margin-bottom:8px">🐄 Cría</div>
+      <div class="fgrid">
+        <div class="fg"><label>Vientres ($ / cabeza)</label><input type="number" id="pv-cria-vientres" value="${p.cria_vientres||''}" placeholder="Ej: 900000" min="0" step="1000"></div>
+        <div class="fg"><label>Toros ($ / cabeza)</label><input type="number" id="pv-cria-toros" value="${p.cria_toros||''}" placeholder="Ej: 2500000" min="0" step="1000"></div>
+        <div class="fg"><label>Terneros machos ($ / kg vivo)</label><input type="number" id="pv-cria-terneros-m" value="${p.cria_terneros_m||''}" placeholder="Ej: 3200" min="0" step="10"></div>
+        <div class="fg"><label>Terneras hembras ($ / kg vivo)</label><input type="number" id="pv-cria-terneros-h" value="${p.cria_terneros_h||''}" placeholder="Ej: 2900" min="0" step="10"></div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.04em;margin-bottom:8px">🐃 Recría</div>
+      <div class="fgrid">
+        <div class="fg"><label>Novillos / vaquillonas ($ / kg vivo)</label><input type="number" id="pv-recria-kg" value="${p.recria_kg||''}" placeholder="Ej: 3100" min="0" step="10"></div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">🥩 Engorde</div>
+      <div class="fgrid">
+        <div class="fg"><label>Novillos / vaquillonas ($ / kg vivo)</label><input type="number" id="pv-engorde-kg" value="${p.engorde_kg||''}" placeholder="Ej: 3500" min="0" step="10"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+      <button class="btn btn-primary btn-sm" onclick="window.preciosValGuardar_()">💾 Guardar precios</button>
+      <span id="pv-msg" style="font-size:13px;color:var(--green)"></span>
+    </div>
   </div>`;
 }
+
 function attachConfigEvents() {
+  window.preciosValGuardar_ = function() {
+    const p = {
+      cria_vientres:   Number(document.getElementById('pv-cria-vientres')?.value) || 0,
+      cria_toros:      Number(document.getElementById('pv-cria-toros')?.value) || 0,
+      cria_terneros_m: Number(document.getElementById('pv-cria-terneros-m')?.value) || 0,
+      cria_terneros_h: Number(document.getElementById('pv-cria-terneros-h')?.value) || 0,
+      recria_kg:       Number(document.getElementById('pv-recria-kg')?.value) || 0,
+      engorde_kg:      Number(document.getElementById('pv-engorde-kg')?.value) || 0,
+    };
+    preciosValSave_(p);
+    const msg = document.getElementById('pv-msg');
+    if(msg) { msg.textContent = '✅ Precios guardados'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+    toast('Precios de valorización actualizados', 'ok');
+  };
   document.getElementById('cf-save').onclick = async () => {
     S.apiUrl = document.getElementById('cf-url').value.trim();
     S.apiToken = document.getElementById('cf-token').value.trim();
