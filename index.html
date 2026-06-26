@@ -432,6 +432,7 @@ const NAV = [
   ]},
   { section: 'General', destacada: true, items: [
     { k: 'ia', icon: '✦', label: 'Análisis IA' },
+    { k: 'sueldos', icon: '👤', label: 'Sueldos' },
     { k: 'stock_hacienda', icon: '📋', label: 'Stock Hacienda' },
     { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
@@ -644,6 +645,7 @@ function buildPage(page) {
     case 'engorde_pesadas':   return buildEngordePesadasPage();
     case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
+    case 'sueldos':     return buildSueldos();
     case 'ia':           return buildIA();
     case 'stock_hacienda': return buildStockHacienda();
     case 'pesadas':      return buildPesadas();
@@ -713,7 +715,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -5040,6 +5042,339 @@ function attachPesadasEvents() {
   };
   attachTableDeleteEvents('pesadas', 'pesada_id');
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO SUELDOS
+// ══════════════════════════════════════════════════════════════════════
+
+// ── Persistencia sueldos ─────────────────────────────────────────────
+function sueldosGetAll_() {
+  try { return JSON.parse(localStorage.getItem('lm_sueldos') || '[]'); } catch(e) { return []; }
+}
+function sueldosSave_(lista) {
+  try { localStorage.setItem('lm_sueldos', JSON.stringify(lista)); } catch(e) {}
+}
+
+// ── Distribución: historial de cambios de % por actividad ────────────
+// Cada registro: { desde: 'YYYY-MM', cria, recria, engorde, estructura }
+// "desde" es el período a partir del cual rige (inclusive)
+function distGetAll_() {
+  try { return JSON.parse(localStorage.getItem('lm_sueldo_dist') || '[]'); } catch(e) { return []; }
+}
+function distSave_(lista) {
+  try { localStorage.setItem('lm_sueldo_dist', JSON.stringify(lista)); } catch(e) {}
+}
+// Retorna los % vigentes para un período dado ('YYYY-MM')
+function distVigente_(periodo) {
+  const lista = distGetAll_()
+    .filter(d => d.desde <= periodo)
+    .sort((a, b) => b.desde.localeCompare(a.desde));
+  return lista[0] || { cria: 34, recria: 33, engorde: 33, estructura: 0 };
+}
+
+// ── Build principal ──────────────────────────────────────────────────
+function buildSueldos() {
+  const sueldos    = sueldosGetAll_().sort((a,b) => b.periodo.localeCompare(a.periodo));
+  const dists      = distGetAll_().sort((a,b) => b.desde.localeCompare(a.desde));
+  const distActual = dists[0] || { cria: 34, recria: 33, engorde: 33, estructura: 0 };
+  const mesActual  = today().slice(0,7);
+  const anio       = today().slice(0,4);
+
+  const totalAnio        = sueldos.filter(s => s.periodo.startsWith(anio)).reduce((s,x) => s+(Number(x.monto)||0), 0);
+  const sueldoMes        = sueldos.find(s => s.periodo === mesActual);
+  const totalSum         = distActual.cria + distActual.recria + distActual.engorde + distActual.estructura;
+
+  let h = `<div class="page-header">
+    <div class="page-title">👤 Sueldos y Cargas</div>
+    <div class="page-sub">Registro mensual — distribución automática por actividad</div>
+  </div>`;
+
+  // ── KPIs ──────────────────────────────────────────────────────────
+  h += `<div class="kpi-grid" style="margin-bottom:20px">
+    <div class="kpi">
+      <div class="kpi-icon">💰</div>
+      <div class="kpi-label">Mes actual (${mesActual})</div>
+      <div class="kpi-val ${sueldoMes?'kpi-pos':''}">${sueldoMes ? '$ '+fn(sueldoMes.monto) : '—'}</div>
+      <div class="kpi-sub">${sueldoMes ? (sueldoMes.observacion||'Sin observación') : 'No cargado aún'}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon">📅</div>
+      <div class="kpi-label">Acumulado ${anio}</div>
+      <div class="kpi-val">${totalAnio ? '$ '+fn(totalAnio) : '—'}</div>
+      <div class="kpi-sub">${sueldos.filter(s=>s.periodo.startsWith(anio)).length} meses registrados</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon">⚖️</div>
+      <div class="kpi-label">Distribución vigente</div>
+      <div class="kpi-val" style="font-size:12px;line-height:1.6">
+        Cría ${distActual.cria}% · Rec. ${distActual.recria}%<br>Eng. ${distActual.engorde}% · Estr. ${distActual.estructura}%
+      </div>
+      <div class="kpi-sub ${totalSum!==100?'':''}">
+        ${totalSum===100 ? '✅ Suman 100%' : '<span style="color:var(--red)">⚠ Suman '+totalSum+'% — revisá</span>'}
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon">📋</div>
+      <div class="kpi-label">Meses históricos</div>
+      <div class="kpi-val">${sueldos.length}</div>
+      <div class="kpi-sub">registros cargados</div>
+    </div>
+  </div>`;
+
+  // ── Panel: Tabla de distribución % ────────────────────────────────
+  h += `<div class="panel">
+    <div class="panel-title">⚖️ Tabla de distribución por actividad
+      <button class="btn btn-sm btn-primary" style="margin-left:auto" onclick="window.distNuevaToggle_()">+ Nueva distribución</button>
+    </div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">
+      Definí qué porcentaje del total de sueldos y cargas se imputa a cada actividad. Podés cambiarlos cuando cambia la época (ej: parición insume más personal). Los % deben sumar 100%.
+    </div>
+
+    <!-- Formulario nueva distribución -->
+    <div id="dist-new-form" style="display:none;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:16px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px">Nueva distribución de porcentajes</div>
+      <div class="fgrid">
+        <div class="fg">
+          <label>Vigente desde (período)</label>
+          <input type="month" id="dn-desde" value="${mesActual}">
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">Se aplica a este mes en adelante, hasta que cargues otra</div>
+        </div>
+        <div class="fg"><label>% Cría</label><input type="number" id="dn-cria" value="${distActual.cria}" min="0" max="100" step="1" oninput="window.distSumaPreview_()"></div>
+        <div class="fg"><label>% Recría</label><input type="number" id="dn-recria" value="${distActual.recria}" min="0" max="100" step="1" oninput="window.distSumaPreview_()"></div>
+        <div class="fg"><label>% Engorde</label><input type="number" id="dn-engorde" value="${distActual.engorde}" min="0" max="100" step="1" oninput="window.distSumaPreview_()"></div>
+        <div class="fg"><label>% Estructura</label><input type="number" id="dn-estructura" value="${distActual.estructura}" min="0" max="100" step="1" oninput="window.distSumaPreview_()">
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">Alambrados, parque, tareas generales</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="window.distGuardar_()">✅ Guardar distribución</button>
+        <button class="btn btn-secondary btn-sm" onclick="window.distNuevaToggle_()">Cancelar</button>
+        <span id="dn-suma" style="font-size:13px;font-weight:600"></span>
+        <span id="dn-msg" style="font-size:13px;color:var(--green)"></span>
+      </div>
+    </div>
+
+    <!-- Tabla historial de distribuciones -->
+    ${dists.length === 0
+      ? `<div class="empty-state" style="padding:16px 0"><span class="ico">⚖️</span><div class="msg">No hay distribuciones cargadas. Hacé clic en "+ Nueva distribución" para definir los porcentajes.</div></div>`
+      : `<div class="tw"><table class="dt">
+          <thead><tr>
+            <th>Vigente desde</th>
+            <th class="tc" style="color:var(--green-text)">🐄 Cría</th>
+            <th class="tc" style="color:var(--gold-text)">🐃 Recría</th>
+            <th class="tc" style="color:var(--clay-text)">🥩 Engorde</th>
+            <th class="tc" style="color:var(--blue-text)">🏗️ Estructura</th>
+            <th class="tc">Total</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+          ${dists.map((d, i) => {
+            const suma = (d.cria||0)+(d.recria||0)+(d.engorde||0)+(d.estructura||0);
+            const esVigente = i === 0;
+            return `<tr ${esVigente ? 'style="background:var(--green-bg)"' : ''}>
+              <td>
+                <strong>${d.desde}</strong>
+                ${esVigente ? ' <span style="font-size:10px;background:var(--green);color:#fff;padding:1px 7px;border-radius:20px;font-weight:700;vertical-align:middle">VIGENTE</span>' : ''}
+              </td>
+              <td class="tc"><strong>${d.cria||0}%</strong></td>
+              <td class="tc"><strong>${d.recria||0}%</strong></td>
+              <td class="tc"><strong>${d.engorde||0}%</strong></td>
+              <td class="tc"><strong>${d.estructura||0}%</strong></td>
+              <td class="tc ${suma===100?'':''}">
+                <span style="font-weight:700;color:${suma===100?'var(--green)':'var(--red)'}">${suma}%</span>
+              </td>
+              <td><button class="btn btn-danger btn-sm" onclick="window.distEliminar_(${i})">🗑</button></td>
+            </tr>`;
+          }).join('')}
+          </tbody>
+        </table></div>`
+    }
+  </div>`;
+
+  // ── Panel: Cargar sueldo mensual ──────────────────────────────────
+  h += `<div class="panel">
+    <div class="panel-title">➕ Cargar sueldo mensual</div>
+    <div class="fgrid">
+      <div class="fg">
+        <label>Período</label>
+        <input type="month" id="sd-periodo" value="${mesActual}">
+      </div>
+      <div class="fg">
+        <label>Total sueldos + cargas ($ ARS)</label>
+        <input type="number" id="sd-monto" placeholder="Ej: 850000" min="0" step="100">
+      </div>
+      <div class="fg" style="flex:2">
+        <label>Observación (opcional)</label>
+        <input type="text" id="sd-obs" placeholder="Ej: incluye aguinaldo, bono de productividad, etc.">
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary" onclick="window.sueldoGuardar_()">💾 Guardar</button>
+      <span id="sd-msg" style="font-size:13px;color:var(--green)"></span>
+    </div>
+  </div>`;
+
+  // ── Panel: Resumen de imputación ──────────────────────────────────
+  h += `<div class="panel">
+    <div class="panel-title">📊 Imputación por actividad — historial</div>`;
+
+  if (sueldos.length === 0) {
+    h += `<div class="empty-state"><span class="ico">💰</span><div class="msg">Cargá el primer sueldo mensual para ver la imputación por actividad.</div></div>`;
+  } else {
+    // Acumuladores totales
+    let totMonto = 0, totCria = 0, totRecria = 0, totEngorde = 0, totEstructura = 0;
+
+    h += `<div class="tw"><table class="dt">
+      <thead><tr>
+        <th>Período</th>
+        <th class="tr">Total</th>
+        <th class="tr" style="color:var(--green-text)">🐄 Cría</th>
+        <th class="tr" style="color:var(--gold-text)">🐃 Recría</th>
+        <th class="tr" style="color:var(--clay-text)">🥩 Engorde</th>
+        <th class="tr" style="color:var(--blue-text)">🏗️ Estructura</th>
+        <th style="font-size:11px;color:var(--text3)">% usados</th>
+        <th></th>
+      </tr></thead><tbody>`;
+
+    sueldos.forEach((s, i) => {
+      const monto = Number(s.monto) || 0;
+      const d = distVigente_(s.periodo);
+      const iCria      = monto * (d.cria||0)      / 100;
+      const iRecria    = monto * (d.recria||0)    / 100;
+      const iEngorde   = monto * (d.engorde||0)   / 100;
+      const iEstructura= monto * (d.estructura||0)/ 100;
+      totMonto += monto; totCria += iCria; totRecria += iRecria;
+      totEngorde += iEngorde; totEstructura += iEstructura;
+      h += `<tr>
+        <td>
+          <strong>${s.periodo}</strong>
+          ${s.observacion ? `<div style="font-size:11px;color:var(--text3)">${s.observacion}</div>` : ''}
+        </td>
+        <td class="tr"><strong>$ ${fn(monto)}</strong></td>
+        <td class="tr" style="color:var(--green-text)">$ ${fn(iCria)}</td>
+        <td class="tr" style="color:var(--gold-text)">$ ${fn(iRecria)}</td>
+        <td class="tr" style="color:var(--clay-text)">$ ${fn(iEngorde)}</td>
+        <td class="tr" style="color:var(--blue-text)">$ ${fn(iEstructura)}</td>
+        <td style="font-size:11px;color:var(--text3)">${d.cria}/${d.recria}/${d.engorde}/${d.estructura}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="window.sueldoEliminar_(${i})">🗑</button></td>
+      </tr>`;
+    });
+
+    h += `</tbody></table></div>`;
+
+    // Totales
+    h += `<div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+      <div style="background:var(--bg2);border-radius:8px;padding:12px 18px;min-width:120px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Total acumulado</div>
+        <div style="font-size:20px;font-weight:700">$ ${fn(totMonto)}</div>
+      </div>
+      <div style="background:var(--green-bg);border-radius:8px;padding:12px 18px;min-width:120px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.05em">🐄 Cría</div>
+        <div style="font-size:20px;font-weight:700;color:var(--green)">$ ${fn(totCria)}</div>
+      </div>
+      <div style="background:var(--gold-bg);border-radius:8px;padding:12px 18px;min-width:120px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.05em">🐃 Recría</div>
+        <div style="font-size:20px;font-weight:700;color:var(--gold)">$ ${fn(totRecria)}</div>
+      </div>
+      <div style="background:var(--clay-bg);border-radius:8px;padding:12px 18px;min-width:120px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.05em">🥩 Engorde</div>
+        <div style="font-size:20px;font-weight:700;color:var(--clay)">$ ${fn(totEngorde)}</div>
+      </div>
+      <div style="background:var(--blue-bg);border-radius:8px;padding:12px 18px;min-width:120px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--blue-text);letter-spacing:.05em">🏗️ Estructura</div>
+        <div style="font-size:20px;font-weight:700;color:var(--blue)">$ ${fn(totEstructura)}</div>
+      </div>
+    </div>`;
+  }
+
+  h += `</div>`;
+  return h;
+}
+
+function attachSueldosEvents() {
+
+  // Preview suma mientras se escribe
+  window.distSumaPreview_ = function() {
+    const c = parseInt(document.getElementById('dn-cria')?.value||0);
+    const r = parseInt(document.getElementById('dn-recria')?.value||0);
+    const e = parseInt(document.getElementById('dn-engorde')?.value||0);
+    const s = parseInt(document.getElementById('dn-estructura')?.value||0);
+    const suma = c+r+e+s;
+    const el = document.getElementById('dn-suma');
+    if (el) {
+      el.textContent = 'Suma: ' + suma + '%';
+      el.style.color = suma === 100 ? 'var(--green)' : 'var(--red)';
+    }
+  };
+  // Trigger preview on load
+  setTimeout(() => window.distSumaPreview_ && window.distSumaPreview_(), 50);
+
+  window.distNuevaToggle_ = function() {
+    const f = document.getElementById('dist-new-form');
+    if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  };
+
+  window.distGuardar_ = function() {
+    const desde     = document.getElementById('dn-desde')?.value || '';
+    const cria      = parseInt(document.getElementById('dn-cria')?.value||0);
+    const recria    = parseInt(document.getElementById('dn-recria')?.value||0);
+    const engorde   = parseInt(document.getElementById('dn-engorde')?.value||0);
+    const estructura= parseInt(document.getElementById('dn-estructura')?.value||0);
+    const msg       = document.getElementById('dn-msg');
+    if (!desde) { if(msg) msg.textContent='⚠ Indicá desde qué período rige.'; return; }
+    const suma = cria+recria+engorde+estructura;
+    if (suma !== 100) { if(msg) msg.textContent='⚠ Los porcentajes suman '+suma+'%, deben ser 100%.'; return; }
+    const lista = distGetAll_();
+    const idx = lista.findIndex(d => d.desde === desde);
+    const reg = { desde, cria, recria, engorde, estructura };
+    if (idx >= 0) { lista[idx] = reg; } else { lista.push(reg); }
+    distSave_(lista);
+    toast('Distribución guardada — vigente desde ' + desde, 'ok');
+    render();
+  };
+
+  window.distEliminar_ = function(i) {
+    if (!confirm('¿Eliminar esta distribución de porcentajes?')) return;
+    const lista = distGetAll_().sort((a,b) => b.desde.localeCompare(a.desde));
+    lista.splice(i, 1);
+    distSave_(lista);
+    toast('Distribución eliminada', 'ok');
+    render();
+  };
+
+  window.sueldoGuardar_ = function() {
+    const periodo = document.getElementById('sd-periodo')?.value || '';
+    const monto   = parseFloat(document.getElementById('sd-monto')?.value || '0');
+    const obs     = document.getElementById('sd-obs')?.value.trim() || '';
+    const msg     = document.getElementById('sd-msg');
+    if (!periodo) { if(msg) msg.textContent='⚠ Seleccioná el período.'; return; }
+    if (!monto || monto <= 0) { if(msg) msg.textContent='⚠ Ingresá un monto válido.'; return; }
+    const dist = distVigente_(periodo);
+    const suma = (dist.cria||0)+(dist.recria||0)+(dist.engorde||0)+(dist.estructura||0);
+    if (suma !== 100) {
+      if (!confirm('⚠ La distribución vigente para este período suma ' + suma + '% (no 100%). ¿Guardás igual?')) return;
+    }
+    const lista = sueldosGetAll_();
+    const idx = lista.findIndex(s => s.periodo === periodo);
+    const reg = { periodo, monto, observacion: obs, fecha_carga: today() };
+    if (idx >= 0) { lista[idx] = reg; } else { lista.push(reg); }
+    sueldosSave_(lista);
+    if(msg) { msg.textContent='✅ Guardado'; setTimeout(() => { if(msg) msg.textContent=''; }, 2500); }
+    toast('Sueldo ' + periodo + ' guardado — $ ' + fn(monto), 'ok');
+    render();
+  };
+
+  window.sueldoEliminar_ = function(i) {
+    if (!confirm('¿Eliminar este registro de sueldo?')) return;
+    const lista = sueldosGetAll_().sort((a,b) => b.periodo.localeCompare(a.periodo));
+    lista.splice(i, 1);
+    sueldosSave_(lista);
+    toast('Registro eliminado', 'ok');
+    render();
+  };
+}
+
+
 
 function buildCotizacion() {
   const lista = (S.corralesTipoCambio || [])
