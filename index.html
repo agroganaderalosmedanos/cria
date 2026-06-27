@@ -3274,7 +3274,12 @@ function buildEngorde() {
     <div class="page-title">Resultado Económico Terminación</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       ${tabs.map(t => `<button class="radio-pill${page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.label}</button>`).join('')}
-      <button class="radio-pill${moneda==='USD'?' selected':''}" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="margin-left:auto">🇺🇸 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}</button>
+      <button onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()"
+        style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;
+               background:${moneda==='USD'?'var(--blue)':'var(--bg2)'};color:${moneda==='USD'?'#fff':'var(--text)'};
+               display:flex;align-items:center;gap:6px">
+        💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
+      </button>
     </div>
   </div>`;
 
@@ -3373,7 +3378,6 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         ${campos.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(campSelecField)?'selected':''}>${c.nombre}</option>`).join('')}
       </select>
     </div>
-    <button class="radio-pill${moneda==='USD'?' selected':''}" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="margin-left:auto">🇺🇸 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}</button>
   </div>`;
 
   // ── CÁLCULOS ECONÓMICOS ─────────────────────────────────────────────
