@@ -441,7 +441,7 @@ const NAV = [
   { section: 'Recría', destacada: true, items: [
     { k: 'recria', icon: '🐄', label: 'Recría' },
   ]},
-  { section: 'Engorde', destacada: true, items: [
+  { section: 'Terminación', destacada: true, items: [
     { k: 'engorde', icon: '📊', label: 'Dashboard' },
     { k: 'engorde_costos', icon: '💲', label: 'Costos' },
     { k: 'engorde_comparacion', icon: '⇌', label: 'Comparación' },
@@ -3190,7 +3190,7 @@ function buildEngorde() {
   ];
 
   let h = `<div class="page-header">
-    <div class="page-title">Engorde</div>
+    <div class="page-title">Resultado Económico Terminación</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       ${tabs.map(t => `<button class="radio-pill${page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.label}</button>`).join('')}
       <button class="radio-pill${moneda==='USD'?' selected':''}" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="margin-left:auto">🇺🇸 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}</button>
@@ -3244,321 +3244,288 @@ function buildEngorde() {
   return h;
 }
 
+function egUltimaPesada_(rodeoId) {
+  const pesadas = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(rodeoId)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  if (!pesadas.length) return null;
+  return { peso: Number(pesadas[0].peso_prom_kg)||0, fecha: pesadas[0].fecha };
+}
+function egDiasEngorde_(rodeoId) {
+  const movs = (S.cache.movimientos||[]).filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
+  if (!movs.length) return null;
+  const fechaEntrada = movs.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)))[0].fecha;
+  if (!fechaEntrada) return null;
+  return Math.floor((new Date(today()) - new Date(fechaEntrada)) / 86400000);
+}
+
 function buildEngordeDashboard_(rodeosEng, fm) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde. Creá rodeos con actividad "Engorde" en la hoja Rodeos.</div></div>';
 
-  let h = buildSueldoKpiPanel_('engorde');
-  let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
-  let totCC=0, totCA=0, totCV=0, totIv=0, totIvStk=0;
-  const gdps=[];
+  const campanas = [...new Set([
+    ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
+    ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
+  ])].sort((a,b)=>b.localeCompare(a));
+  const campSelec = S._dashEngCampana || campanas[0] || '';
+  const campSelecField = S._dashEngCampo || '';
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
 
-  rodeosEng.forEach(r => {
-    const rid = r.rodeo_id;
-    totAn  += egStock_(rid);
-    totKgI += egKgIngresados_(rid);
-    totKgV += egKgVend_(rid);
-    totKgStk += egKgStockEstimado_(rid);
-    totKgG += egKgGanadosHastaPesada_(rid);
-    totCC  += egCostoCompra_(rid);
-    totCA  += egCostoAlim_(rid);
-    // Costo vet = consumos de productos categoría Veterinaria
-    totCV  += egCostoAlim_(rid, null, 'Veterinaria');
-    totIv  += egIngVentas_(rid);
-    const cfg = egConfig_(rid);
-    const pes = egPesadas_(rid);
-    const ultima = pes.length ? pes[pes.length-1] : null;
-    const stkP = Number(cfg.precioStock || 0);
-    if (stkP > 0 && ultima) totIvStk += egStock_(rid) * Number(ultima.peso_prom_kg) * stkP;
-    const gd = egGanDiaria_(rid);
-    if (gd !== null) gdps.push(gd);
+  let h = '';
+
+  // ── Selectores campaña + campo ──────────────────────────────────────
+  h += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Campaña:</label>
+      ${campanas.length
+        ? `<select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:140px"
+            onchange="S._dashEngCampana=this.value;render()">
+            ${campanas.map(c=>`<option value="${c}" ${c===campSelec?'selected':''}>${c}</option>`).join('')}
+          </select>`
+        : '<span style="font-size:13px;color:var(--text3)">Sin campañas</span>'
+      }
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Campo:</label>
+      <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:160px"
+        onchange="S._dashEngCampo=this.value;render()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(campSelecField)?'selected':''}>${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
+
+  // ── CÁLCULOS ECONÓMICOS ─────────────────────────────────────────────
+  const rodeosEngFilt = campSelecField
+    ? rodeosEng.filter(r => String(r.campo_id) === String(campSelecField))
+    : rodeosEng;
+  const rodeosEngIds = new Set(rodeosEngFilt.map(r=>String(r.rodeo_id)));
+
+  // Ventas engorde campaña
+  const ventasEng = (S.cache.ventas||[]).filter(v => v.campana===campSelec && rodeosEngIds.has(String(v.rodeo_id)));
+  const totalVentas = ventasEng.reduce((s,v)=>s+(Number(v.importe_liq)||0),0);
+
+  // Stock valorizado actual
+  const pesadas = S.cache.pesadas || [];
+  let stockValEng = 0;
+  const stockDetalleRows = [];
+  rodeosEngFilt.forEach(r => {
+    const stock = Math.max(0, egStock_(r.rodeo_id));
+    if (!stock) return;
+    const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+    const val = valorizarRodeo_(r, stock, pesoP);
+    stockValEng += val;
+    stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
   });
 
-  const gdpProm = gdps.length ? gdps.reduce((s,g)=>s+g,0)/gdps.length : null;
-  const totIvTotal = totIv + totIvStk;
-  const utilSinVet = totIvTotal - totCC - totCA;
-  const utilConVet = totIvTotal - totCC - totCA - totCV;
-  const tc = tipoCambioVigente_(today());
-  const tcVal = tc ? Number(tc.valor || tc) : null;
-  const moneda = S.engordeMoneda || 'ARS';
-  const tcLabel = tcVal ? '· TC: $' + fn(tcVal, 0) + '/USD' : '';
-  const kgGPorAnim = totKgG > 0 && rodeosEng.length > 0 ? totKgG / rodeosEng.reduce((s,r)=>s+egCantIngresada_(r.rodeo_id),0) : null;
+  const totalIngresos = totalVentas + stockValEng;
 
-  h += '';
+  // Stock inicial / Cesiones recibidas de Recría
+  const movs = S.cache.movimientos || [];
+  const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  const cesionesRec = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  const totalSaldoIni = saldosIni.reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
+  // Cesiones: valorizar al precio vigente del momento
+  const totalCesiones = cesionesRec.reduce((s,m)=>{
+    const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+    const cant = Number(m.cantidad)||0;
+    const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
+    return s + valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesoO);
+  },0);
 
-  // Barra de moneda
-  h += `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-    <div style="font-size:13px;color:var(--text2)">Moneda: <strong>${moneda==='USD'?'🇺🇸 Dólares (USD) '+tcLabel:'🇦🇷 Pesos (ARS)'}</strong></div>
+  // Compras campaña
+  const comprasEng = comprasHacGetAll_().filter(c=>c.campana===campSelec&&(!campSelecField||String(c.campo_id)===String(campSelecField)));
+  const totalCompras = comprasEng.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
 
+  // Insumos por categoría
+  const consumos = (S.cache.consumos_insumos||[]).filter(c=>c.campana===campSelec&&rodeosEngIds.has(String(c.rodeo_id)));
+  const productos = S.cache.productos||[];
+  const prodPorId = Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
+  let totalAlim=0, totalVeter=0, totalOtros=0;
+  consumos.forEach(c=>{
+    const cat=(prodPorId[String(c.producto_id)]?.categoria||'').toLowerCase();
+    const imp=Number(c.importe)||0;
+    if(cat.includes('aliment')) totalAlim+=imp;
+    else if(cat.includes('veterin')||cat.includes('sanid')) totalVeter+=imp;
+    else totalOtros+=imp;
+  });
+
+  // Sueldos
+  const totalSueldosEng = sueldoTotalActividad_('engorde', campSelecField ? s=>String(s.campo_id)===String(campSelecField) : null);
+
+  const totalEgresos = totalSaldoIni + totalCesiones + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
+  const margen = totalIngresos - totalEgresos;
+  const margenColor = margen>=0 ? 'var(--green)' : 'var(--red)';
+  const margenBg    = margen>=0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
+
+  // ── RENDER ECONÓMICO ────────────────────────────────────────────────
+  const campoLabel = campSelecField ? ' · ' + campoNombre(campSelecField) : '';
+
+  h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <!-- INGRESOS -->
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — ${campSelec}${campoLabel}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">💰 Ventas de hacienda</div><div style="font-size:11px;color:var(--text3)">${ventasEng.length} ventas liquidadas</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalVentas)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+          <div><div style="font-weight:600">📦 Stock valorizado actual</div><div style="font-size:11px;color:var(--text3)">${stockDetalleRows.length} corrales</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(stockValEng)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
+          <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
+          <div style="font-size:22px;font-weight:800;color:var(--green)">$ ${fn(totalIngresos)}</div>
+        </div>
+      </div>
+    </div>
+    <!-- EGRESOS -->
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — ${campSelec}${campoLabel}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🐄 Stock inicial</div><div style="font-size:11px;color:var(--text3)">${saldosIni.length} rodeos × precio/cab</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSaldoIni)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cesionesRec.length} traslados valorizados</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCesiones)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🛒 Compras de hacienda</div><div style="font-size:11px;color:var(--text3)">${comprasEng.length} compras campaña</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCompras)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${consumos.length} consumos</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalAlim)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">💉 Veterinaria</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalVeter)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">📦 Otros insumos</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalOtros)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">👤 Sueldos Engorde</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSueldosEng)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
+          <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
+          <div style="font-size:22px;font-weight:800;color:var(--clay)">$ ${fn(totalEgresos)}</div>
+        </div>
+      </div>
+    </div>
   </div>`;
 
-  // Cálculos de porcentajes
-  const pctIv     = totIvTotal > 0 ? (totIv / totIvTotal * 100) : null;
-  const pctStk    = totIvTotal > 0 ? (totIvStk / totIvTotal * 100) : null;
-  const totCostos = totCC + totCA + totCV;
-  const pctCC     = totCostos > 0 ? (totCC / totCostos * 100) : null;
-  const pctCA     = totCostos > 0 ? (totCA / totCostos * 100) : null;
-  const pctCV     = totCostos > 0 ? (totCV / totCostos * 100) : null;
-  const pctMB     = totIvTotal > 0 ? ((totIvTotal - totCostos) / totIvTotal * 100) : null;
-  const pctUtilSV = totCostos > 0 ? (utilSinVet / totCostos * 100) : null;
-  const pctUtilCV = totCostos > 0 ? (utilConVet / totCostos * 100) : null;
-  const pctGanNeta = totCostos > 0 ? (utilConVet / totCostos * 100) : null;
-  function pct(v, pos) {
-    if (v === null) return '';
-    const color = pos === undefined ? '' : (v >= 0 ? 'color:var(--green-text)' : 'color:var(--clay-text)');
-    return '<span style="font-size:11px;font-weight:600;margin-left:4px;' + color + '">' + (v>=0?'+':'') + fn(v,1) + '%</span>';
-  }
-
-  // KPI grid — fila 1: Stock e Ingresos
-  h += '<div class="kpi-grid">' +
-    '<div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock total</div><div class="kpi-val">' + fn(totAn,0) + '</div><div class="kpi-sub">animales en corrales</div></div>' +
-    '<div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingresos por ventas</div><div class="kpi-val kpi-pos">' + fm(totIv) + '</div><div class="kpi-sub">ventas liquidadas</div></div>' +
-    '<div class="kpi"><div class="kpi-icon">🏷️</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val kpi-pos">' + (totIvStk>0?fm(totIvStk):'—') + '</div><div class="kpi-sub">' + (totIvStk>0?'al precio de stock configurado':'configurá precio en Costos') + '</div></div>' +
-    '<div class="kpi" style="border-top:3px solid var(--green)"><div class="kpi-icon">💰</div><div class="kpi-label">Ingresos totales</div><div class="kpi-val kpi-pos">' + fm(totIvTotal) + '</div><div class="kpi-sub">ventas + stock valorizado</div></div>' +
-    '</div>';
-
-  // KPI grid — fila 2: Costos
-  h += '<div class="kpi-grid">' +
-    '<div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">' + (totCC>0?fm(totCC):'—') + '</div><div class="kpi-sub">' + (totCC===0?'configurá en Costos':pct(pctCC)+' del costo total') + '</div></div>' +
-    '<div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo de alimentación</div><div class="kpi-val">' + fm(totCA) + '</div><div class="kpi-sub">' + pct(pctCA) + ' del costo total</div></div>' +
-    '<div class="kpi"><div class="kpi-icon">💊</div><div class="kpi-label">Costo veterinario</div><div class="kpi-val" style="color:#7c3aed">' + (totCV>0?fm(totCV):'$ 0') + '</div><div class="kpi-sub">' + (totCV>0?pct(pctCV)+' del costo total':'') + '</div></div>' +
-    '<div class="kpi" style="border-top:3px solid var(--clay)"><div class="kpi-icon">💲</div><div class="kpi-label">Costos totales</div><div class="kpi-val kpi-neg">' + fm(totCostos) + '</div><div class="kpi-sub">compra + alim. + vet.</div></div>' +
-    '<div class="kpi" style="border-top:3px solid var(--clay)"><div class="kpi-icon">📉</div><div class="kpi-label">% Costos s/ ingresos</div><div class="kpi-val kpi-neg" style="font-size:22px">' + (totIvTotal>0?fn(totCostos/totIvTotal*100,1)+'%':'—') + '</div><div class="kpi-sub">costos totales / ingresos totales</div></div>' +
-    '</div>';
-
-  // KPI grid — fila 3: Utilidad neta
-  h += '<div class="kpi-grid">' +
-    '<div class="kpi" style="border-top:3px solid ' + (utilConVet>=0?'var(--green)':'var(--clay)') + '"><div class="kpi-icon">📈</div><div class="kpi-label">Utilidad Neta</div><div class="kpi-val ' + (utilConVet>=0?'kpi-pos':'kpi-neg') + '" style="font-size:22px">' + fm(utilConVet) + '</div><div class="kpi-sub">ingresos totales − costos totales</div></div>' +
-    '<div class="kpi" style="border:2px solid ' + (pctGanNeta!==null&&pctGanNeta>=0?'var(--green)':'var(--clay)') + ';border-radius:var(--radius)"><div class="kpi-icon">🏆</div><div class="kpi-label">% Utilidad Neta</div><div class="kpi-val ' + (pctGanNeta!==null&&pctGanNeta>=0?'kpi-pos':'kpi-neg') + '" style="font-size:26px">' + (pctGanNeta!==null?fn(pctGanNeta,1)+'%':'—') + '</div><div class="kpi-sub">utilidad neta / costos totales</div></div>' +
-    '</div>';
-
-  // KPI grid — fila 3: Kilos y GDP
-  h += `<div class="kpi-grid">
-    <div class="kpi"><div class="kpi-icon">📥</div><div class="kpi-label">Kg ingresados</div><div class="kpi-val">${fn(totKgI,0)}</div><div class="kpi-sub">kg al entrar al corral</div></div>
-    <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Kg vendidos</div><div class="kpi-val">${fn(totKgV,0)}</div><div class="kpi-sub">kg totales egresados</div></div>
-    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Kg en stock</div><div class="kpi-val">${fn(totKgStk,0)}</div><div class="kpi-sub">${fn(totAn,0)} animales · última pesada</div></div>
-    <div class="kpi"><div class="kpi-icon">📊</div><div class="kpi-label">Kg ganados</div><div class="kpi-val kpi-pos">${fn(totKgG,0)}</div><div class="kpi-sub">${kgGPorAnim?fn(kgGPorAnim,1)+' kg gan./animal (prom.)':''}</div></div>
-    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">Ganancia diaria prom.</div><div class="kpi-val kpi-pos">${gdpProm!==null?fn(gdpProm,3)+' kg/día':'—'}</div><div class="kpi-sub">${rodeosEng.map(r=>campoNombre(r.campo_id)).join(' · ')}</div></div>
+  // Margen
+  h += `<div style="background:${margenBg};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Terminación ${campSelec}${campoLabel}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos</div>
+    </div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}$ ${fn(Math.abs(margen))}</div>
   </div>`;
 
-  // Tarjetas por corral
-  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:8px">';
-  rodeosEng.forEach(r => {
+  // ── PRODUCTIVO ──────────────────────────────────────────────────────
+  // KPIs productivos
+  let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
+  const gdps=[];
+  rodeosEngFilt.forEach(r => {
     const rid = r.rodeo_id;
-    const stk = egStock_(rid);
-    const pes = egPesadas_(rid);
-    const ultima = pes.length ? pes[pes.length-1] : null;
-    const gd = egGanDiaria_(rid);
-    const ca = egCostoAlim_(rid);
-    const cv = egCostoAlim_(rid, null, 'Veterinaria');
-    const cc = egCostoCompra_(rid);
-    const iv = egIngVentas_(rid);
-    const cfg = egConfig_(rid);
-    const stkP = Number(cfg.precioStock || 0);
-    const ivStk = stkP > 0 && ultima ? stk * Number(ultima.peso_prom_kg) * stkP : 0;
-    const ivTotal = iv + ivStk;
-    const util = ivTotal - cc - ca - cv;
-    const fi = egFechaIngreso_(rid);
-    const dias = fi ? Math.round((new Date() - new Date(fi)) / 86400000) : null;
-    const kgI = egKgIngresados_(rid);
-    const kgV = egKgVend_(rid);
-    const kgStk = egKgStockEstimado_(rid);
-    const kgG = egKgGanadosHastaPesada_(rid);
-    const cantIng = egCantIngresada_(rid);
-    const caXkgG = kgG > 0 ? ca / kgG : null;
-    const borderColor = util >= 0 ? 'var(--green)' : 'var(--red)';
+    totAn    += egStock_(rid);
+    totKgI   += egKgIngresados_(rid);
+    totKgV   += egKgVend_(rid);
+    totKgStk += egKgStockEstimado_(rid);
+    totKgG   += egKgGanados_(rid);
+    const gdp = egGDP_(rid);
+    if (gdp) gdps.push(gdp);
+  });
+  const gdpProm = gdps.length ? gdps.reduce((s,v)=>s+v,0)/gdps.length : null;
 
-    h += `<div style="background:var(--bg);border:0.5px solid var(--border);border-top:3px solid ${borderColor};border-radius:var(--radius-lg);padding:16px 18px;box-shadow:var(--shadow)">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Animales en stock</div>
+      <div style="font-size:18px;font-weight:700">${fn(totAn)}</div>
+    </div>
+    <div style="background:var(--green-bg);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.05em">Kg ingresados</div>
+      <div style="font-size:18px;font-weight:700;color:var(--green)">${fn(totKgI)}</div>
+    </div>
+    <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.05em">Kg vendidos</div>
+      <div style="font-size:18px;font-weight:700;color:var(--gold)">${fn(totKgV)}</div>
+    </div>
+    <div style="background:var(--clay-bg);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.05em">Kg en stock</div>
+      <div style="font-size:18px;font-weight:700;color:var(--clay)">${fn(totKgStk)}</div>
+    </div>
+    <div style="background:var(--blue-bg);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--blue-text);letter-spacing:.05em">Kg ganados</div>
+      <div style="font-size:18px;font-weight:700;color:var(--blue)">${fn(totKgG)}</div>
+    </div>
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">GDP promedio</div>
+      <div style="font-size:18px;font-weight:700">${gdpProm ? fn(gdpProm,3)+' kg/día' : '—'}</div>
+    </div>
+  </div>`;
+
+  // ── TARJETAS POR CORRAL ─────────────────────────────────────────────
+  h += '<div class="section-label">Detalle por corral</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:20px">';
+  rodeosEngFilt.forEach(r => {
+    const rid = r.rodeo_id;
+    const stock   = egStock_(rid);
+    const kgI     = egKgIngresados_(rid);
+    const kgV     = egKgVend_(rid);
+    const kgStk   = egKgStockEstimado_(rid);
+    const kgG     = egKgGanados_(rid);
+    const gdp     = egGDP_(rid);
+    const costoAlim = egCostoAlim_(rid);
+    const costoVet  = egCostoVet_(rid);
+    const ingVentas = egIngresosVentas_(rid);
+    const ivStk     = egIngresosStockVal_(rid);
+    const resultado = ingVentas + ivStk - costoAlim - costoVet;
+    const dias      = egDiasEngorde_(rid);
+    const ultimaPes = egUltimaPesada_(rid);
+
+    h += `<div style="background:var(--bg);border:1px solid var(--border2);border-radius:12px;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
           <div style="font-weight:700;font-size:15px">${r.nombre}</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px">${campoNombre(r.campo_id)}${dias!==null?' · '+dias+' días':''}</div>
+          <div style="font-size:12px;color:var(--text3)">${campoNombre(r.campo_id)} · ${dias ? dias+' días' : 'sin entrada'}</div>
         </div>
-        <div style="text-align:right">
-          <div style="font-size:24px;font-weight:800;color:var(--blue-text)">${fn(stk,0)}</div>
-          <div style="font-size:10px;color:var(--text3)">animales</div>
+        <div style="font-size:22px;font-weight:800;color:var(--blue);text-align:right">
+          ${fn(stock)}
+          <div style="font-size:10px;font-weight:400;color:var(--text3)">animales</div>
         </div>
       </div>
-      <div class="kpi-grid" style="margin-bottom:8px">
-        <div class="kpi" style="padding:8px 10px"><div class="kpi-label">Última pesada</div><div class="kpi-val" style="font-size:16px">${ultima?fn(ultima.peso_prom_kg,0)+' kg':'—'}</div><div class="kpi-sub">${ultima?fd(ultima.fecha):''}</div></div>
-        <div class="kpi" style="padding:8px 10px"><div class="kpi-label">GDP</div><div class="kpi-val kpi-pos" style="font-size:16px">${gd!==null?fn(gd,3)+' kg/día':'—'}</div></div>
-        <div class="kpi" style="padding:8px 10px"><div class="kpi-label">Kg ganados</div><div class="kpi-val kpi-pos" style="font-size:16px">${fn(kgG,0)}</div><div class="kpi-sub">${caXkgG?fm(caXkgG)+'/kg ganado':''}</div></div>
-        <div class="kpi" style="padding:8px 10px"><div class="kpi-label">Costo alim.</div><div class="kpi-val" style="font-size:16px">${fm(ca)}</div></div>
-        <div class="kpi" style="padding:8px 10px"><div class="kpi-label">Costo vet.</div><div class="kpi-val" style="font-size:16px;color:#7c3aed">${cv>0?fm(cv):'$ 0'}</div></div>
-        <div class="kpi" style="padding:8px 10px"><div class="kpi-label">Ingreso ventas</div><div class="kpi-val" style="font-size:16px">${fm(iv)}</div></div>
-        <div class="kpi" style="padding:8px 10px;border-top:2px solid ${util>=0?'var(--green)':'var(--red)'}"><div class="kpi-label">Resultado</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}" style="font-size:16px">${fm(util)}</div><div class="kpi-sub">${ivStk>0?'incl. stock val. '+fm(ivStk):''}</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px">
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Última pesada</div>
+        <div style="text-align:right;font-weight:600">${ultimaPes ? fn(ultimaPes.peso)+' kg' : '—'}</div>
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">GDP</div>
+        <div style="text-align:right;font-weight:600;color:var(--green)">${gdp ? fn(gdp,3)+' kg/día' : '—'}</div>
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Kg ganados</div>
+        <div style="text-align:right;font-weight:600">${fn(kgG)}</div>
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo alim.</div>
+        <div style="text-align:right;font-weight:600">${fm(costoAlim)}</div>
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo vet.</div>
+        <div style="text-align:right;font-weight:600;color:var(--blue)">${fm(costoVet)}</div>
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Ingreso ventas</div>
+        <div style="text-align:right;font-weight:600">${fm(ingVentas)}</div>
       </div>
-      <div style="font-size:11px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap">
-        <span>Ingresados: <strong>${fn(cantIng,0)} cab.</strong></span>
-        ${kgI>0?`<span>Kg ingr.: <strong>${fn(kgI,0)}</strong></span>`:''}
-        ${kgV>0?`<span>Kg vend.: <strong>${fn(kgV,0)}</strong></span>`:''}
-        <span>Kg stock: <strong>${fn(kgStk,0)}</strong></span>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Resultado</div>
+        <div style="font-size:16px;font-weight:800;color:${resultado>=0?'var(--green)':'var(--red)'}">${fm(resultado)}</div>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px">
+        Ingresados: ${fn(kgI+stock)} cab. &nbsp;·&nbsp; Kg ingr.: ${fn(kgI)} &nbsp;·&nbsp; Kg stock: ${fn(kgStk)}
       </div>
     </div>`;
   });
   h += '</div>';
-
-  // ── Tabla comparativa de corrales ──
-  const corralesConDatos = rodeosEng.filter(r => egPesadas_(r.rodeo_id).length > 0);
-  if (corralesConDatos.length > 1) {
-    h += `<div class="section-label" style="margin-top:20px">📊 Comparación entre corrales</div>`;
-    h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Corral</th>
-      <th class="tc">Animales</th>
-      <th class="tc">Días</th>
-      <th class="tc">Últ. pesada</th>
-      <th class="tc">GDP</th>
-      <th class="tc">Kg ganados</th>
-      <th class="tc">Alim./kg gan.</th>
-      <th class="tc">Resultado</th>
-    </tr></thead><tbody>`;
-
-    rodeosEng.forEach(r => {
-      const rid = r.rodeo_id;
-      const stk = egStock_(rid);
-      const pes = egPesadas_(rid);
-      const ultima = pes.length ? pes[pes.length-1] : null;
-      const gd = egGanDiaria_(rid);
-      const fi = egFechaIngreso_(rid);
-      const dias = fi ? Math.round((new Date() - new Date(fi)) / 86400000) : null;
-      const ca = egCostoAlim_(rid);
-      const cv = egCostoAlim_(rid, null, 'Veterinaria');
-      const cc = egCostoCompra_(rid);
-      const iv = egIngVentas_(rid);
-      const cfg = egConfig_(rid);
-      const stkP = Number(cfg.precioStock || 0);
-      const ivStk = stkP > 0 && ultima ? stk * Number(ultima.peso_prom_kg) * stkP : 0;
-      const util = iv + ivStk - cc - ca - cv;
-      const kgG = egKgGanadosHastaPesada_(rid);
-      const caXkgG = kgG > 0 ? ca / kgG : null;
-      const gdpBest = rodeosEng.map(x => egGanDiaria_(x.rodeo_id)).filter(v => v !== null);
-      const maxGdp = gdpBest.length ? Math.max(...gdpBest) : null;
-      const isGdpBest = gd !== null && maxGdp !== null && gd === maxGdp;
-
-      h += `<tr>
-        <td><strong>${r.nombre}</strong><div style="font-size:10px;color:var(--text3)">${campoNombre(r.campo_id)}</div></td>
-        <td class="tc">${fn(stk,0)}</td>
-        <td class="tc">${dias !== null ? dias + ' d.' : '—'}</td>
-        <td class="tc">${ultima ? fn(Number(ultima.peso_prom_kg),0) + ' kg' : '—'}</td>
-        <td class="tc" ${isGdpBest ? 'style="color:var(--green);font-weight:700"' : ''}>${gd !== null ? fn(gd,3) + ' kg/día' : '—'}</td>
-        <td class="tc">${fn(kgG,0)} kg</td>
-        <td class="tc">${caXkgG ? fm(caXkgG) + '/kg' : '—'}</td>
-        <td class="tc" style="font-weight:700;color:${util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(util)}</td>
-      </tr>`;
-    });
-    h += '</tbody></table></div>';
-  }
-
-  // ── Gráficos de barras ──
-  const nombresC = rodeosEng.map(r => r.nombre.replace('Novillos ', '').replace(' - ', '\n'));
-  const ingresos = rodeosEng.map(r => {
-    const rid = r.rodeo_id; const stk = egStock_(rid);
-    const iv = egIngVentas_(rid); const cfg = egConfig_(rid);
-    const pes = egPesadas_(rid); const ultima = pes.length ? pes[pes.length-1] : null;
-    const stkP = Number(cfg.precioStock||0);
-    return iv + (stkP>0&&ultima ? stk*Number(ultima.peso_prom_kg)*stkP : 0);
-  });
-  const egresos = rodeosEng.map(r => {
-    const rid = r.rodeo_id;
-    return egCostoCompra_(rid) + egCostoAlim_(rid);
-  });
-  const utilidades = ingresos.map((ing, i) => ing - egresos[i]);
-  const gdpsPorCorral = rodeosEng.map(r => egGanDiaria_(r.rodeo_id));
-
-  const maxVal = Math.max(...ingresos, ...egresos, 1);
-  const maxGdpVal = Math.max(...gdpsPorCorral.filter(v=>v!==null), 1);
-
-  // Graficos verticales lado a lado
-  function fmShort(v) {
-    if (Math.abs(v) >= 1e9) return '$' + fn(v/1e9,1) + 'B';
-    if (Math.abs(v) >= 1e6) return '$' + fn(v/1e6,1) + 'M';
-    return '$' + fn(v/1e3,0) + 'k';
-  }
-
-  var n = rodeosEng.length;
-  var bW = Math.min(55, Math.floor(220/n) - 8);
-  var chartHt = 180;
-  var padL = 44;
-  var padB = 52;
-  var padT = 30;
-  var totalW = padL + n * (bW*2 + 18) + 20;
-  var totalH = padT + chartHt + padB;
-  var bWgdp = Math.min(65, Math.floor(260/n) - 8);
-  var totalWgdp = padL + n*(bWgdp+10) + 20;
-  var nombres = rodeosEng.map(function(r){ return r.nombre; });
-
-  function svgGuias(maxV, isMoney) {
-    var s = '';
-    [0.25,0.5,0.75,1].forEach(function(pct) {
-      var y = padT + chartHt - chartHt*pct;
-      s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (totalW-10) + '" y2="' + y + '" stroke="var(--border)" stroke-width="0.5"/>';
-      var lbl = isMoney ? fmShort(maxV*pct) : fn(maxV*pct,2);
-      s += '<text x="' + (padL-4) + '" y="' + (y+3) + '" text-anchor="end" font-size="8" fill="var(--text3)">' + lbl + '</text>';
-    });
-    return s;
-  }
-
-  // Grafico 1: Ingresos vs Egresos
-  var maxIE = Math.max.apply(null, ingresos.concat(egresos).concat([1]));
-  var svgIE = '<svg viewBox="0 0 ' + totalW + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
-  svgIE += '<text x="' + (totalW/2) + '" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">Ingresos vs Egresos</text>';
-  svgIE += svgGuias(maxIE, true);
-  nombres.forEach(function(nombre, i) {
-    var x1 = padL + i*(bW*2+18);
-    var x2 = x1 + bW + 4;
-    var hIng = Math.max(2, (ingresos[i]/maxIE)*chartHt);
-    var hEgr = Math.max(2, (egresos[i]/maxIE)*chartHt);
-    var yIng = padT + chartHt - hIng;
-    var yEgr = padT + chartHt - hEgr;
-    svgIE += '<rect x="' + x1 + '" y="' + yIng + '" width="' + bW + '" height="' + hIng + '" rx="3" fill="var(--green)" opacity="0.88"/>';
-    svgIE += '<text x="' + (x1+bW/2) + '" y="' + (yIng-3) + '" text-anchor="middle" font-size="8" fill="var(--green-text)" font-weight="600">' + fmShort(ingresos[i]) + '</text>';
-    svgIE += '<rect x="' + x2 + '" y="' + yEgr + '" width="' + bW + '" height="' + hEgr + '" rx="3" fill="var(--clay)" opacity="0.88"/>';
-    svgIE += '<text x="' + (x2+bW/2) + '" y="' + (yEgr-3) + '" text-anchor="middle" font-size="8" fill="var(--clay-text)" font-weight="600">' + fmShort(egresos[i]) + '</text>';
-    var partes = nombre.replace(' - ','|').split('|');
-    partes.forEach(function(p,pi) {
-      svgIE += '<text x="' + (x1+bW) + '" y="' + (padT+chartHt+12+pi*11) + '" text-anchor="middle" font-size="8" fill="var(--text2)">' + (p.length>14?p.slice(0,13)+'...':p) + '</text>';
-    });
-  });
-  svgIE += '</svg>';
-
-  // Grafico 2: GDP
-  var gdpFiltrados2 = gdpsPorCorral.filter(function(v){ return v!==null; });
-  var svgGDP = '';
-  if (gdpFiltrados2.length > 0) {
-    var maxG = Math.max.apply(null, gdpFiltrados2.concat([1]));
-    svgGDP = '<svg viewBox="0 0 ' + totalWgdp + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
-    svgGDP += '<text x="' + (totalWgdp/2) + '" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">GDP por corral (kg/dia)</text>';
-    [0.25,0.5,0.75,1].forEach(function(pct) {
-      var y = padT + chartHt - chartHt*pct;
-      svgGDP += '<line x1="' + padL + '" y1="' + y + '" x2="' + (totalWgdp-10) + '" y2="' + y + '" stroke="var(--border)" stroke-width="0.5"/>';
-      svgGDP += '<text x="' + (padL-4) + '" y="' + (y+3) + '" text-anchor="end" font-size="8" fill="var(--text3)">' + fn(maxG*pct,2) + '</text>';
-    });
-    nombres.forEach(function(nombre, i) {
-      var gd = gdpsPorCorral[i];
-      var x = padL + i*(bWgdp+10);
-      var isBest = gd !== null && gd === maxG;
-      var hBar = gd !== null ? Math.max(2, (gd/maxG)*chartHt) : 2;
-      var yBar = padT + chartHt - hBar;
-      var color = isBest ? 'var(--green)' : '#6A7F3F';
-      svgGDP += '<rect x="' + x + '" y="' + yBar + '" width="' + bWgdp + '" height="' + hBar + '" rx="3" fill="' + color + '" opacity="0.88"/>';
-      if (gd !== null) svgGDP += '<text x="' + (x+bWgdp/2) + '" y="' + (yBar-3) + '" text-anchor="middle" font-size="8" fill="' + color + '" font-weight="' + (isBest?'700':'400') + '">' + fn(gd,3) + '</text>';
-      var partes = nombre.replace(' - ','|').split('|');
-      partes.forEach(function(p,pi) {
-        svgGDP += '<text x="' + (x+bWgdp/2) + '" y="' + (padT+chartHt+12+pi*11) + '" text-anchor="middle" font-size="8" fill="var(--text2)">' + (p.length>14?p.slice(0,13)+'...':p) + '</text>';
-      });
-    });
-    svgGDP += '</svg>';
-  }
-
-  var leyenda = '<div style="display:flex;gap:16px;font-size:11px;color:var(--text2);margin-top:6px;justify-content:center">' +
-    '<span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px;opacity:0.88"></span>Ingresos</span>' +
-    '<span><span style="display:inline-block;width:10px;height:10px;background:var(--clay);border-radius:2px;margin-right:4px;opacity:0.88"></span>Egresos</span>' +
-    '</div>';
-
-  h += '<div class="panel" style="margin-top:16px"><div class="panel-title">Rendimiento por corral</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:end">' +
-    '<div>' + svgIE + leyenda + '</div>' +
-    '<div>' + svgGDP + '</div>' +
-    '</div></div>';
 
   return h;
 }
