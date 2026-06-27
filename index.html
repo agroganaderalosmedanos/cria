@@ -473,6 +473,7 @@ const NAV = [
 async function goto(page) {
   S.page = page;
   S.sidebarOpen = false;
+  render(); // render inmediato para que el ítem del menú se ponga activo
   const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos', ventas: 'ventas', insumos: 'consumos_insumos', sueldos: 'sueldos', compras_hacienda: 'compras_hacienda' };
   if (entityMap[page] && !S.cache[entityMap[page]]) {
     S.loading = true; render();
