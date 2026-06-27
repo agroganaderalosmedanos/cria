@@ -921,9 +921,9 @@ function buildComprasHacienda() {
       </div>
       <div class="fg">
         <label>Rodeo destino <span class="opt">(opcional)</span></label>
-        <select id="ch-rodeo">
+        <select id="ch-rodeo" onchange="window.chActualizarRodeos_()">
           <option value="">— Sin asignar —</option>
-          ${rodeos.filter(r=>!editando||String(r.campo_id)===String(editando.campo_id)||true).map(r=>`<option value="${r.rodeo_id}" ${editando && String(r.rodeo_id)===String(editando.rodeo_id)?'selected':''}>${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+          ${rodeos.filter(r=>String(r.campo_id)===String(editando ? editando.campo_id : campos[0]?.campo_id)).map(r=>`<option value="${r.rodeo_id}" ${editando && String(r.rodeo_id)===String(editando.rodeo_id)?'selected':''}>${r.nombre}</option>`).join('')}
           <option value="__nuevo__">➕ Crear rodeo nuevo…</option>
         </select>
       </div>
@@ -1035,17 +1035,25 @@ function attachComprasHaciendaEvents() {
   };
 
   window.chActualizarRodeos_ = function() {
-    // Mostrar/ocultar campo nuevo rodeo
+    const campo_id = document.getElementById('ch-campo')?.value || '';
+    const rSelect  = document.getElementById('ch-rodeo');
+    const wrap     = document.getElementById('ch-nuevo-rodeo-wrap');
+
+    // Re-poblar rodeos filtrados por campo
+    if (rSelect) {
+      const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+      const filtrados = rodeos.filter(r => String(r.campo_id) === String(campo_id));
+      const prevVal = rSelect.value;
+      rSelect.innerHTML =
+        '<option value="">— Sin asignar —</option>' +
+        filtrados.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===prevVal?'selected':''}>${r.nombre}</option>`).join('') +
+        '<option value="__nuevo__">➕ Crear rodeo nuevo…</option>';
+    }
+
+    // Mostrar/ocultar form nuevo rodeo
     const val = document.getElementById('ch-rodeo')?.value;
-    const wrap = document.getElementById('ch-nuevo-rodeo-wrap');
     if (wrap) wrap.style.display = val === '__nuevo__' ? 'flex' : 'none';
   };
-
-  // Detectar selección de nuevo rodeo
-  setTimeout(() => {
-    const rSelect = document.getElementById('ch-rodeo');
-    if (rSelect) rSelect.onchange = window.chActualizarRodeos_;
-  }, 50);
 
   window.compraHacGuardar_ = async function() {
     const fecha     = document.getElementById('ch-fecha')?.value || '';
