@@ -396,13 +396,33 @@ async function loadDashboard() {
 }
 function invalidateCache(entity) { delete S.cache[entity]; }
 
+async function autofetchCotizacion_() {
+  // Buscar automáticamente si no tenemos cotización de hoy
+  try {
+    const hoy = today();
+    const yaHoy = (S.catalogs && S.catalogs.tipo_cambio || []).find(t => t.fecha === hoy);
+    if (!yaHoy) {
+      const res = await fetch('https://dolarapi.com/v1/dolares/oficial', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const valor = data.venta || data.promedio || null;
+      if (!valor) return;
+      await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha: hoy, valor: Number(valor), fuente: 'BNA' } } });
+      await loadCatalogs();
+      toast('Cotización del día actualizada: $ ' + fn(valor, 2) + ' / U$S', 'ok');
+      render();
+    }
+  } catch(e) { /* silencioso — no interrumpir el inicio */ }
+}
+
 async function init() {
   if (!apiConfigured()) { S.page = 'setup'; render(); return; }
   render();
   try {
     await loadCatalogs();
     render(); // app navegable de inmediato; el Resumen calcula sus índices solo al visitarlo
-    loadDashboard().then(render).catch(() => {}); // precarga silenciosa en segundo plano, sin bloquear ni avisar error si tarda
+    loadDashboard().then(render).catch(() => {}); // precarga silenciosa en segundo plano
+    autofetchCotizacion_(); // buscar cotización del día automáticamente
   } catch (err) {
     toast('Error al conectar: ' + err.message, 'err');
   }
@@ -2179,7 +2199,13 @@ async function loadTipoCambio() {
 }
 // Busca la cotización BNA vigente a una fecha (la última cargada en Corrales con fecha <= fecha dada)
 function tipoCambioVigente_(fecha) {
-  const lista = (S.corralesTipoCambio || [])
+  // Unificar: Sheets (catalogs.tipo_cambio) + corralesStock
+  const deCatalogs = (S.catalogs && S.catalogs.tipo_cambio || []).map(t => ({ fecha: t.fecha, valor: Number(t.valor) }));
+  const deCorral   = (S.corralesTipoCambio || []);
+  // Merge, Sheets tiene prioridad
+  const todas = [...deCatalogs];
+  deCorral.forEach(t => { if (!todas.find(x => x.fecha === t.fecha)) todas.push(t); });
+  const lista = todas
     .filter(t => t.fecha && String(t.fecha) <= String(fecha))
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
   return lista.length ? lista[lista.length - 1] : null;
@@ -5605,9 +5631,9 @@ function buildSueldos() {
     h += '<div class="empty-state"><span class="ico">💰</span><div class="msg">Cargá el primer sueldo mensual para ver la imputación.</div></div>';
   } else {
     // Agrupar por período
-    const periodos = [...new Set(sueldos.map(s=>s.periodo))].sort((a,b)=>b.localeCompare(a));
+    const periodos = [...new Set(sueldos.map(s=>String(s.periodo).slice(0,7)))].sort((a,b)=>b.localeCompare(a));
     periodos.forEach(periodo => {
-      const regs = sueldos.filter(s=>s.periodo===periodo);
+      const regs = sueldos.filter(s=>String(s.periodo).slice(0,7)===periodo);
       const totPer = regs.reduce((sum,s)=>sum+(Number(s.monto)||0),0);
       const totCriaPer    = regs.reduce((sum,s)=>sum+sueldoImporteActividad_(s,'cria'),0);
       const totRecriaPer  = regs.reduce((sum,s)=>sum+sueldoImporteActividad_(s,'recria'),0);
@@ -5815,7 +5841,7 @@ function attachSueldosEvents() {
     }
     try {
       // Buscar si ya existe para este período+campo
-      const existing = sueldosGetAll_().find(s => s.periodo===periodo && String(s.campo_id)===String(campo_id));
+      const existing = sueldosGetAll_().find(s => String(s.periodo).slice(0,7)===periodo && String(s.campo_id)===String(campo_id));
       const data = { periodo, campo_id, monto, observacion: obs, fecha_carga: today(),
         dist_cria: cria, dist_recria: recria, dist_engorde: engorde, dist_estructura: estructura };
       if (existing) {
@@ -5929,11 +5955,19 @@ function attachCotizacionEvents() {
       const valor = data.venta || data.promedio || null;
       if (!valor) throw new Error('Sin valor en la respuesta');
       const hoy = today();
+      // Guardar en Sheets
+      const existing = (S.catalogs && S.catalogs.tipo_cambio || []).find(t => t.fecha === hoy);
+      if (existing) {
+        await apiCall('update', { body: { entity: 'tipo_cambio', id: existing.tc_id, data: { ...existing, valor: Number(valor), fuente: 'BNA' } } });
+      } else {
+        await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha: hoy, valor: Number(valor), fuente: 'BNA' } } });
+      }
+      await loadCatalogs();
+      // También actualizar corralesTipoCambio para compatibilidad
       const lista = (S.corralesTipoCambio || []).filter(t => t.fecha !== hoy);
       lista.push({ fecha: hoy, valor: Number(valor) });
       S.corralesTipoCambio = lista;
-      try { localStorage.setItem('lm_tipo_cambio', JSON.stringify(lista)); } catch(e) {}
-      toast('Cotización actualizada: $ ' + fn(valor, 2) + ' / U$S', 'ok');
+      toast('Cotización actualizada: $ ' + fn(valor, 2) + ' / U$S — guardada en Sheets', 'ok');
       render();
     } catch (err) {
       toast('No se pudo actualizar: ' + err.message, 'err');
