@@ -412,7 +412,6 @@ const NAV = [
   { section: 'Cría', destacada: true, items: [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de reproducción' },
-    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
     { k: 'servicios', icon: '⚭', label: 'Servicios' },
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
@@ -433,6 +432,8 @@ const NAV = [
   { section: 'General', destacada: true, items: [
     { k: 'ia', icon: '✦', label: 'Análisis IA' },
     { k: 'sueldos', icon: '👤', label: 'Sueldos' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'precios_valorizacion', icon: '💲', label: 'Precios de valorización' },
     { k: 'stock_hacienda', icon: '📋', label: 'Stock Hacienda' },
     { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
@@ -654,6 +655,7 @@ function buildPage(page) {
     case 'sueldos':          return buildSueldos();
     case 'indices_reproduccion': return buildIndicesReproduccion();
     case 'compras_hacienda':     return buildComprasHacienda();
+    case 'precios_valorizacion':  return buildPreciosValPage();
     case 'ia':           return buildIA();
     case 'stock_hacienda': return buildStockHacienda();
     case 'pesadas':      return buildPesadas();
@@ -729,7 +731,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachConfigEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -5760,6 +5762,7 @@ function attachSueldosEvents() {
   // Inicializar preview al cargar la página
   setTimeout(() => {
     window.sdLoadDist_ && window.sdLoadDist_();
+    window.sdMesInfo_  && window.sdMesInfo_();
   }, 50);
 
   // Guardar sueldo
@@ -5795,7 +5798,11 @@ function attachSueldosEvents() {
       if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
       toast('Sueldo guardado — '+periodo+' · $ '+fn(monto), 'ok');
       render();
-    } catch(err) { toast('Error: '+err.message, 'err'); }
+    } catch(err) {
+      toast('Error: '+err.message, 'err');
+      const btnE = document.getElementById('sd-guardar-btn');
+      if (btnE) { btnE.disabled = false; btnE.textContent = '💾 Guardar sueldo'; }
+    }
   };
 
   window.sueldoEliminar_ = async function(i) {
@@ -5956,6 +5963,13 @@ function valorizarRodeo_(rodeo, stock, pesadaProm) {
                : cat === 'vaca venta'       ? (p.vaca_venta || 0)
                : 0;
   return cant * kg * precio;
+}
+
+function buildPreciosValPage() {
+  return `<div class="page-header">
+    <div class="page-title">💲 Precios de valorización</div>
+    <div class="page-sub">Precios usados para valorizar el stock en los dashboards</div>
+  </div>` + buildPreciosValPanel_();
 }
 
 function buildPreciosValPanel_() {
