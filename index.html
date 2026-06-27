@@ -489,9 +489,18 @@ async function goto(page) {
   }
   // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
   // se recarga automáticamente al volver a visitarlo.
-  if (page === 'dashboard' && !S.dashboard) {
-    const t = setTimeout(() => { if (!S.dashboard) { S.dashboardError = 'La conexión tardó demasiado. Verificá que el Código.gs esté desplegado con "Nueva versión".'; render(); } }, 15000);
-    loadDashboard().then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
+  if (page === 'dashboard') {
+    const t = setTimeout(() => { if (!S.dashboard) { S.dashboardError = 'La conexión tardó demasiado.'; render(); } }, 15000);
+    const loads = [];
+    if (!S.dashboard)              loads.push(loadDashboard());
+    if (!S.cache.movimientos)      loads.push(loadEntity('movimientos').catch(()=>{}));
+    if (!S.cache.ventas)           loads.push(loadEntity('ventas').catch(()=>{}));
+    if (!S.cache.consumos_insumos) loads.push(loadEntity('consumos_insumos').catch(()=>{}));
+    if (!S.cache.compras_hacienda) loads.push(loadEntity('compras_hacienda').catch(()=>{}));
+    if (!S.cache.sueldos)          loads.push(loadEntity('sueldos').catch(()=>{}));
+    if (!S.cache.pesadas)          loads.push(loadEntity('pesadas').catch(()=>{}));
+    if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
+    Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
   }
   if (page === 'movimientos') {
     // Cargar todo en paralelo para evitar múltiples re-renders
@@ -1224,193 +1233,260 @@ function buildSueldoKpiPanel_(actividad) {
 }
 
 function buildDashboard() {
-  if (S.dashboardError) return `<div class="empty-state"><span class="ico">⚠</span><div class="msg">Error al cargar el resumen: ${S.dashboardError}<br><br><button class="btn btn-secondary" onclick="S.dashboardError=null;S.dashboard=null;render()">Reintentar</button></div></div>`;
-  if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Calculando índices…</div>';
-  const g = S.dashboard.general;
-  const rodeosList = S.dashboard.rodeos || [];
-  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const campos   = (S.catalogs && S.catalogs.campos) || [];
+  const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
+  const movs     = S.cache.movimientos || [];
+  const ventas   = S.cache.ventas || [];
+  const consumos = S.cache.consumos_insumos || [];
+  const pesadas  = S.cache.pesadas || [];
+  const productos= S.cache.productos || [];
+  const comprasH = comprasHacGetAll_();
+  const sueldos  = sueldosGetAll_();
 
-  let h = '<div class="section-label">Establecimiento — todos los rodeos de cría</div>';
-  h += buildKpiRow(g);
-  h += buildSueldoKpiPanel_('cria');
+  // Campañas disponibles
+  const campanas = [...new Set([
+    ...ventas.map(v=>v.campana).filter(Boolean),
+    ...comprasH.map(c=>c.campana).filter(Boolean),
+    ...consumos.map(c=>c.campana).filter(Boolean),
+  ])].sort((a,b)=>b.localeCompare(a));
 
-  h += '<div class="section-label">Filtrar por campo</div>';
-  h += '<div class="rodeo-strip">';
-  h += `<div class="rodeo-chip ${!S.selectedCampoId ? 'active' : ''}" data-campo="">
-          <div class="rc-name">Todos los campos</div></div>`;
-  campos.forEach(c => {
-    h += `<div class="rodeo-chip ${String(S.selectedCampoId) === String(c.campo_id) ? 'active' : ''}" data-campo="${c.campo_id}">
-      <div class="rc-name">${c.nombre}</div>
-    </div>`;
-  });
-  h += '</div>';
+  const campSelec = S._dashCampana || campanas[0] || '';
 
-  const rodeosFiltrados = (S.selectedCampoId
-    ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
-    : rodeosList
-  ).slice().sort((a, b) => {
-    const cmpCampo = campoNombre(a.rodeo.campo_id).localeCompare(campoNombre(b.rodeo.campo_id), 'es', { sensitivity: 'base' });
-    if (cmpCampo !== 0) return cmpCampo;
-    return a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
-  });
+  // Rodeos de Cría
+  const rodeosCria = rodeos.filter(r => r.actividad === 'Cría' || r.actividad === 'Cria');
 
-  if (S.selectedCampoId) {
-    const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
-    h += `<div class="panel">
-      <div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>
-      ${buildKpiRow(aggregateKpis_(rodeosFiltrados))}
-    </div>`;
-  }
+  // ── Header ──────────────────────────────────────────────────────────
+  let h = `<div class="page-header">
+    <div class="page-title">◈ Dashboard Cría</div>
+    <div class="page-sub">Resultados económicos por campaña</div>
+  </div>`;
 
-  h += '<div class="section-label">Por rodeo</div>';
-  h += '<div class="rodeo-strip">';
-  h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo="">
-          <div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
-  rodeosFiltrados.forEach(r => {
-    h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}">
-      <div class="rc-name">${r.rodeo.nombre}</div>
-      <div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div>
-    </div>`;
-  });
-  h += '</div>';
-
-  if (S.selectedRodeoId) {
-    const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
-    if (sel) {
-      h += `<div class="panel">
-        <div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>
-        ${buildKpiRow(sel.kpis)}
-      </div>`;
-    }
-  } else {
-    const sortStateD = (S.sort && S.sort.dashboard_rodeos) || null;
-    const arrowD = key => (sortStateD && sortStateD.key === key) ? (sortStateD.dir === 'asc' ? ' ▲' : ' ▼') : '';
-    let rodeosOrdenados = rodeosFiltrados;
-    if (sortStateD) {
-      rodeosOrdenados = [...rodeosFiltrados].sort((a, b) => {
-        let va = dashboardSortValue_(a, sortStateD.key), vb = dashboardSortValue_(b, sortStateD.key);
-        if (va == null) va = '';
-        if (vb == null) vb = '';
-        const na = Number(va), nb = Number(vb);
-        const numeric = va !== '' && vb !== '' && !isNaN(na) && !isNaN(nb);
-        const cmp = numeric ? (na - nb) : String(va).localeCompare(String(vb), 'es', { sensitivity: 'base' });
-        return sortStateD.dir === 'asc' ? cmp : -cmp;
-      });
-    }
-    h += `<div class="tw"><table class="dt"><thead><tr>
-      <th class="sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('nombre')">Rodeo${arrowD('nombre')}</th>
-      <th class="sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('campo')">Campo${arrowD('campo')}</th>
-      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('prenez')">Preñez${arrowD('prenez')}</th>
-      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('paricion')">Parición${arrowD('paricion')}</th>
-      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('destete')">Destete${arrowD('destete')}</th>
-      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('abortos')">Abortos${arrowD('abortos')}</th>
-      <th class="tc sortable-th" style="cursor:pointer;user-select:none" onclick="sortDashboardRodeos('mortandad')">Mort. terneros${arrowD('mortandad')}</th>
-    </tr></thead><tbody>`;
-    rodeosOrdenados.forEach(r => {
-      const k = r.kpis;
-      h += `<tr>
-        <td><strong>${r.rodeo.nombre}</strong></td>
-        <td style="color:var(--text2)">${campoNombre(r.rodeo.campo_id)}</td>
-        <td class="tc">${pillForPct(k.servicio.indice_prenez, fn(k.servicio.total_prenadas)+'/'+fn(k.servicio.total_serviciadas))}</td>
-        <td class="tc">${pillForPct(k.paricion.indice_paricion, fn(k.paricion.nacidos_vivos)+'/'+fn(k.servicio.total_prenadas))}</td>
-        <td class="tc">${pillForPct(k.destete.indice_destete, fn(k.destete.total_destetados)+'/'+fn(k.paricion.nacidos_vivos))}</td>
-        <td class="tc">${k.gestacion.abortos > 0 ? '<span class="pill pill-clay">' + k.gestacion.abortos + '</span>' : '—'}</td>
-        <td class="tc">${k.destete.mortandad_terneros > 0 ? '<span class="pill pill-red">' + k.destete.mortandad_terneros + '</span>' : '—'}</td>
-      </tr>`;
-    });
-    h += '</tbody></table></div>';
-  }
-  return h;
-}
-
-function dashboardSortValue_(r, key) {
-  switch (key) {
-    case 'nombre': return r.rodeo.nombre || '';
-    case 'campo': return campoNombre(r.rodeo.campo_id) || '';
-    case 'prenez': return r.kpis.servicio.indice_prenez;
-    case 'paricion': return r.kpis.paricion.indice_paricion;
-    case 'destete': return r.kpis.destete.indice_destete;
-    case 'abortos': return r.kpis.gestacion.abortos;
-    case 'mortandad': return r.kpis.destete.mortandad_terneros;
-    default: return '';
-  }
-}
-
-function sortDashboardRodeos(key) {
-  if (!S.sort) S.sort = {};
-  const current = S.sort.dashboard_rodeos;
-  if (current && current.key === key) {
-    current.dir = current.dir === 'asc' ? 'desc' : 'asc';
-  } else {
-    S.sort.dashboard_rodeos = { key, dir: 'asc' };
-  }
-  render();
-}
-
-// Suma los valores crudos de KPIs de varios rodeos y recalcula los porcentajes agregados
-function aggregateKpis_(rodeosArr) {
-  let totServ = 0, prenIatf = 0, prenToro = 0, totPren = 0;
-  let totTacteadasIatf = 0, totTacteadasToro = 0;
-  let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0;
-  rodeosArr.forEach(r => {
-    const k = r.kpis;
-    totServ += k.servicio.total_serviciadas || 0;
-    prenIatf += k.servicio.prenadas_iatf || 0;
-    prenToro += k.servicio.prenadas_toro || 0;
-    totPren += k.servicio.total_prenadas || 0;
-    totTacteadasIatf += k.servicio.total_tacteadas_iatf || 0;
-    totTacteadasToro += k.servicio.total_tacteadas_toro || 0;
-    nacVivos += k.paricion.nacidos_vivos || 0;
-    nacMuertos += k.paricion.nacidos_muertos || 0;
-    abortos += k.gestacion.abortos || 0;
-    totDest += k.destete.total_destetados || 0;
-    mortTerneros += k.destete.mortandad_terneros || 0;
-  });
-  return {
-    servicio: {
-      total_serviciadas: totServ, prenadas_iatf: prenIatf, prenadas_toro: prenToro, total_prenadas: totPren,
-      total_tacteadas_iatf: totTacteadasIatf, total_tacteadas_toro: totTacteadasToro,
-      indice_prenez: totServ > 0 ? round1_(totPren / totServ * 100) : null,
-      indice_prenez_iatf: totTacteadasIatf > 0 ? round1_(prenIatf / totTacteadasIatf * 100) : null,
-      indice_prenez_toro: totTacteadasToro > 0 ? round1_(prenToro / totTacteadasToro * 100) : null,
-    },
-    gestacion: { abortos },
-    paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, indice_paricion: totPren > 0 ? round1_(nacVivos / totPren * 100) : null },
-    destete: { total_destetados: totDest, mortandad_terneros: mortTerneros, indice_destete: nacVivos > 0 ? round1_(totDest / nacVivos * 100) : null },
-  };
-}
-function round1_(n) { return n === null || n === undefined || isNaN(n) ? null : Math.round(n * 10) / 10; }
-
-function pillForPct(p, detalle) {
-  const det = detalle ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${detalle}</div>` : '';
-  if (p === null || p === undefined) return `<span style="color:var(--text3)">—</span>${det}`;
-  const cls = p >= 85 ? 'pill-green' : p >= 65 ? 'pill-gold' : 'pill-red';
-  return `<span class="pill ${cls}">${fn(p,1)}%</span>${det}`;
-}
-
-function buildKpiRow(k) {
-  return `<div class="kpi-row">
-    <div class="kpi-card accent-green">
-      <div class="kpi-icon">⚭</div><div class="kpi-label">Índice de preñez</div>
-      <div class="kpi-value">${pct(k.servicio.indice_prenez)}</div>
-      <div class="kpi-sub">${fn(k.servicio.total_prenadas)} de ${fn(k.servicio.total_serviciadas)} vacas preñadas</div>
-    </div>
-    <div class="kpi-card accent-gold">
-      <div class="kpi-icon">◔</div><div class="kpi-label">Preñez IATF</div>
-      <div class="kpi-value">${pct(k.servicio.indice_prenez_iatf)}</div>
-      <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} de ${fn(k.servicio.total_tacteadas_iatf)} vacas (IATF)</div>
-    </div>
-    <div class="kpi-card accent-clay">
-      <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
-      <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
-      <div class="kpi-sub">${fn(k.paricion.nacidos_vivos)} de ${fn(k.servicio.total_prenadas)} vacas parieron</div>
-    </div>
-    <div class="kpi-card accent-green">
-      <div class="kpi-icon">⊞</div><div class="kpi-label">Índice de destete</div>
-      <div class="kpi-value">${pct(k.destete.indice_destete)}</div>
-      <div class="kpi-sub">${fn(k.destete.total_destetados)} de ${fn(k.paricion.nacidos_vivos)} terneros destetados</div>
+  // ── Selector de campaña ─────────────────────────────────────────────
+  h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+    <div style="font-size:13px;font-weight:600">Campaña:</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${campanas.length ? campanas.map(c=>`
+        <button class="btn ${c===campSelec?'btn-primary':'btn-secondary'} btn-sm" onclick="S._dashCampana='${c}';render()">${c}</button>
+      `).join('') : '<span style="font-size:13px;color:var(--text3)">Sin campañas cargadas — asigná campaña en ventas y compras</span>'}
     </div>
   </div>`;
+
+  if (!campSelec) {
+    h += `<div class="empty-state"><span class="ico">📊</span><div class="msg">Cargá campañas en ventas y compras para ver el dashboard.</div></div>`;
+    return h;
+  }
+
+  // Advertencia si faltan precios de valorización
+  const precios = preciosValGet_();
+  const haPrecios = Object.values(precios).some(v => v > 0);
+  if (!haPrecios) {
+    h += `<div style="background:var(--gold-bg);border:1px solid var(--gold);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;align-items:center">
+      <span style="font-size:20px">⚠️</span>
+      <div>
+        <div style="font-weight:600;color:var(--gold-text)">Sin precios de valorización</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">Cargá los precios en <button class="btn btn-ghost btn-sm" onclick="goto('precios_valorizacion')" style="font-size:12px;padding:0 4px">💲 Precios de valorización</button> para ver el stock valorizado.</div>
+      </div>
+    </div>`;
+  }
+
+  // ── INGRESOS ────────────────────────────────────────────────────────
+  // 1. Ventas de la campaña (rodeos de Cría)
+  const rodeosCriaIds = new Set(rodeosCria.map(r=>String(r.rodeo_id)));
+  const ventasCria = ventas.filter(v => v.campana === campSelec && rodeosCriaIds.has(String(v.rodeo_id)));
+  const totalVentas = ventasCria.reduce((s,v) => s + (Number(v.importe_liq)||0), 0);
+
+  // 2. Cesiones a Recría/Engorde (movimientos de traslado desde rodeos Cría a Recría/Engorde)
+  const rodeosPorId = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
+  const cesiones = movs.filter(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+    const origen  = rodeosPorId[String(m.rodeo_origen_id)];
+    const destino = rodeosPorId[String(m.rodeo_destino_id)];
+    return origen && (origen.actividad==='Cría'||origen.actividad==='Cria') &&
+           destino && (destino.actividad==='Recría'||destino.actividad==='Engorde');
+  });
+  // Valorizar cesiones con precio vigente
+  const totalCesiones = cesiones.reduce((s,m) => {
+    const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+    const cat = (rodeo?.categoria||'').toLowerCase().trim();
+    const cant = Number(m.cantidad)||0;
+    // Peso: última pesada del rodeo origen
+    const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoP = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
+    return s + valorizarRodeo_(rodeo||{categoria:cat}, cant, pesoP);
+  }, 0);
+
+  // 3. Stock valorizado actual (rodeos Cría)
+  const stockPorRodeo = {};
+  movs.forEach(m => {
+    const cant = Number(m.cantidad)||0;
+    if (m.tipo==='Saldo inicial') {
+      stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
+      if (m.rodeo_origen_id)  stockPorRodeo[String(m.rodeo_origen_id)]  = (stockPorRodeo[String(m.rodeo_origen_id)] ||0) - cant;
+      if (m.rodeo_destino_id) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    }
+  });
+  ventas.forEach(v => {
+    stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
+  });
+
+  let stockValCria = 0;
+  const stockDetalleRows = [];
+  rodeosCria.forEach(r => {
+    const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
+    if (!stock) return;
+    const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+    const val = valorizarRodeo_(r, stock, pesoP);
+    stockValCria += val;
+    if (val > 0 || stock > 0) stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
+  });
+
+  const totalIngresos = totalVentas + totalCesiones + stockValCria;
+
+  // ── EGRESOS ─────────────────────────────────────────────────────────
+  // 1. Stock inicial (saldos iniciales de rodeos Cría)
+  const saldosIniciales = movs.filter(m => m.tipo==='Saldo inicial' && rodeosCriaIds.has(String(m.rodeo_destino_id)));
+  const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+
+  // 2. Compras hacienda de la campaña (rodeos Cría)
+  const comprasCria = comprasH.filter(c => c.campana===campSelec);
+  const totalCompras = comprasCria.reduce((s,c) => s+(Number(c.importe_total)||0), 0);
+
+  // 3. Insumos consumidos campaña (alimentación y veterinaria) en rodeos Cría
+  const prodPorId = Object.fromEntries((productos||[]).map(p=>[String(p.producto_id),p]));
+  const consumosCria = consumos.filter(c => c.campana===campSelec && rodeosCriaIds.has(String(c.rodeo_id)));
+  let totalAlim = 0, totalVeter = 0, totalOtrosIns = 0;
+  consumosCria.forEach(c => {
+    const prod = prodPorId[String(c.producto_id)];
+    const cat = (prod?.categoria||'').toLowerCase();
+    // Costo = cantidad × precio del producto (necesitamos compras_insumos para el costo unitario)
+    // Por ahora sumamos cantidad como referencia — mejorar cuando tengamos precio unitario en consumos
+    const cant = Number(c.cantidad)||0;
+    if (cat.includes('aliment')) totalAlim += cant;
+    else if (cat.includes('veterin')||cat.includes('sanid')) totalVeter += cant;
+    else totalOtrosIns += cant;
+  });
+
+  // 4. Sueldos imputados a Cría
+  const totalSueldosCria = sueldoTotalActividad_('cria');
+
+  const totalEgresos = totalSaldoInicial + totalCompras + totalSueldosCria;
+  const margen = totalIngresos - totalEgresos;
+
+  // ── RENDER ──────────────────────────────────────────────────────────
+  // Panel ingresos/egresos
+  h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+
+    <!-- INGRESOS -->
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — Campaña ${campSelec}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">💰 Ventas de hacienda</div>
+            <div style="font-size:11px;color:var(--text3)">${ventasCria.length} ventas liquidadas</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalVentas)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">🔄 Cesiones a Recría/Engorde</div>
+            <div style="font-size:11px;color:var(--text3)">${cesiones.length} traslados valorizados</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalCesiones)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+          <div>
+            <div style="font-weight:600">📦 Stock valorizado actual</div>
+            <div style="font-size:11px;color:var(--text3)">${haPrecios ? (stockDetalleRows.length + ' rodeos') : '⚠ Sin precios configurados'}</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(stockValCria)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
+          <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
+          <div style="font-size:22px;font-weight:800;color:var(--green)">$ ${fn(totalIngresos)}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EGRESOS -->
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — Campaña ${campSelec}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">🐄 Stock inicial</div>
+            <div style="font-size:11px;color:var(--text3)">${saldosIniciales.length} rodeos — precio/cabeza cargado</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSaldoInicial)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">🛒 Compras de hacienda</div>
+            <div style="font-size:11px;color:var(--text3)">${comprasCria.length} compras campaña ${campSelec}</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCompras)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">🌿 Alimentación e insumos</div>
+            <div style="font-size:11px;color:var(--text3)">${consumosCria.length} consumos — importe pendiente de configurar</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">—</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">👤 Sueldos imputados a Cría</div>
+            <div style="font-size:11px;color:var(--text3)">histórico total de sueldos × % Cría</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSueldosCria)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
+          <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
+          <div style="font-size:22px;font-weight:800;color:var(--clay)">$ ${fn(totalEgresos)}</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── MARGEN ──────────────────────────────────────────────────────────
+  const margenColor = margen >= 0 ? 'var(--green)' : 'var(--red)';
+  const margenBg    = margen >= 0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
+  h += `<div style="background:${margenBg};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Cría ${campSelec}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos (excluye insumos por configurar)</div>
+    </div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}$ ${fn(Math.abs(margen))}</div>
+  </div>`;
+
+  // ── Detalle stock valorizado ─────────────────────────────────────────
+  if (stockDetalleRows.length) {
+    h += `<div class="panel">
+      <div class="panel-title">📦 Detalle stock valorizado por rodeo</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Rodeo</th><th>Campo</th><th>Categoría</th>
+        <th class="tc">Stock</th><th class="tr">Peso prom.</th>
+        <th class="tr">Método</th><th class="tr">Valor total</th>
+      </tr></thead><tbody>`;
+    stockDetalleRows.forEach(row => {
+      const cat = (row.rodeo.categoria||'').toLowerCase().trim();
+      const metodo = CATS_POR_CABEZA_.includes(cat) ? 'por cabeza' : 'por kg';
+      h += `<tr>
+        <td><strong>${row.rodeo.nombre}</strong></td>
+        <td>${campoNombre(row.rodeo.campo_id)}</td>
+        <td>${row.rodeo.categoria||'—'}</td>
+        <td class="tc">${fn(row.stock)}</td>
+        <td class="tr">${row.pesoP ? fn(row.pesoP)+' kg' : '—'}</td>
+        <td class="tr" style="font-size:11px;color:var(--text3)">${metodo}</td>
+        <td class="tr"><strong>$ ${fn(row.val)}</strong></td>
+      </tr>`;
+    });
+    h += '</tbody></table></div></div>';
+  }
+
+  return h;
 }
 
 function attachDashboardEvents() {
