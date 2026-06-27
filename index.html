@@ -1266,12 +1266,24 @@ function buildDashboard() {
   </div>`;
 
   // ── Selector de campaña ─────────────────────────────────────────────
-  h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-    <div style="font-size:13px;font-weight:600">Campaña:</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      ${campanas.length ? campanas.map(c=>`
-        <button class="btn ${c===campSelec?'btn-primary':'btn-secondary'} btn-sm" onclick="S._dashCampana='${c}';render()">${c}</button>
-      `).join('') : '<span style="font-size:13px;color:var(--text3)">Sin campañas cargadas — asigná campaña en ventas y compras</span>'}
+  h += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Campaña:</label>
+      ${campanas.length
+        ? `<select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:140px"
+            onchange="S._dashCampana=this.value;render()">
+            ${campanas.map(c=>`<option value="${c}" ${c===campSelec?'selected':''}>${c}</option>`).join('')}
+          </select>`
+        : '<span style="font-size:13px;color:var(--text3)">Sin campañas — asigná campaña en ventas y compras</span>'
+      }
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Campo:</label>
+      <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:160px"
+        onchange="S._dashCampo=this.value;render()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(campSelecField)?'selected':''}>${c.nombre}</option>`).join('')}
+      </select>
     </div>
   </div>`;
 
@@ -1280,18 +1292,8 @@ function buildDashboard() {
     return h;
   }
 
-  // Selector de campo
+  // Selector de campo (ya integrado arriba junto a campaña)
   const campSelecField = S._dashCampo || '';
-  const camposFiltro = [{ campo_id: '', nombre: 'Todos los campos' }, ...campos];
-  h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-    <div style="font-size:13px;font-weight:600">Campo:</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      ${camposFiltro.map(c=>`
-        <button class="btn ${String(c.campo_id)===String(campSelecField)?'btn-primary':'btn-secondary'} btn-sm"
-          onclick="S._dashCampo='${c.campo_id}';render()">${c.nombre}</button>
-      `).join('')}
-    </div>
-  </div>`;
 
   // Advertencia si faltan precios de valorización
   const precios = preciosValGet_();
