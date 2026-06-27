@@ -1042,9 +1042,9 @@ function buildSueldoKpiPanel_(actividad) {
   const mesActual = today().slice(0, 7);
   const anio = today().slice(0, 4);
 
-  const importeMes = sueldoTotalActividad_(actividad, s => s.periodo === mesActual);
-  const sueldosAnio = sueldos.filter(s => s.periodo.startsWith(anio));
-  const totalAnio = sueldoTotalActividad_(actividad, s => s.periodo.startsWith(anio));
+  const importeMes = sueldoTotalActividad_(actividad, s => String(s.periodo).slice(0,7) === mesActual);
+  const sueldosAnio = sueldos.filter(s => String(s.periodo).slice(0,4) === anio);
+  const totalAnio = sueldoTotalActividad_(actividad, s => String(s.periodo).slice(0,4) === anio);
   const pctMes = null; // ya no hay un único % — es por campo
 
   const labels = { cria: '🐄 Cría', recria: '🐃 Recría', engorde: '🥩 Engorde' };
@@ -5491,8 +5491,8 @@ function buildSueldos() {
   const anio      = today().slice(0,4);
 
   // KPIs globales
-  const totalMes  = sueldos.filter(s => s.periodo === mesActual).reduce((sum,s) => sum+(Number(s.monto)||0), 0);
-  const totalAnio = sueldos.filter(s => s.periodo.startsWith(anio)).reduce((sum,s) => sum+(Number(s.monto)||0), 0);
+  const totalMes  = sueldos.filter(s => String(s.periodo).slice(0,7) === mesActual).reduce((sum,s) => sum+(Number(s.monto)||0), 0);
+  const totalAnio = sueldos.filter(s => String(s.periodo).slice(0,4) === anio).reduce((sum,s) => sum+(Number(s.monto)||0), 0);
   const totCria   = sueldoTotalActividad_('cria');
   const totRecria = sueldoTotalActividad_('recria');
   const totEng    = sueldoTotalActividad_('engorde');
@@ -5510,12 +5510,18 @@ function buildSueldos() {
       <div class="kpi-sub">${mesActual} — todos los campos</div></div>
     <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Acumulado ${anio}</div>
       <div class="kpi-val">${totalAnio ? '$ '+fn(totalAnio) : '—'}</div>
-      <div class="kpi-sub">${sueldos.filter(s=>s.periodo.startsWith(anio)).length} registros</div></div>
+      <div class="kpi-sub">${sueldos.filter(s=>String(s.periodo).slice(0,4)===anio).length} registros</div></div>
     <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Cría acumulado</div>
       <div class="kpi-val" style="color:var(--green)">${totCria ? '$ '+fn(totCria) : '—'}</div>
       <div class="kpi-sub">histórico total</div></div>
+    <div class="kpi"><div class="kpi-icon">🐃</div><div class="kpi-label">Recría acumulado</div>
+      <div class="kpi-val" style="color:var(--gold)">${totRecria ? '$ '+fn(totRecria) : '—'}</div>
+      <div class="kpi-sub">histórico total</div></div>
     <div class="kpi"><div class="kpi-icon">🥩</div><div class="kpi-label">Engorde acumulado</div>
       <div class="kpi-val" style="color:var(--clay)">${totEng ? '$ '+fn(totEng) : '—'}</div>
+      <div class="kpi-sub">histórico total</div></div>
+    <div class="kpi"><div class="kpi-icon">🏗️</div><div class="kpi-label">Estructura acumulado</div>
+      <div class="kpi-val" style="color:var(--blue)">${totEstr ? '$ '+fn(totEstr) : '—'}</div>
       <div class="kpi-sub">histórico total</div></div>
   </div>`;
 
