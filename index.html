@@ -653,7 +653,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración',
+    destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
   };
   return titles[p] || p;
 }
@@ -3372,6 +3372,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         ${campos.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(campSelecField)?'selected':''}>${c.nombre}</option>`).join('')}
       </select>
     </div>
+    <button class="radio-pill${moneda==='USD'?' selected':''}" onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()" style="margin-left:auto">🇺🇸 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}</button>
   </div>`;
 
   // ── CÁLCULOS ECONÓMICOS ─────────────────────────────────────────────
