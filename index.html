@@ -959,7 +959,7 @@ function attachComprasHaciendaEvents() {
   window.chCategChange_ = function() {
     // Podría usarse para cambiar labels en el futuro
   };
-  window.compraHacGuardar_ = function() {
+  window.compraHacGuardar_ = async function() {
     const fecha     = document.getElementById('ch-fecha')?.value || '';
     const campana   = document.getElementById('ch-campana')?.value.trim() || '';
     const campo_id  = document.getElementById('ch-campo')?.value || '';
