@@ -6300,7 +6300,10 @@ function buildPreciosValPage() {
         <td class="tr">${p.novillito ? '$ '+fn(p.novillito) : '—'}</td>
         <td class="tr">${p.novillo ? '$ '+fn(p.novillo) : '—'}</td>
         <td class="tr">${p.vaca_venta ? '$ '+fn(p.vaca_venta) : '—'}</td>
-        <td><button class="btn btn-danger btn-sm" onclick="window.preciosValEliminar_('${p.precio_id}')">🗑</button></td>
+        <td style="display:flex;gap:4px">
+          <button class="btn btn-secondary btn-sm" onclick="window.preciosValEditar_('${p.precio_id}')" title="Editar">✎</button>
+          <button class="btn btn-danger btn-sm" onclick="window.preciosValEliminar_('${p.precio_id}')" title="Eliminar">🗑</button>
+        </td>
       </tr>`;
     });
     h += '</tbody></table></div></div>';
@@ -6382,6 +6385,32 @@ function attachPreciosValEvents() {
       if(msg) { msg.textContent = '✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
       render();
     } catch(err) { resetBtn(); toast('Error: '+err.message, 'err'); }
+  };
+
+  window.preciosValEditar_ = function(precio_id) {
+    const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
+    const p = lista.find(x => String(x.precio_id) === String(precio_id));
+    if (!p) return;
+    // Cargar valores en el formulario
+    const fecha = String(p.fecha).slice(0,7);
+    const set = (id, val) => { const el = document.getElementById(id); if(el) el.value = val || ''; };
+    set('pv-fecha',            fecha);
+    set('pv-vaca',             p.vaca);
+    set('pv-toro',             p.toro);
+    set('pv-torito',           p.torito);
+    set('pv-ternero',          p.ternero);
+    set('pv-ternera',          p.ternera);
+    set('pv-vaquillona',       p.vaquillona);
+    set('pv-vaquillona-venta', p.vaquillona_venta);
+    set('pv-novillito',        p.novillito);
+    set('pv-novillo',          p.novillo);
+    set('pv-vaca-venta',       p.vaca_venta);
+    // Scroll al formulario
+    const panel = document.querySelector('.panel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const btn = document.getElementById('pv-guardar-btn');
+    if (btn) btn.textContent = '✏️ Actualizar precios de ' + fecha;
+    toast('Editando precios de ' + fecha, 'ok');
   };
 
   window.preciosValEliminar_ = async function(precio_id) {
