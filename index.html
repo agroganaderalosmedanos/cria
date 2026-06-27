@@ -5504,24 +5504,44 @@ function buildSueldos() {
   </div>`;
 
   // KPIs
-  h += `<div class="kpi-grid" style="margin-bottom:20px">
-    <div class="kpi"><div class="kpi-icon">💰</div><div class="kpi-label">Total mes actual</div>
-      <div class="kpi-val ${totalMes?'kpi-pos':''}">${totalMes ? '$ '+fn(totalMes) : '—'}</div>
-      <div class="kpi-sub">${mesActual} — todos los campos</div></div>
-    <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Acumulado ${anio}</div>
+  h += `<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:nowrap">
+    <div style="flex:1;background:var(--bg2);border-radius:10px;padding:10px 14px;min-width:0">
+      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:4px">Total histórico</div>
+      <div style="font-size:16px;font-weight:800">${totalMes||totalAnio ? '$ '+fn(sueldos.reduce((s,x)=>s+(Number(x.monto)||0),0)) : '—'}</div>
+    </div>
+    <div style="flex:1;background:var(--green-bg);border-radius:10px;padding:10px 14px;min-width:0">
+      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--green-text);margin-bottom:4px">🐄 Cría</div>
+      <div style="font-size:16px;font-weight:800;color:var(--green)">${totCria ? '$ '+fn(totCria) : '—'}</div>
+    </div>
+    <div style="flex:1;background:var(--gold-bg);border-radius:10px;padding:10px 14px;min-width:0">
+      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-text);margin-bottom:4px">🐃 Recría</div>
+      <div style="font-size:16px;font-weight:800;color:var(--gold)">${totRecria ? '$ '+fn(totRecria) : '—'}</div>
+    </div>
+    <div style="flex:1;background:var(--clay-bg);border-radius:10px;padding:10px 14px;min-width:0">
+      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--clay-text);margin-bottom:4px">🥩 Engorde</div>
+      <div style="font-size:16px;font-weight:800;color:var(--clay)">${totEng ? '$ '+fn(totEng) : '—'}</div>
+    </div>
+    <div style="flex:1;background:var(--blue-bg);border-radius:10px;padding:10px 14px;min-width:0">
+      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--blue-text);margin-bottom:4px">🏗️ Estructura</div>
+      <div style="font-size:16px;font-weight:800;color:var(--blue)">${totEstr ? '$ '+fn(totEstr) : '—'}</div>
+    </div>
+  </div>`;
+
+  // PLACEHOLDER to find end of old kpi grid
+  const _x = `<div class="kpi" style="padding:10px 12px"><div class="kpi-icon" style="font-size:14px;margin-bottom:3px">📅</div><div class="kpi-label" style="font-size:9.5px">Acumulado ${anio}</div>
       <div class="kpi-val">${totalAnio ? '$ '+fn(totalAnio) : '—'}</div>
       <div class="kpi-sub">${sueldos.filter(s=>String(s.periodo).slice(0,4)===anio).length} registros</div></div>
-    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Cría acumulado</div>
-      <div class="kpi-val" style="color:var(--green)">${totCria ? '$ '+fn(totCria) : '—'}</div>
+    <div class="kpi" style="padding:10px 12px"><div class="kpi-icon" style="font-size:14px;margin-bottom:3px">🐄</div><div class="kpi-label" style="font-size:9.5px">Cría acumulado</div>
+      <div class="kpi-val" style="color:var(--green);font-size:15px">${totCria ? '$ '+fn(totCria) : '—'}</div>
       <div class="kpi-sub">histórico total</div></div>
-    <div class="kpi"><div class="kpi-icon">🐃</div><div class="kpi-label">Recría acumulado</div>
-      <div class="kpi-val" style="color:var(--gold)">${totRecria ? '$ '+fn(totRecria) : '—'}</div>
+    <div class="kpi" style="padding:10px 12px"><div class="kpi-icon" style="font-size:14px;margin-bottom:3px">🐃</div><div class="kpi-label" style="font-size:9.5px">Recría acumulado</div>
+      <div class="kpi-val" style="color:var(--gold);font-size:15px">${totRecria ? '$ '+fn(totRecria) : '—'}</div>
       <div class="kpi-sub">histórico total</div></div>
-    <div class="kpi"><div class="kpi-icon">🥩</div><div class="kpi-label">Engorde acumulado</div>
-      <div class="kpi-val" style="color:var(--clay)">${totEng ? '$ '+fn(totEng) : '—'}</div>
+    <div class="kpi" style="padding:10px 12px"><div class="kpi-icon" style="font-size:14px;margin-bottom:3px">🥩</div><div class="kpi-label" style="font-size:9.5px">Engorde acumulado</div>
+      <div class="kpi-val" style="color:var(--clay);font-size:15px">${totEng ? '$ '+fn(totEng) : '—'}</div>
       <div class="kpi-sub">histórico total</div></div>
-    <div class="kpi"><div class="kpi-icon">🏗️</div><div class="kpi-label">Estructura acumulado</div>
-      <div class="kpi-val" style="color:var(--blue)">${totEstr ? '$ '+fn(totEstr) : '—'}</div>
+    <div class="kpi" style="padding:10px 12px"><div class="kpi-icon" style="font-size:14px;margin-bottom:3px">🏗️</div><div class="kpi-label" style="font-size:9.5px">Estructura acumulado</div>
+      <div class="kpi-val" style="color:var(--blue);font-size:15px">${totEstr ? '$ '+fn(totEstr) : '—'}</div>
       <div class="kpi-sub">histórico total</div></div>
   </div>`;
 
@@ -5685,7 +5705,7 @@ function buildSueldos() {
           <td class="tr" style="color:var(--blue-text)">$ ${fn(sueldoImporteActividad_(s,'estructura'))}</td>
           <td style="font-size:11px;color:var(--text3)">${d.cria}/${d.recria}/${d.engorde}/${d.estructura}</td>
           <td style="display:flex;gap:4px">
-            <button class="btn btn-secondary btn-sm" onclick="window.sueldoEditar_('${s.periodo}','${s.campo_id}')" title="Editar">✎</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.sueldoEditar_('${String(s.periodo).slice(0,7)}','${s.campo_id}')" title="Editar">✎</button>
             <button class="btn btn-danger btn-sm" onclick="window.sueldoEliminar_(${idx})" title="Eliminar">🗑</button>
           </td>
         </tr>`;
@@ -5866,13 +5886,42 @@ function attachSueldosEvents() {
   };
 
   window.sueldoEditar_ = function(periodo, campo_id) {
+    // Normalizar período: Sheets devuelve YYYY-MM-DD, el input necesita YYYY-MM
+    const periodoNorm = String(periodo).slice(0, 7);
     const el_periodo = document.getElementById('sd-periodo');
     const el_campo   = document.getElementById('sd-campo');
-    if (el_periodo) el_periodo.value = periodo;
+    if (el_periodo) el_periodo.value = periodoNorm;
     if (el_campo)   el_campo.value   = String(campo_id);
-    window.sdLoadDist_ && window.sdLoadDist_();
-    const panel = document.querySelector('#sueldo-form-panel, .panel');
-    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Esperar a que el DOM procese los valores antes de cargar la distribución
+    setTimeout(() => {
+      // Cargar directamente el registro sin depender del período del input
+      const existing = sueldosGetAll_().find(s => String(s.periodo).slice(0,7) === periodoNorm && String(s.campo_id) === String(campo_id));
+      if (existing) {
+        const montoEl = document.getElementById('sd-monto');
+        const obsEl   = document.getElementById('sd-obs');
+        const criEl   = document.getElementById('sd-ov-cria');
+        const recEl   = document.getElementById('sd-ov-recria');
+        const engEl   = document.getElementById('sd-ov-engorde');
+        const estrEl  = document.getElementById('sd-ov-estructura');
+        const preview = document.getElementById('sd-dist-preview');
+        if (montoEl) montoEl.value = existing.monto || '';
+        if (obsEl)   obsEl.value   = existing.observacion || '';
+        const d = distBaseCampoGet_(campo_id);
+        if (criEl)  criEl.value  = existing.dist_cria       !== '' && existing.dist_cria       != null ? existing.dist_cria       : d.cria;
+        if (recEl)  recEl.value  = existing.dist_recria     !== '' && existing.dist_recria     != null ? existing.dist_recria     : d.recria;
+        if (engEl)  engEl.value  = existing.dist_engorde    !== '' && existing.dist_engorde    != null ? existing.dist_engorde    : d.engorde;
+        if (estrEl) estrEl.value = existing.dist_estructura !== '' && existing.dist_estructura != null ? existing.dist_estructura : d.estructura;
+        if (preview) preview.style.display = 'block';
+        window.sdOvPreview_   && window.sdOvPreview_();
+        window.sdCalcPreview_ && window.sdCalcPreview_();
+        window.sdMesInfo_     && window.sdMesInfo_();
+      }
+      // Scroll al formulario y focus en monto
+      const panel = document.getElementById('sueldo-form-panel');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const montoEl = document.getElementById('sd-monto');
+      if (montoEl) montoEl.focus();
+    }, 50);
   };
 
   window.sueldoEliminar_ = async function(i) {
