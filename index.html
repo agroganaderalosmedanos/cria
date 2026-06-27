@@ -472,14 +472,13 @@ async function goto(page) {
     const t = setTimeout(() => { if (!S.dashboard) { S.dashboardError = 'La conexión tardó demasiado. Verificá que el Código.gs esté desplegado con "Nueva versión".'; render(); } }, 15000);
     loadDashboard().then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
   }
-  if (page === 'movimientos' && !S.stock) {
-    try { await loadStock(); } catch (err) { toast(err.message, 'err'); }
-  }
-  if (page === 'movimientos' && !S.cache.ventas) {
-    try { await loadEntity('ventas'); } catch (err) { /* silencioso */ }
-  }
-  if (page === 'movimientos' && S.corralesStock === undefined) {
-    loadCorralesStock().then(render).catch(() => {});
+  if (page === 'movimientos') {
+    // Cargar todo en paralelo para evitar múltiples re-renders
+    const movPromises = [];
+    if (!S.stock) movPromises.push(loadStock().catch(() => {}));
+    if (!S.cache.ventas) movPromises.push(loadEntity('ventas').catch(() => {}));
+    if (S.corralesStock === undefined) movPromises.push(loadCorralesStock().catch(() => {}));
+    if (movPromises.length) await Promise.all(movPromises);
   }
   if (page === 'insumos' && !S.stock) {
     try { await loadStock(); } catch (err) { /* silencioso */ }
@@ -714,7 +713,13 @@ function attachSetupEvents() {
 }
 
 function attachShellEvents() {
-  document.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => goto(b.dataset.nav));
+  document.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => {
+    // Scroll active nav item into view after navigation
+    goto(b.dataset.nav).then(() => {
+      const active = document.querySelector('.nav-item.active');
+      if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  });
   const menuBtn = document.getElementById('btn-menu');
   if (menuBtn) menuBtn.onclick = () => { S.sidebarOpen = !S.sidebarOpen; render(); };
   attachPageEvents(S.page);
