@@ -881,17 +881,29 @@ function buildComprasHacienda() {
     <div class="page-sub">Incorporación de animales al establecimiento</div>
   </div>`;
 
+  // KPIs por categoría
+  const porCat = {};
+  compras.forEach(c => {
+    const cat = (c.categoria||'Sin categoría');
+    if (!porCat[cat]) porCat[cat] = { cabezas: 0, importe: 0 };
+    porCat[cat].cabezas  += Number(c.cantidad) || 0;
+    porCat[cat].importe  += Number(c.importe_total) || 0;
+  });
+  const bgsCat = ['var(--green-bg)','var(--gold-bg)','var(--clay-bg)','var(--blue-bg)','var(--bg2)'];
+  const txtCat = ['var(--green-text)','var(--gold-text)','var(--clay-text)','var(--blue-text)','var(--text2)'];
+
   h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Cabezas compradas</div>
-      <div style="font-size:18px;font-weight:700">${fn(totalCabezas)}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:2px">${compras.length} registros</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Total compras</div>
+      <div style="font-size:18px;font-weight:700">$ ${fn(totalImporte)}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">${fn(totalCabezas)} cabezas · ${compras.length} registros</div>
     </div>
-    <div style="background:var(--green-bg);border-radius:8px;padding:10px 16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.05em">Inversión total</div>
-      <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalImporte)}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:2px">histórico</div>
-    </div>
+    ${Object.entries(porCat).sort((a,b)=>b[1].cabezas-a[1].cabezas).map(([cat,v],i)=>`
+    <div style="background:${bgsCat[i%bgsCat.length]};border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:${txtCat[i%txtCat.length]};letter-spacing:.05em">${cat}</div>
+      <div style="font-size:18px;font-weight:700;color:${txtCat[i%txtCat.length]}">$ ${fn(v.importe)}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">${fn(v.cabezas)} cabezas</div>
+    </div>`).join('')}
   </div>`;
 
   // ── Formulario ──
@@ -916,8 +928,13 @@ function buildComprasHacienda() {
       </div>
       <div class="fg">
         <label>Categoría</label>
-        <input type="text" id="ch-categoria" placeholder="Ej: Vaca, Toro, Ternero…" list="ch-cat-list" value="${editando ? (editando.categoria||'') : ''}">
-        <datalist id="ch-cat-list">${categorias.map(c=>`<option value="${c}">`).join('')}</datalist>
+        <select id="ch-categoria-sel" onchange="window.chCatChange_()">
+          <option value="">— Seleccioná —</option>
+          ${categorias.map(c=>`<option value="${c}" ${editando && editando.categoria===c?'selected':''}>${c}</option>`).join('')}
+          <option value="__otro__">Otra categoría…</option>
+        </select>
+        <input type="text" id="ch-categoria-txt" placeholder="Escribí la categoría" style="display:none;margin-top:6px" value="${editando ? (editando.categoria||'') : ''}">
+        <input type="hidden" id="ch-categoria" value="${editando ? (editando.categoria||'') : ''}">
       </div>
       <div class="fg">
         <label>Rodeo destino <span class="opt">(opcional)</span></label>
@@ -1027,6 +1044,23 @@ function buildComprasHacienda() {
 
 function attachComprasHaciendaEvents() {
 
+  window.chCatChange_ = function() {
+    const sel = document.getElementById('ch-categoria-sel');
+    const txt = document.getElementById('ch-categoria-txt');
+    const hid = document.getElementById('ch-categoria');
+    if (!sel) return;
+    if (sel.value === '__otro__') {
+      if (txt) txt.style.display = 'block';
+      if (txt) txt.oninput = () => { if(hid) hid.value = txt.value; };
+      if (hid) hid.value = '';
+    } else {
+      if (txt) txt.style.display = 'none';
+      if (hid) hid.value = sel.value;
+    }
+  };
+  // Init on load
+  setTimeout(() => window.chCatChange_ && window.chCatChange_(), 50);
+
   window.chCalcImporte_ = function() {
     const cant   = Number(document.getElementById('ch-cantidad')?.value) || 0;
     const precio = Number(document.getElementById('ch-precio')?.value) || 0;
@@ -1059,7 +1093,7 @@ function attachComprasHaciendaEvents() {
     const fecha     = document.getElementById('ch-fecha')?.value || '';
     const campana   = document.getElementById('ch-campana')?.value.trim() || '';
     const campo_id  = document.getElementById('ch-campo')?.value || '';
-    const categoria = document.getElementById('ch-categoria')?.value.trim() || '';
+    const categoria = (document.getElementById('ch-categoria')?.value || '').trim();
     const cantidad  = Number(document.getElementById('ch-cantidad')?.value) || 0;
     const precio    = Number(document.getElementById('ch-precio')?.value) || 0;
     const vendedor  = document.getElementById('ch-vendedor')?.value.trim() || '';
