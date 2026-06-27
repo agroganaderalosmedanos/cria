@@ -5519,11 +5519,57 @@ function buildSueldos() {
       <div class="kpi-sub">histórico total</div></div>
   </div>`;
 
+  // ── Panel: Cargar sueldo mensual ──────────────────────────────
+  const campanas = [...new Set(sueldos.map(s=>s.campana||'').filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+  h += `<div class="panel" id="sueldo-form-panel">
+    <div class="panel-title">➕ Cargar sueldo mensual</div>
+    <div class="fgrid">
+      <div class="fg">
+        <label>Período</label>
+        <input type="month" id="sd-periodo" value="${mesActual}">
+      </div>
+      <div class="fg">
+        <label>Campo</label>
+        <select id="sd-campo" onchange="window.sdLoadDist_()">
+          ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg">
+        <label>Total sueldos + cargas ($)</label>
+        <input type="number" id="sd-monto" placeholder="Ej: 450000" min="0" step="100" oninput="window.sdCalcPreview_()">
+      </div>
+      <div class="fg" style="flex:2">
+        <label>Observación</label>
+        <input type="text" id="sd-obs" placeholder="Aguinaldo, bono, etc.">
+      </div>
+    </div>
+    <!-- Preview distribución del campo seleccionado -->
+    <div id="sd-dist-preview" style="margin-top:12px;display:none;background:var(--bg2);border-radius:8px;padding:12px;font-size:13px">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--text2)">Distribución aplicada (campo seleccionado):</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap" id="sd-dist-preview-vals"></div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text3)">
+        ¿Necesitás ajustar para este mes? Modificá los % abajo antes de guardar.
+      </div>
+      <div class="fgrid" style="margin-top:10px;gap:8px">
+        <div class="fg" style="min-width:90px"><label style="color:var(--green-text)">🐄 Cría %</label><input type="number" id="sd-ov-cria" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
+        <div class="fg" style="min-width:90px"><label style="color:var(--gold-text)">🐃 Recría %</label><input type="number" id="sd-ov-recria" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
+        <div class="fg" style="min-width:90px"><label style="color:var(--clay-text)">🥩 Engorde %</label><input type="number" id="sd-ov-engorde" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
+        <div class="fg" style="min-width:90px"><label style="color:var(--blue-text)">🏗️ Estructura %</label><input type="number" id="sd-ov-estructura" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
+        <div class="fg" style="min-width:60px;display:flex;flex-direction:column;justify-content:flex-end">
+          <label>Total</label><div id="sd-ov-suma" style="font-size:15px;font-weight:700;padding:8px 0">—</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary" id="sd-guardar-btn" onclick="this.disabled=true;this.textContent='⏳ Guardando…';window.sueldoGuardar_()">💾 Guardar sueldo</button>
+      <span id="sd-msg" style="font-size:13px;color:var(--green)"></span>
+    </div>
+  </div>`;
+
   // ── Panel: Distribución base por campo ──────────────────────────
   h += `<div class="panel">
-    <div class="panel-title">⚖️ Distribución por campo y actividad
-      <span style="font-size:12px;font-weight:400;color:var(--text2);margin-left:8px">— los % deben sumar 100% por campo</span>
-    </div>
+    <div class="panel-title" style="cursor:pointer" onclick="const b=document.getElementById('sd-dist-body');if(b){b.style.display=b.style.display==='none'?'block':'none';}">⚖️ Distribución por campo y actividad <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">— clic para expandir/colapsar</span></div>
+    <div id="sd-dist-body" style="display:none">
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px">
       Configurá cómo se distribuyen los sueldos de cada campo entre las actividades. 
       Se aplica por defecto a todos los meses; podés ajustarlo puntualmente al cargar un sueldo.
@@ -5574,55 +5620,7 @@ function buildSueldos() {
     });
     h += '</div>';
   }
-  h += '</div>';
-
-  // ── Panel: Cargar sueldo mensual ──────────────────────────────
-  const campanas = [...new Set(sueldos.map(s=>s.campana||'').filter(Boolean))].sort((a,b)=>b.localeCompare(a));
-  h += `<div class="panel" id="sueldo-form-panel">
-    <div class="panel-title">➕ Cargar sueldo mensual</div>
-    <div class="fgrid">
-      <div class="fg">
-        <label>Período</label>
-        <input type="month" id="sd-periodo" value="${mesActual}">
-      </div>
-      <div class="fg">
-        <label>Campo</label>
-        <select id="sd-campo" onchange="window.sdLoadDist_()">
-          ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
-        </select>
-      </div>
-      <div class="fg">
-        <label>Total sueldos + cargas ($)</label>
-        <input type="number" id="sd-monto" placeholder="Ej: 450000" min="0" step="100" oninput="window.sdCalcPreview_()">
-      </div>
-      <div class="fg" style="flex:2">
-        <label>Observación</label>
-        <input type="text" id="sd-obs" placeholder="Aguinaldo, bono, etc.">
-      </div>
-    </div>
-    <!-- Preview distribución del campo seleccionado -->
-    <div id="sd-dist-preview" style="margin-top:12px;display:none;background:var(--bg2);border-radius:8px;padding:12px;font-size:13px">
-      <div style="font-weight:600;margin-bottom:8px;color:var(--text2)">Distribución aplicada (campo seleccionado):</div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap" id="sd-dist-preview-vals"></div>
-      <div style="margin-top:8px;font-size:11px;color:var(--text3)">
-        ¿Necesitás ajustar para este mes? Modificá los % abajo antes de guardar.
-      </div>
-      <div class="fgrid" style="margin-top:10px;gap:8px">
-        <div class="fg" style="min-width:90px"><label style="color:var(--green-text)">🐄 Cría %</label><input type="number" id="sd-ov-cria" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
-        <div class="fg" style="min-width:90px"><label style="color:var(--gold-text)">🐃 Recría %</label><input type="number" id="sd-ov-recria" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
-        <div class="fg" style="min-width:90px"><label style="color:var(--clay-text)">🥩 Engorde %</label><input type="number" id="sd-ov-engorde" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
-        <div class="fg" style="min-width:90px"><label style="color:var(--blue-text)">🏗️ Estructura %</label><input type="number" id="sd-ov-estructura" min="0" max="100" step="1" oninput="window.sdOvPreview_()"></div>
-        <div class="fg" style="min-width:60px;display:flex;flex-direction:column;justify-content:flex-end">
-          <label>Total</label><div id="sd-ov-suma" style="font-size:15px;font-weight:700;padding:8px 0">—</div>
-        </div>
-      </div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-      <button class="btn btn-primary" onclick="window.sueldoGuardar_()">💾 Guardar sueldo</button>
-      <span id="sd-msg" style="font-size:13px;color:var(--green)"></span>
-    </div>
-  </div>`;
-
+  h += '</div></div>';
   // ── Panel: Historial de imputación ────────────────────────────
   h += `<div class="panel">
     <div class="panel-title">📊 Historial de imputación por campo</div>`;
@@ -5853,7 +5851,7 @@ function attachSueldosEvents() {
       await loadEntity('sueldos', true);
       if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
       toast('Sueldo guardado — '+periodo+' · $ '+fn(monto), 'ok');
-      render();
+      render(); // render re-crea el botón habilitado
     } catch(err) {
       toast('Error: '+err.message, 'err');
       const btnE = document.getElementById('sd-guardar-btn');
