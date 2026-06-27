@@ -504,6 +504,13 @@ async function goto(page) {
     if (!S.cache.consumos_insumos) { try { await loadEntity('consumos_insumos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.compras_insumos) { try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.movimientos) { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
+    // Intentar cargar cotización desde localStorage si no vino de la API
+    if (!S.corralesTipoCambio || !S.corralesTipoCambio.length) {
+      try {
+        const cached = JSON.parse(localStorage.getItem('lm_tipo_cambio') || 'null');
+        if (cached && cached.length) S.corralesTipoCambio = cached;
+      } catch(e) {}
+    }
     if (S.corralesTipoCambio === undefined) { try { await loadCorralesStock(); } catch (err) { /* silencioso */ } }
     // Inicializar corral seleccionado con el primero de Engorde que tenga animales
     if (!egGetCorralId()) {
@@ -5856,6 +5863,7 @@ function attachCotizacionEvents() {
       const lista = (S.corralesTipoCambio || []).filter(t => t.fecha !== hoy);
       lista.push({ fecha: hoy, valor: Number(valor) });
       S.corralesTipoCambio = lista;
+      try { localStorage.setItem('lm_tipo_cambio', JSON.stringify(lista)); } catch(e) {}
       toast('Cotización actualizada: $ ' + fn(valor, 2) + ' / U$S', 'ok');
       render();
     } catch (err) {
