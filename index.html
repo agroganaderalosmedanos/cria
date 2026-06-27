@@ -3337,18 +3337,17 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const comprasEng = comprasHacGetAll_().filter(c=>c.campana===campSelec&&(!campSelecField||String(c.campo_id)===String(campSelecField)));
   const totalCompras = comprasEng.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
 
-  // Insumos por categoría
-  const consumos = (S.cache.consumos_insumos||[]).filter(c=>c.campana===campSelec&&rodeosEngIds.has(String(c.rodeo_id)));
-  const productos = S.cache.productos||[];
-  const prodPorId = Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
+  // Insumos por categoría — usa egCostoAlim_ que ya tiene lógica de costo promedio
+  // Filtramos por rodeos de engorde (sin filtro de campaña en insumos hasta que tengan campaña asignada)
   let totalAlim=0, totalVeter=0, totalOtros=0;
-  consumos.forEach(c=>{
-    const cat=(prodPorId[String(c.producto_id)]?.categoria||'').toLowerCase();
-    const imp=Number(c.importe)||0;
-    if(cat.includes('aliment')) totalAlim+=imp;
-    else if(cat.includes('veterin')||cat.includes('sanid')) totalVeter+=imp;
-    else totalOtros+=imp;
+  rodeosEngFilt.forEach(r => {
+    totalAlim  += egCostoAlim_(r.rodeo_id, null, 'Alimento');
+    totalVeter += egCostoAlim_(r.rodeo_id, null, 'Veterinaria');
+    // Otros: total - alim - vet
+    const totRodeo = egCostoAlim_(r.rodeo_id);
+    totalOtros += Math.max(0, totRodeo - egCostoAlim_(r.rodeo_id, null, 'Alimento') - egCostoAlim_(r.rodeo_id, null, 'Veterinaria'));
   });
+  const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)));
 
   // Sueldos
   const totalSueldosEng = sueldoTotalActividad_('engorde', campSelecField ? s=>String(s.campo_id)===String(campSelecField) : null);
@@ -3397,7 +3396,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${consumos.length} consumos</div></div>
+          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${consumos.length} registros de consumo</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalAlim)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
