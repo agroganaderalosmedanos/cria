@@ -1361,6 +1361,10 @@ function buildDashboard() {
     <div class="page-title">Cría</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       ${criaTabs.map(t => `<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
+      <button onclick="S.criaMoneda=S.criaMoneda==='USD'?'ARS':'USD';render()"
+        style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff;display:flex;align-items:center;gap:6px">
+        💵 ${(S.criaMoneda||'ARS')==='USD'?'Ver en ARS':'Ver en U$S'}
+      </button>
     </div>
   </div>`;
 
@@ -3275,9 +3279,7 @@ function buildEngorde() {
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       ${tabs.map(t => `<button class="radio-pill${page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.label}</button>`).join('')}
       <button onclick="S.engordeMoneda=S.engordeMoneda==='USD'?'ARS':'USD';render()"
-        style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;
-               background:${moneda==='USD'?'var(--blue)':'var(--bg2)'};color:${moneda==='USD'?'#fff':'var(--text)'};
-               display:flex;align-items:center;gap:6px">
+        style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff;display:flex;align-items:center;gap:6px">
         💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
       </button>
     </div>
