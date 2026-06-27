@@ -2024,6 +2024,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       rodeoOrigen: m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
       campoDestino: campoNombre(m.campo_destino_id), rodeoDestino: rodeoNombre(m.rodeo_destino_id),
       cantidad: Number(m.cantidad) || 0, obs: m.observaciones || '—',
+      precio_cabeza: Number(m.precio_cabeza) || 0,
       entity: 'movimientos', idCol: 'movimiento_id', id: m.movimiento_id, editable: true,
     })),
     ...ventasF.map(v => ({
