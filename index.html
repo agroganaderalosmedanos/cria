@@ -453,7 +453,7 @@ const NAV = [
     { k: 'ia', icon: '✦', label: 'Análisis IA' },
     { k: 'sueldos', icon: '👤', label: 'Sueldos' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
-    { k: 'precios_valorizacion', icon: '💲', label: 'Precios de valorización' },
+    { k: 'precios_valorizacion', icon: '💲', label: 'Precios para Valorización de Stock' },
     { k: 'stock_hacienda', icon: '📋', label: 'Stock Hacienda' },
     { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
     { k: 'ventas', icon: '$', label: 'Ventas' },
@@ -6385,7 +6385,7 @@ function buildPreciosValPage() {
   const hayMesActual = lista.some(p => String(p.fecha).slice(0,7) === mesActual);
 
   let h = `<div class="page-header">
-    <div class="page-title">💲 Precios de valorización</div>
+    <div class="page-title">💲 Precios para Valorización de Stock</div>
     <div class="page-sub">Un registro por mes — el sistema usa el más reciente al generar informes</div>
   </div>`;
 
@@ -6469,11 +6469,6 @@ function buildPreciosValPanel_() {
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">⚖️ Por kg vivo</div>
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Si un rodeo no tiene pesada cargada, se usa el precio por cabeza como respaldo.</div>
       <div class="fgrid">
-        <div class="fg" style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr 1fr;gap:8px">
-          <div style="font-size:10px;font-weight:700;color:var(--text2);padding-bottom:4px">Categoría</div>
-          <div style="font-size:10px;font-weight:700;color:var(--clay-text);padding-bottom:4px">$/kg</div>
-          <div style="font-size:10px;font-weight:700;color:var(--gold-text);padding-bottom:4px">$/cab (sin pesada)</div>
-        </div>
         ${[
           ['ternero',          'pv-ternero',          'pv-ternero-cab',          '🐮 Ternero macho',    p.ternero,          p.ternero_cab],
           ['ternera',          'pv-ternera',          'pv-ternera-cab',          '🐮 Ternera hembra',   p.ternera,          p.ternera_cab],
