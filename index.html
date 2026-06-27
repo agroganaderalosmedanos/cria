@@ -1233,6 +1233,10 @@ function buildSueldoKpiPanel_(actividad) {
 }
 
 function buildDashboard() {
+  // Mostrar loader mientras cargan los datos
+  if (!S.cache.movimientos || !S.cache.ventas) {
+    return '<div class="loader"><div class="spinner"></div>Cargando datos del dashboard…</div>';
+  }
   const campos   = (S.catalogs && S.catalogs.campos) || [];
   const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
   const movs     = S.cache.movimientos || [];
