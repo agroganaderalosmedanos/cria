@@ -6511,7 +6511,7 @@ function attachPreciosValEvents() {
     };
     try {
       const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
-      const existing = lista.find(p => String(p.fecha).slice(0,7) === fecha);
+      const existing = lista.find(p => String(p.fecha).slice(0,7) === String(fecha).slice(0,7));
       if (existing) {
         await apiCall('update', { body: { entity: 'precios_valorizacion', id: existing.precio_id, data: { ...existing, ...data } } });
         toast('Precios de ' + fecha + ' actualizados', 'ok');
@@ -6543,7 +6543,14 @@ function attachPreciosValEvents() {
     set('pv-vaquillona-venta', p.vaquillona_venta);
     set('pv-novillito',        p.novillito);
     set('pv-novillo',          p.novillo);
-    set('pv-vaca-venta',       p.vaca_venta);
+    set('pv-vaca-venta',           p.vaca_venta);
+    set('pv-ternero-cab',          p.ternero_cab);
+    set('pv-ternera-cab',          p.ternera_cab);
+    set('pv-vaquillona-cab',       p.vaquillona_cab);
+    set('pv-vaquillona-venta-cab', p.vaquillona_venta_cab);
+    set('pv-novillito-cab',        p.novillito_cab);
+    set('pv-novillo-cab',          p.novillo_cab);
+    set('pv-vaca-venta-cab',       p.vaca_venta_cab);
     // Scroll al formulario
     const panel = document.querySelector('.panel');
     if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
