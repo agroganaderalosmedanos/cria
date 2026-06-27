@@ -761,7 +761,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachConfigEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -6353,28 +6353,20 @@ function buildPreciosValPanel_() {
   </div>`;
 }
 
-function attachConfigEvents() {
+function attachPreciosValEvents() {
   window.preciosValGuardar_ = async function() {
     const g = id => Number(document.getElementById(id)?.value) || 0;
     const fecha = document.getElementById('pv-fecha')?.value || today().slice(0,7);
     const btn = document.getElementById('pv-guardar-btn');
     const msg = document.getElementById('pv-msg');
     const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent='💾 Guardar precios del mes'; } };
-
     const data = {
-      fecha: fecha + '-01', // guardar como fecha completa
-      vaca:             g('pv-vaca'),
-      toro:             g('pv-toro'),
-      torito:           g('pv-torito'),
-      ternero:          g('pv-ternero'),
-      ternera:          g('pv-ternera'),
-      vaquillona:       g('pv-vaquillona'),
-      vaquillona_venta: g('pv-vaquillona-venta'),
-      novillito:        g('pv-novillito'),
-      novillo:          g('pv-novillo'),
-      vaca_venta:       g('pv-vaca-venta'),
+      fecha: fecha + '-01',
+      vaca: g('pv-vaca'), toro: g('pv-toro'), torito: g('pv-torito'),
+      ternero: g('pv-ternero'), ternera: g('pv-ternera'),
+      vaquillona: g('pv-vaquillona'), vaquillona_venta: g('pv-vaquillona-venta'),
+      novillito: g('pv-novillito'), novillo: g('pv-novillo'), vaca_venta: g('pv-vaca-venta'),
     };
-
     try {
       const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
       const existing = lista.find(p => String(p.fecha).slice(0,7) === fecha);
@@ -6401,6 +6393,9 @@ function attachConfigEvents() {
       render();
     } catch(err) { toast('Error: '+err.message, 'err'); }
   };
+}
+
+function attachConfigEvents() {
   document.getElementById('cf-save').onclick = async () => {
     S.apiUrl = document.getElementById('cf-url').value.trim();
     S.apiToken = document.getElementById('cf-token').value.trim();
