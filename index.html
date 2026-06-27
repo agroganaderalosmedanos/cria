@@ -1646,7 +1646,7 @@ function buildServicios() {  const _criaTabs = [
   const items = S.cache.servicios || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosCriaPorCampo(campos[0]?.campo_id);
-  let h = `<div class="panel">
+  h += `<div class="panel">
     <div class="panel-title">Registrar servicio</div>
     <div class="fgrid">
       <div class="fg" style="min-width:200px">
@@ -1849,7 +1849,7 @@ function buildTactos() {  const _criaTabs = [
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosConServ = rodeosConServicio();
   const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
-  let h = `<div class="panel">
+  h += `<div class="panel">
     <div class="panel-title">Registrar tacto</div>
     <p class="helper-text" style="margin-bottom:14px">Registrá el total por rodeo. En el tacto IATF cargá las preñadas por IATF; en el tacto final, el total de preñadas (la diferencia con el IATF se calcula como preñadas por toro).</p>
     ${rodeosConServ.length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
@@ -1945,7 +1945,7 @@ function buildAbortos() {  const _criaTabs = [
   const items = S.cache.abortos || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
-  let h = `<div class="panel">
+  h += `<div class="panel">
     <div class="panel-title">Registrar aborto</div>
     ${rodeosConServicio().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía.</p>' : ''}
     <div class="fgrid">
@@ -2007,7 +2007,7 @@ function buildPariciones() {  const _criaTabs = [
   const items = S.cache.pariciones || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
-  let h = `<div class="panel">
+  h += `<div class="panel">
     <div class="panel-title">Registrar parición</div>
     <p class="helper-text" style="margin-bottom:14px">Conteo por rodeo, sin identificar qué vaca parió cada ternero.</p>
     ${rodeosConServicio().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
@@ -2126,7 +2126,7 @@ function buildDestetes() {  const _criaTabs = [
   const items = S.cache.destetes || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConPrenadasPorCampo(campos[0]?.campo_id);
-  let h = `<div class="panel">
+  h += `<div class="panel">
     <div class="panel-title">Registrar destete</div>
     <p class="helper-text" style="margin-bottom:14px">Conteo por rodeo. Las caravanas individuales se incorporan luego desde la planilla de Animales cuando estén disponibles. El peso es obligatorio (real de la pesada, o estimado si no pesaste) — se usa para valorizar la cesión interna a Recría en el Margen Bruto.</p>
     ${rodeosConPrenadas().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene vacas preñadas confirmadas por tacto todavía.</p>' : ''}
