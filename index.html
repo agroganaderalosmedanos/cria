@@ -493,7 +493,6 @@ async function goto(page) {
   if (page === 'dashboard') {
     const t = setTimeout(() => { if (!S.dashboard) { S.dashboardError = 'La conexión tardó demasiado.'; render(); } }, 15000);
     const loads = [];
-    if (!S.dashboard)              loads.push(loadDashboard());
     if (!S.cache.movimientos)      loads.push(loadEntity('movimientos').catch(()=>{}));
     if (!S.cache.ventas)           loads.push(loadEntity('ventas').catch(()=>{}));
     if (!S.cache.consumos_insumos) loads.push(loadEntity('consumos_insumos').catch(()=>{}));
@@ -501,7 +500,7 @@ async function goto(page) {
     if (!S.cache.sueldos)          loads.push(loadEntity('sueldos').catch(()=>{}));
     if (!S.cache.pesadas)          loads.push(loadEntity('pesadas').catch(()=>{}));
     if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
-    Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
+    Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); render(); });
   }
   if (page === 'indices_reproduccion' && !S.indicesData && !S._indicesLoading) {
     S._indicesLoading = true;
@@ -532,12 +531,16 @@ async function goto(page) {
     try { await loadStockProductos(); } catch (err) { toast(err.message, 'err'); }
   }
   if (page.startsWith('engorde')) {
-    if (!S.stock) { try { await loadStock(); } catch (err) { /* silencioso */ } }
-    if (!S.cache.pesadas) { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.ventas) { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.consumos_insumos) { try { await loadEntity('consumos_insumos'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.compras_insumos) { try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.movimientos) { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
+    // Cargar todo en paralelo
+    const engPromises = [];
+    if (!S.stock)                    engPromises.push(loadStock().catch(()=>{}));
+    if (!S.cache.pesadas)            engPromises.push(loadEntity('pesadas').catch(()=>{}));
+    if (!S.cache.ventas)             engPromises.push(loadEntity('ventas').catch(()=>{}));
+    if (!S.cache.consumos_insumos)   engPromises.push(loadEntity('consumos_insumos').catch(()=>{}));
+    if (!S.cache.compras_insumos)    engPromises.push(loadEntity('compras_insumos').catch(()=>{}));
+    if (!S.cache.movimientos)        engPromises.push(loadEntity('movimientos').catch(()=>{}));
+    if (!S.cache.sueldos)            engPromises.push(loadEntity('sueldos').catch(()=>{}));
+    if (engPromises.length) await Promise.all(engPromises);
     // Intentar cargar cotización desde localStorage si no vino de la API
     if (!S.corralesTipoCambio || !S.corralesTipoCambio.length) {
       try {
