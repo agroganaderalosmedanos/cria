@@ -5734,14 +5734,28 @@ function attachSueldosEvents() {
     if (!campo_id) return;
     const d = distBaseCampoGet_(campo_id);
     const preview = document.getElementById('sd-dist-preview');
-    const monto = Number(document.getElementById('sd-monto')?.value)||0;
-    document.getElementById('sd-ov-cria').value       = d.cria||0;
-    document.getElementById('sd-ov-recria').value     = d.recria||0;
-    document.getElementById('sd-ov-engorde').value    = d.engorde||0;
-    document.getElementById('sd-ov-estructura').value = d.estructura||0;
+    const periodo = document.getElementById('sd-periodo')?.value || '';
+    // Si ya existe un registro para este período+campo, cargar sus valores
+    const existing = sueldosGetAll_().find(s => s.periodo===periodo && String(s.campo_id)===String(campo_id));
+    if (existing) {
+      document.getElementById('sd-monto').value         = existing.monto || '';
+      document.getElementById('sd-obs').value           = existing.observacion || '';
+      document.getElementById('sd-ov-cria').value       = existing.dist_cria       !== '' && existing.dist_cria       != null ? existing.dist_cria       : d.cria;
+      document.getElementById('sd-ov-recria').value     = existing.dist_recria     !== '' && existing.dist_recria     != null ? existing.dist_recria     : d.recria;
+      document.getElementById('sd-ov-engorde').value    = existing.dist_engorde    !== '' && existing.dist_engorde    != null ? existing.dist_engorde    : d.engorde;
+      document.getElementById('sd-ov-estructura').value = existing.dist_estructura !== '' && existing.dist_estructura != null ? existing.dist_estructura : d.estructura;
+    } else {
+      document.getElementById('sd-monto').value         = '';
+      document.getElementById('sd-obs').value           = '';
+      document.getElementById('sd-ov-cria').value       = d.cria||0;
+      document.getElementById('sd-ov-recria').value     = d.recria||0;
+      document.getElementById('sd-ov-engorde').value    = d.engorde||0;
+      document.getElementById('sd-ov-estructura').value = d.estructura||0;
+    }
     window.sdOvPreview_();
     if (preview) preview.style.display = 'block';
     window.sdCalcPreview_();
+    window.sdMesInfo_ && window.sdMesInfo_();
   };
 
   // Preview de importes al escribir el monto
