@@ -862,16 +862,26 @@ function calcIndicesReproduccion_() {
     const aborts= abortos_c.filter(a => String(a.rodeo_id) === rid);
     const morts = mortandad.filter(m => String(m.rodeo_id) === rid);
 
+    // Servicios: cantidad_vacas por servicio
     const total_serviciadas = svcs.reduce((s,x) => s+(Number(x.cantidad_vacas)||0), 0);
-    const prenadas_iatf     = tacts.filter(t=>t.resultado==='Preñada'&&t.tipo_servicio==='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
-    const prenadas_toro     = tacts.filter(t=>t.resultado==='Preñada'&&t.tipo_servicio!=='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
-    const total_prenadas    = prenadas_iatf + prenadas_toro;
-    const tacteadas_iatf    = tacts.filter(t=>t.tipo_servicio==='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
-    const tacteadas_toro    = tacts.filter(t=>t.tipo_servicio!=='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
-    const nacidos_vivos     = parts.reduce((s,x)=>s+(Number(x.nacidos_vivos)||0),0);
-    const nacidos_muertos   = parts.reduce((s,x)=>s+(Number(x.nacidos_muertos)||0),0);
-    const total_destetados  = dests.reduce((s,x)=>s+(Number(x.cantidad)||0),0);
-    const mort_terneros     = morts.reduce((s,x)=>s+(Number(x.cantidad)||0),0);
+
+    // Tactos: estructura real {tipo_tacto, total_tacteadas, prenadas}
+    const tacts_iatf     = tacts.filter(t => (t.tipo_tacto||'').includes('IATF'));
+    const tacts_toro     = tacts.filter(t => !(t.tipo_tacto||'').includes('IATF'));
+    const tacteadas_iatf = tacts_iatf.reduce((s,x)=>s+(Number(x.total_tacteadas)||0),0);
+    const tacteadas_toro = tacts_toro.reduce((s,x)=>s+(Number(x.total_tacteadas)||0),0);
+    const prenadas_iatf  = tacts_iatf.reduce((s,x)=>s+(Number(x.prenadas)||0),0);
+    const prenadas_toro  = tacts_toro.reduce((s,x)=>s+(Number(x.prenadas)||0),0);
+    const total_prenadas = prenadas_iatf + prenadas_toro;
+    const total_tacteadas= tacteadas_iatf + tacteadas_toro;
+
+    // Pariciones: nacidos_vivos, nacidos_muertos
+    const nacidos_vivos   = parts.reduce((s,x)=>s+(Number(x.nacidos_vivos)||0),0);
+    const nacidos_muertos = parts.reduce((s,x)=>s+(Number(x.nacidos_muertos)||0),0);
+
+    // Destetes: cantidad
+    const total_destetados = dests.reduce((s,x)=>s+(Number(x.cantidad)||0),0);
+    const mort_terneros    = morts.reduce((s,x)=>s+(Number(x.cantidad)||0),0);
 
     return {
       rodeo,
@@ -879,7 +889,7 @@ function calcIndicesReproduccion_() {
         servicio: {
           total_serviciadas, prenadas_iatf, prenadas_toro, total_prenadas,
           total_tacteadas_iatf: tacteadas_iatf, total_tacteadas_toro: tacteadas_toro,
-          indice_prenez:      total_serviciadas>0 ? round1_(total_prenadas/total_serviciadas*100) : null,
+          indice_prenez:      (total_serviciadas||total_tacteadas)>0 ? round1_(total_prenadas/(total_serviciadas||total_tacteadas)*100) : null,
           indice_prenez_iatf: tacteadas_iatf>0   ? round1_(prenadas_iatf/tacteadas_iatf*100)   : null,
           indice_prenez_toro: tacteadas_toro>0   ? round1_(prenadas_toro/tacteadas_toro*100)   : null,
         },
