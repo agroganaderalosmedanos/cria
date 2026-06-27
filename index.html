@@ -3439,8 +3439,8 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     totKgI   += egKgIngresados_(rid);
     totKgV   += egKgVend_(rid);
     totKgStk += egKgStockEstimado_(rid);
-    totKgG   += egKgGanados_(rid);
-    const gdp = egGDP_(rid);
+    totKgG   += egKgGanadosHastaPesada_(rid);
+    const gdp = egGanDiaria_(rid);
     if (gdp) gdps.push(gdp);
   });
   const gdpProm = gdps.length ? gdps.reduce((s,v)=>s+v,0)/gdps.length : null;
@@ -3481,12 +3481,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     const kgI     = egKgIngresados_(rid);
     const kgV     = egKgVend_(rid);
     const kgStk   = egKgStockEstimado_(rid);
-    const kgG     = egKgGanados_(rid);
-    const gdp     = egGDP_(rid);
+    const kgG     = egKgGanadosHastaPesada_(rid);
+    const gdp     = egGanDiaria_(rid);
     const costoAlim = egCostoAlim_(rid);
-    const costoVet  = egCostoVet_(rid);
-    const ingVentas = egIngresosVentas_(rid);
-    const ivStk     = egIngresosStockVal_(rid);
+    const costoVet  = egCostoAlim_(rid, null, "Veterinaria");
+    const ingVentas = egIngVentas_(rid);
+    const ivStk     = valorizarRodeo_(r, egStock_(rid), egPesadas_(rid).slice(-1)[0]?.peso_prom_kg||0);
     const resultado = ingVentas + ivStk - costoAlim - costoVet;
     const dias      = egDiasEngorde_(rid);
     const ultimaPes = egUltimaPesada_(rid);
