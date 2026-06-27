@@ -6244,8 +6244,12 @@ function attachSueldosEvents() {
 
 
 function buildCotizacion() {
-  const lista = (S.corralesTipoCambio || [])
-    .slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  // Unificar Sheets + localStorage
+  const deCatalogs = (S.catalogs && S.catalogs.tipo_cambio || []).map(t => ({ fecha: t.fecha, valor: Number(t.valor), fuente: t.fuente }));
+  const deCorral   = (S.corralesTipoCambio || []);
+  const merged = [...deCatalogs];
+  deCorral.forEach(t => { if (!merged.find(x => x.fecha === t.fecha)) merged.push(t); });
+  const lista = merged.slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
   const ultima = lista[0] || null;
   const tcHoy = tipoCambioVigente_(today());
 
@@ -6318,10 +6322,8 @@ function attachCotizacionEvents() {
         await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha: hoy, valor: Number(valor), fuente: 'BNA' } } });
       }
       await loadCatalogs();
-      // También actualizar corralesTipoCambio para compatibilidad
-      const lista = (S.corralesTipoCambio || []).filter(t => t.fecha !== hoy);
-      lista.push({ fecha: hoy, valor: Number(valor) });
-      S.corralesTipoCambio = lista;
+      // Sync corralesTipoCambio desde catalogs para compatibilidad
+      S.corralesTipoCambio = (S.catalogs && S.catalogs.tipo_cambio || []).map(t => ({ fecha: t.fecha, valor: Number(t.valor) }));
       toast('Cotización actualizada: $ ' + fn(valor, 2) + ' / U$S — guardada en Sheets', 'ok');
       render();
     } catch (err) {
