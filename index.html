@@ -421,8 +421,8 @@ async function init() {
   try {
     await loadCatalogs();
     render(); // app navegable de inmediato; el Resumen calcula sus índices solo al visitarlo
-    loadDashboard().then(render).catch(() => {}); // precarga silenciosa — necesario para Índices de Reproducción
     autofetchCotizacion_(); // buscar cotización del día automáticamente
+    // No precargamos dashboard al inicio — se carga solo cuando el usuario navega a esas páginas
   } catch (err) {
     toast('Error al conectar: ' + err.message, 'err');
   }
@@ -502,9 +502,12 @@ async function goto(page) {
     if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
   }
-  if (page === 'indices_reproduccion' && !S.dashboard) {
-    const t = setTimeout(() => render(), 500);
-    loadDashboard().then(() => { clearTimeout(t); render(); }).catch(() => { clearTimeout(t); render(); });
+  if (page === 'indices_reproduccion') {
+    const needed = ['servicios','tactos','pariciones','destetes','abortos','mortandad'];
+    const missing = needed.filter(e => !S.cache[e]);
+    if (missing.length) {
+      Promise.all(missing.map(e => loadEntity(e).catch(()=>{}))).then(() => render());
+    }
   }
   if (page === 'movimientos') {
     // Cargar todo en paralelo para evitar múltiples re-renders
@@ -841,83 +844,63 @@ function buildKpiRow(k) {
   </div>`;
 }
 
-function buildIndicesReproduccion() {
-  if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Cargando índices…</div>';
-  if (S.dashboardError) return `<div class="empty-state"><span class="ico">⚠</span><div class="msg">Error: ${S.dashboardError}<br><br><button class="btn btn-secondary" onclick="S.dashboardError=null;S.dashboard=null;render()">Reintentar</button></div></div>`;
-  if (!S.dashboard) {
-    // Si no está cargando, iniciarlo
-    if (!S._dashboardLoading) {
-      S._dashboardLoading = true;
-      loadDashboard().then(() => { S._dashboardLoading = false; render(); }).catch(() => { S._dashboardLoading = false; render(); });
-    }
-    return '<div class="loader"><div class="spinner"></div>Calculando índices reproductivos… esto puede tardar unos segundos.</div>';
-  }
-  const g = S.dashboard.general;
-  const rodeosList = S.dashboard.rodeos || [];
-  const campos = (S.catalogs && S.catalogs.campos) || [];
+function calcIndicesReproduccion_() {
+  const rodeos    = (S.catalogs && S.catalogs.rodeos || []).filter(r => r.actividad === 'Cría' || r.actividad === 'Cria');
+  const servicios = S.cache.servicios  || [];
+  const tactos    = S.cache.tactos     || [];
+  const pariciones= S.cache.pariciones || [];
+  const destetes  = S.cache.destetes   || [];
+  const abortos_c = S.cache.abortos    || [];
+  const mortandad = S.cache.mortandad  || [];
 
-  let h = `<div class="page-header">
-    <div class="page-title">📈 Índices de Reproducción</div>
-    <div class="page-sub">Índices de preñez, parición y destete por rodeo</div>
-  </div>`;
+  const result = rodeos.map(rodeo => {
+    const rid = String(rodeo.rodeo_id);
+    const svcs  = servicios.filter(s => String(s.rodeo_id) === rid);
+    const tacts = tactos.filter(t => String(t.rodeo_id) === rid);
+    const parts = pariciones.filter(p => String(p.rodeo_id) === rid);
+    const dests = destetes.filter(d => String(d.rodeo_id) === rid);
+    const aborts= abortos_c.filter(a => String(a.rodeo_id) === rid);
+    const morts = mortandad.filter(m => String(m.rodeo_id) === rid);
 
-  h += '<div class="section-label">Establecimiento — índices generales</div>';
-  h += buildKpiRow(g);
+    const total_serviciadas = svcs.reduce((s,x) => s+(Number(x.cantidad_vacas)||0), 0);
+    const prenadas_iatf     = tacts.filter(t=>t.resultado==='Preñada'&&t.tipo_servicio==='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
+    const prenadas_toro     = tacts.filter(t=>t.resultado==='Preñada'&&t.tipo_servicio!=='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
+    const total_prenadas    = prenadas_iatf + prenadas_toro;
+    const tacteadas_iatf    = tacts.filter(t=>t.tipo_servicio==='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
+    const tacteadas_toro    = tacts.filter(t=>t.tipo_servicio!=='IATF').reduce((s,x)=>s+(Number(x.cantidad)||1),0);
+    const nacidos_vivos     = parts.reduce((s,x)=>s+(Number(x.nacidos_vivos)||0),0);
+    const nacidos_muertos   = parts.reduce((s,x)=>s+(Number(x.nacidos_muertos)||0),0);
+    const total_destetados  = dests.reduce((s,x)=>s+(Number(x.cantidad)||0),0);
+    const mort_terneros     = morts.reduce((s,x)=>s+(Number(x.cantidad)||0),0);
 
-  h += '<div class="section-label">Filtrar por campo</div>';
-  h += '<div class="rodeo-strip">';
-  h += `<div class="rodeo-chip ${!S.selectedCampoId ? 'active' : ''}" data-campo=""><div class="rc-name">Todos los campos</div></div>`;
-  campos.forEach(c => {
-    h += `<div class="rodeo-chip ${String(S.selectedCampoId) === String(c.campo_id) ? 'active' : ''}" data-campo="${c.campo_id}"><div class="rc-name">${c.nombre}</div></div>`;
+    return {
+      rodeo,
+      kpis: {
+        servicio: {
+          total_serviciadas, prenadas_iatf, prenadas_toro, total_prenadas,
+          total_tacteadas_iatf: tacteadas_iatf, total_tacteadas_toro: tacteadas_toro,
+          indice_prenez:      total_serviciadas>0 ? round1_(total_prenadas/total_serviciadas*100) : null,
+          indice_prenez_iatf: tacteadas_iatf>0   ? round1_(prenadas_iatf/tacteadas_iatf*100)   : null,
+          indice_prenez_toro: tacteadas_toro>0   ? round1_(prenadas_toro/tacteadas_toro*100)   : null,
+        },
+        gestacion: { abortos: aborts.reduce((s,x)=>s+(Number(x.cantidad)||1),0) },
+        paricion:  { nacidos_vivos, nacidos_muertos, indice_paricion: total_prenadas>0 ? round1_(nacidos_vivos/total_prenadas*100) : null },
+        destete:   { total_destetados, mortandad_terneros: mort_terneros, indice_destete: nacidos_vivos>0 ? round1_(total_destetados/nacidos_vivos*100) : null },
+      }
+    };
   });
-  h += '</div>';
-
-  const rodeosFiltrados = (S.selectedCampoId
-    ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
-    : rodeosList
-  ).slice().sort((a, b) => {
-    const cmp = campoNombre(a.rodeo.campo_id).localeCompare(campoNombre(b.rodeo.campo_id), 'es', { sensitivity: 'base' });
-    return cmp !== 0 ? cmp : a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
-  });
-
-  if (S.selectedCampoId) {
-    const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
-    h += `<div class="panel"><div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>${buildKpiRow(aggregateKpis_(rodeosFiltrados))}</div>`;
-  }
-
-  h += '<div class="section-label">Por rodeo</div>';
-  h += '<div class="rodeo-strip">';
-  h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo=""><div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
-  rodeosFiltrados.forEach(r => {
-    h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}"><div class="rc-name">${r.rodeo.nombre}</div><div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div></div>`;
-  });
-  h += '</div>';
-
-  if (S.selectedRodeoId) {
-    const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
-    if (sel) h += `<div class="panel"><div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>${buildKpiRow(sel.kpis)}</div>`;
-  } else {
-    h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Rodeo</th><th>Campo</th>
-      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th>
-      <th class="tc">Nacidos vivos</th><th class="tc">Destetados</th>
-    </tr></thead><tbody>`;
-    rodeosFiltrados.forEach(r => {
-      const k = r.kpis;
-      h += `<tr>
-        <td><strong>${r.rodeo.nombre}</strong></td>
-        <td>${campoNombre(r.rodeo.campo_id)}</td>
-        <td class="tc">${pct(k.servicio.indice_prenez)}</td>
-        <td class="tc">${pct(k.paricion.indice_paricion)}</td>
-        <td class="tc">${pct(k.destete.indice_destete)}</td>
-        <td class="tc">${fn(k.paricion.nacidos_vivos)}</td>
-        <td class="tc">${fn(k.destete.total_destetados)}</td>
-      </tr>`;
-    });
-    h += '</tbody></table></div>';
-  }
-  return h;
+  return { rodeos: result, general: aggregateKpis_(result) };
 }
+
+function buildIndicesReproduccion() {
+  const needed = ['servicios','tactos','pariciones','destetes','abortos','mortandad'];
+  const faltantes = needed.filter(e => !S.cache[e]);
+  if (faltantes.length) return '<div class="loader"><div class="spinner"></div>Cargando datos reproductivos…</div>';
+
+  const data   = calcIndicesReproduccion_();
+  const g      = data.general;
+  const rodeosList = data.rodeos;
+  const campos = (S.catalogs && S.catalogs.campos) || [];
 
 function attachIndicesReproduccionEvents() {
   document.querySelectorAll('[data-campo]').forEach(el => el.onclick = () => {
