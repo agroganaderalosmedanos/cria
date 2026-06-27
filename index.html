@@ -452,7 +452,7 @@ const NAV = [
 async function goto(page) {
   S.page = page;
   S.sidebarOpen = false;
-  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos', ventas: 'ventas', insumos: 'consumos_insumos' };
+  const entityMap = { servicios: 'servicios', tactos: 'tactos', abortos: 'abortos', pariciones: 'pariciones', mortandad: 'mortandad', destetes: 'destetes', movimientos: 'movimientos', ventas: 'ventas', insumos: 'consumos_insumos', sueldos: 'sueldos', compras_hacienda: 'compras_hacienda' };
   if (entityMap[page] && !S.cache[entityMap[page]]) {
     S.loading = true; render();
     try { await loadEntity(entityMap[page]); } catch (err) { toast(err.message, 'err'); }
@@ -825,10 +825,7 @@ function attachIndicesReproduccionEvents() {
 // ══════════════════════════════════════════════════════════════════════
 // Persistencia local (igual que sueldos — hasta tener hoja en Sheets)
 function comprasHacGetAll_() {
-  try { return JSON.parse(localStorage.getItem('lm_compras_hac') || '[]'); } catch(e) { return []; }
-}
-function comprasHacSave_(lista) {
-  try { localStorage.setItem('lm_compras_hac', JSON.stringify(lista)); } catch(e) {}
+  return S.cache.compras_hacienda || [];
 }
 
 function buildComprasHacienda() {
@@ -976,27 +973,33 @@ function attachComprasHaciendaEvents() {
     if (!campana)  { if(msg) msg.textContent='⚠ Ingresá la campaña.'; return; }
     if (!cantidad) { if(msg) msg.textContent='⚠ Ingresá la cantidad.'; return; }
     if (!precio)   { if(msg) msg.textContent='⚠ Ingresá el precio por cabeza.'; return; }
-    const lista = comprasHacGetAll_();
-    lista.push({
-      id: Date.now(),
-      fecha, campana, campo_id, categoria,
-      cantidad, precio_cabeza: precio,
-      importe_total: cantidad * precio,
-      vendedor, observacion: obs,
-      fecha_carga: today(),
-    });
-    comprasHacSave_(lista);
-    if(msg) { msg.textContent='✅ Compra registrada'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
-    toast('Compra registrada — ' + fn(cantidad) + ' ' + categoria + ' · $ ' + fn(cantidad*precio), 'ok');
-    render();
+    try {
+      await apiCall('create', { body: { entity: 'compras_hacienda', data: {
+        fecha, campana, campo_id, categoria,
+        cantidad, precio_cabeza: precio,
+        importe_total: cantidad * precio,
+        vendedor, observacion: obs,
+        fecha_carga: today(),
+      }}});
+      invalidateCache('compras_hacienda');
+      await loadEntity('compras_hacienda', true);
+      if(msg) { msg.textContent='✅ Compra registrada'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+      toast('Compra registrada — ' + fn(cantidad) + ' ' + categoria + ' · $ ' + fn(cantidad*precio), 'ok');
+      render();
+    } catch(err) { toast('Error: '+err.message, 'err'); }
   };
-  window.compraHacEliminar_ = function(i) {
+  window.compraHacEliminar_ = async function(i) {
     if (!confirm('¿Eliminar esta compra?')) return;
     const lista = comprasHacGetAll_().sort((a,b)=>b.fecha.localeCompare(a.fecha));
-    lista.splice(i, 1);
-    comprasHacSave_(lista);
-    toast('Registro eliminado', 'ok');
-    render();
+    const reg = lista[i];
+    if (!reg) return;
+    try {
+      await apiCall('delete', { body: { entity: 'compras_hacienda', id: reg.compra_id } });
+      invalidateCache('compras_hacienda');
+      await loadEntity('compras_hacienda', true);
+      toast('Registro eliminado', 'ok');
+      render();
+    } catch(err) { toast('Error: '+err.message, 'err'); }
   };
 }
 
@@ -5396,38 +5399,36 @@ function attachPesadasEvents() {
 // ══════════════════════════════════════════════════════════════════════
 
 // Estructura de datos:
-// lm_sueldos_v2: [ { id, periodo, campo_id, monto, observacion, fecha_carga } ]
-// lm_sueldo_dist_v2: { campo_id: { cria, recria, engorde, estructura } }
-//   — distribución base por campo, editable en cualquier momento
-// lm_sueldo_dist_hist: [ { campo_id, desde, cria, recria, engorde, estructura } ]
-//   — historial de cambios de distribución por campo
+// Sueldos — leen de S.cache.sueldos (Sheets) y escriben via apiCall
 
 function sueldosGetAll_() {
-  try { return JSON.parse(localStorage.getItem('lm_sueldos_v2') || '[]'); } catch(e) { return []; }
-}
-function sueldosSave_(lista) {
-  try { localStorage.setItem('lm_sueldos_v2', JSON.stringify(lista)); } catch(e) {} 
+  return S.cache.sueldos || [];
 }
 
-// Distribución base por campo (la "plantilla" que se usa por defecto)
+// Distribución base por campo — viene del catálogo (Sheets)
 function distBaseCampoGet_(campo_id) {
-  try {
-    const all = JSON.parse(localStorage.getItem('lm_sueldo_dist_v2') || '{}');
-    return all[String(campo_id)] || { cria: 0, recria: 0, engorde: 0, estructura: 0 };
-  } catch(e) { return { cria: 0, recria: 0, engorde: 0, estructura: 0 }; }
-}
-function distBaseCampoSave_(campo_id, dist) {
-  try {
-    const all = JSON.parse(localStorage.getItem('lm_sueldo_dist_v2') || '{}');
-    all[String(campo_id)] = dist;
-    localStorage.setItem('lm_sueldo_dist_v2', JSON.stringify(all));
-  } catch(e) {}
+  const dist = (S.catalogs && S.catalogs.sueldos_dist || [])
+    .find(d => String(d.campo_id) === String(campo_id));
+  if (!dist) return { cria: 0, recria: 0, engorde: 0, estructura: 0 };
+  return {
+    cria:       Number(dist.cria)       || 0,
+    recria:     Number(dist.recria)     || 0,
+    engorde:    Number(dist.engorde)    || 0,
+    estructura: Number(dist.estructura) || 0,
+  };
 }
 
-// Distribución efectiva de un registro de sueldo:
-// cada registro puede tener su propia distribución (override) o usa la base del campo
+// Distribución efectiva de un registro de sueldo
+// Los campos dist_cria etc vienen de Sheets como campos planos
 function distEfectiva_(s) {
-  if (s.dist) return s.dist;
+  if (s.dist_cria !== undefined && s.dist_cria !== null && s.dist_cria !== '') {
+    return {
+      cria:       Number(s.dist_cria)       || 0,
+      recria:     Number(s.dist_recria)     || 0,
+      engorde:    Number(s.dist_engorde)    || 0,
+      estructura: Number(s.dist_estructura) || 0,
+    };
+  }
   return distBaseCampoGet_(s.campo_id);
 }
 
@@ -5686,7 +5687,7 @@ function attachSueldosEvents() {
   };
 
   // Guardar distribución base de un campo
-  window.sdDistGuardar_ = function(campo_id) {
+  window.sdDistGuardar_ = async function(campo_id) {
     const c = parseInt(document.getElementById('sd-cria-'+campo_id)?.value||0);
     const r = parseInt(document.getElementById('sd-recria-'+campo_id)?.value||0);
     const e = parseInt(document.getElementById('sd-engorde-'+campo_id)?.value||0);
@@ -5694,9 +5695,19 @@ function attachSueldosEvents() {
     const suma = c+r+e+s;
     const msg = document.getElementById('sd-msg-dist-'+campo_id);
     if (suma !== 100) { if(msg) msg.textContent='⚠ Suman '+suma+'%'; return; }
-    distBaseCampoSave_(campo_id, { cria:c, recria:r, engorde:e, estructura:s });
-    if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
-    toast('Distribución guardada', 'ok');
+    try {
+      // Buscar si ya existe registro para este campo
+      const existing = (S.catalogs && S.catalogs.sueldos_dist || []).find(d => String(d.campo_id) === String(campo_id));
+      if (existing) {
+        await apiCall('update', { body: { entity: 'sueldos_dist', id: existing.dist_id, data: { ...existing, cria:c, recria:r, engorde:e, estructura:s } } });
+      } else {
+        await apiCall('create', { body: { entity: 'sueldos_dist', data: { campo_id, cria:c, recria:r, engorde:e, estructura:s } } });
+      }
+      await loadCatalogs();
+      if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
+      toast('Distribución guardada', 'ok');
+      render();
+    } catch(err) { toast('Error: '+err.message, 'err'); }
   };
 
   // Al cambiar campo en el form, cargar su distribución base en el preview
@@ -5752,7 +5763,7 @@ function attachSueldosEvents() {
   }, 50);
 
   // Guardar sueldo
-  window.sueldoGuardar_ = function() {
+  window.sueldoGuardar_ = async function() {
     const periodo    = document.getElementById('sd-periodo')?.value || '';
     const campo_id   = document.getElementById('sd-campo')?.value || '';
     const monto      = Number(document.getElementById('sd-monto')?.value) || 0;
@@ -5761,7 +5772,6 @@ function attachSueldosEvents() {
     if (!periodo)  { if(msg) msg.textContent='⚠ Seleccioná el período.'; return; }
     if (!campo_id) { if(msg) msg.textContent='⚠ Seleccioná el campo.'; return; }
     if (!monto)    { if(msg) msg.textContent='⚠ Ingresá el monto.'; return; }
-    // Distribución efectiva (puede ser override o la base del campo)
     const cria      = parseInt(document.getElementById('sd-ov-cria')?.value||0);
     const recria    = parseInt(document.getElementById('sd-ov-recria')?.value||0);
     const engorde   = parseInt(document.getElementById('sd-ov-engorde')?.value||0);
@@ -5770,30 +5780,36 @@ function attachSueldosEvents() {
     if (suma !== 100) {
       if (!confirm('⚠ Los porcentajes suman '+suma+'% (no 100%). ¿Guardás igual?')) return;
     }
-    const distBase = distBaseCampoGet_(campo_id);
-    const esBase = cria===distBase.cria && recria===distBase.recria && engorde===distBase.engorde && estructura===distBase.estructura;
-    const lista = sueldosGetAll_();
-    // Buscar si ya existe para este período+campo
-    const idx = lista.findIndex(s => s.periodo===periodo && String(s.campo_id)===String(campo_id));
-    const reg = {
-      id: idx>=0 ? lista[idx].id : Date.now(),
-      periodo, campo_id, monto, observacion: obs, fecha_carga: today(),
-      dist: esBase ? null : { cria, recria, engorde, estructura },
-    };
-    if (idx>=0) { lista[idx]=reg; } else { lista.push(reg); }
-    sueldosSave_(lista);
-    if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
-    toast('Sueldo guardado — '+campo_id+' '+periodo+' · $ '+fn(monto), 'ok');
-    render();
+    try {
+      // Buscar si ya existe para este período+campo
+      const existing = sueldosGetAll_().find(s => s.periodo===periodo && String(s.campo_id)===String(campo_id));
+      const data = { periodo, campo_id, monto, observacion: obs, fecha_carga: today(),
+        dist_cria: cria, dist_recria: recria, dist_engorde: engorde, dist_estructura: estructura };
+      if (existing) {
+        await apiCall('update', { body: { entity: 'sueldos', id: existing.sueldo_id, data: { ...existing, ...data } } });
+      } else {
+        await apiCall('create', { body: { entity: 'sueldos', data } });
+      }
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
+      toast('Sueldo guardado — '+periodo+' · $ '+fn(monto), 'ok');
+      render();
+    } catch(err) { toast('Error: '+err.message, 'err'); }
   };
 
-  window.sueldoEliminar_ = function(i) {
+  window.sueldoEliminar_ = async function(i) {
     if (!confirm('¿Eliminar este registro?')) return;
     const lista = sueldosGetAll_().sort((a,b)=>b.periodo.localeCompare(a.periodo)||String(a.campo_id).localeCompare(String(b.campo_id)));
-    lista.splice(i,1);
-    sueldosSave_(lista);
-    toast('Registro eliminado','ok');
-    render();
+    const reg = lista[i];
+    if (!reg) return;
+    try {
+      await apiCall('delete', { body: { entity: 'sueldos', id: reg.sueldo_id } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      toast('Registro eliminado','ok');
+      render();
+    } catch(err) { toast('Error: '+err.message, 'err'); }
   };
 }
 
@@ -5881,10 +5897,11 @@ function attachCotizacionEvents() {
 
 // ── Precios de valorización por actividad (localStorage) ──────────────
 function preciosValGet_() {
-  try { return JSON.parse(localStorage.getItem('lm_precios_val') || '{}'); } catch(e) { return {}; }
-}
-function preciosValSave_(obj) {
-  try { localStorage.setItem('lm_precios_val', JSON.stringify(obj)); } catch(e) {} 
+  // Lee de S.catalogs.precios_valorizacion (Sheets)
+  const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
+  const obj = {};
+  lista.forEach(p => { obj[p.categoria] = Number(p.precio) || 0; });
+  return obj;
 }
 
 function buildConfig() {
@@ -5984,24 +6001,38 @@ function buildPreciosValPanel_() {
 }
 
 function attachConfigEvents() {
-  window.preciosValGuardar_ = function() {
+  window.preciosValGuardar_ = async function() {
     const g = id => Number(document.getElementById(id)?.value) || 0;
-    const p = {
-      vaca:            g('pv-vaca'),
-      toro:            g('pv-toro'),
-      torito:          g('pv-torito'),
-      ternero:         g('pv-ternero'),
-      ternera:         g('pv-ternera'),
-      vaquillona:      g('pv-vaquillona'),
-      vaquillona_venta:g('pv-vaquillona-venta'),
-      novillito:       g('pv-novillito'),
-      novillo:         g('pv-novillo'),
-      vaca_venta:      g('pv-vaca-venta'),
+    const precios = {
+      vaca:             g('pv-vaca'),
+      toro:             g('pv-toro'),
+      torito:           g('pv-torito'),
+      ternero:          g('pv-ternero'),
+      ternera:          g('pv-ternera'),
+      vaquillona:       g('pv-vaquillona'),
+      vaquillona_venta: g('pv-vaquillona-venta'),
+      novillito:        g('pv-novillito'),
+      novillo:          g('pv-novillo'),
+      vaca_venta:       g('pv-vaca-venta'),
     };
-    preciosValSave_(p);
     const msg = document.getElementById('pv-msg');
-    if(msg) { msg.textContent = '✅ Precios guardados'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
-    toast('Precios de valorización actualizados', 'ok');
+    try {
+      const existing = (S.catalogs && S.catalogs.precios_valorizacion) || [];
+      // Upsert cada categoría
+      for (const [categoria, precio] of Object.entries(precios)) {
+        const metodo = ['vaca','toro','torito'].includes(categoria) ? 'cabeza' : 'kg';
+        const rec = existing.find(p => p.categoria === categoria);
+        const data = { categoria, precio, metodo, fecha_actualizacion: today() };
+        if (rec) {
+          await apiCall('update', { body: { entity: 'precios_valorizacion', id: rec.precio_id, data: { ...rec, ...data } } });
+        } else {
+          await apiCall('create', { body: { entity: 'precios_valorizacion', data } });
+        }
+      }
+      await loadCatalogs();
+      if(msg) { msg.textContent = '✅ Precios guardados'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+      toast('Precios de valorización actualizados', 'ok');
+    } catch(err) { toast('Error: '+err.message, 'err'); }
   };
   document.getElementById('cf-save').onclick = async () => {
     S.apiUrl = document.getElementById('cf-url').value.trim();
