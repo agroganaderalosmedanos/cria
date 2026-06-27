@@ -1319,6 +1319,477 @@ function buildSueldoKpiPanel_(actividad) {
   </div>`;
 }
 
+function buildIndicesReproduccion() {
+  if (!S.indicesData && !S._indicesLoading) {
+    S._indicesLoading = true;
+    apiCall('dashboard').then(data => {
+      S.indicesData = data;
+      S._indicesLoading = false;
+      render();
+    }).catch(() => { S._indicesLoading = false; render(); });
+  }
+  if (!S.indicesData) return '<div class="loader"><div class="spinner"></div>Calculando índices reproductivos…</div>';
+
+  const g          = S.indicesData.general;
+  const rodeosList = S.indicesData.rodeos || [];
+  const campos     = (S.catalogs && S.catalogs.campos) || [];
+  const criaTabs2 = [
+    { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
+    { k: 'tactos',               icon: '◔',  label: 'Tactos' },
+    { k: 'abortos',              icon: '⊘',  label: 'Abortos' },
+    { k: 'pariciones',           icon: '✦',  label: 'Pariciones' },
+    { k: 'destetes',             icon: '⊞',  label: 'Destetes' },
+  ];
+  let h = `<div class="page-header">
+    <div class="page-title">Cría</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      ${criaTabs2.map(t => `<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
+    </div>
+  </div>`;
+
+  h += '<div class="section-label">Establecimiento — índices generales</div>';
+  h += buildKpiRow(g);
+
+  h += '<div class="section-label">Filtrar por campo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedCampoId ? 'active' : ''}" data-campo=""><div class="rc-name">Todos los campos</div></div>`;
+  campos.forEach(c => {
+    h += `<div class="rodeo-chip ${String(S.selectedCampoId) === String(c.campo_id) ? 'active' : ''}" data-campo="${c.campo_id}"><div class="rc-name">${c.nombre}</div></div>`;
+  });
+  h += '</div>';
+
+  const rodeosFiltrados = (S.selectedCampoId
+    ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
+    : rodeosList
+  ).slice().sort((a, b) => {
+    const cmp = campoNombre(a.rodeo.campo_id).localeCompare(campoNombre(b.rodeo.campo_id), 'es', { sensitivity: 'base' });
+    return cmp !== 0 ? cmp : a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
+  });
+
+  if (S.selectedCampoId) {
+    const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
+    h += `<div class="panel"><div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>${buildKpiRow(aggregateKpis_(rodeosFiltrados))}</div>`;
+  }
+
+  h += '<div class="section-label">Por rodeo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo=""><div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
+  rodeosFiltrados.forEach(r => {
+    h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}"><div class="rc-name">${r.rodeo.nombre}</div><div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div></div>`;
+  });
+  h += '</div>';
+
+  if (S.selectedRodeoId) {
+    const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
+    if (sel) h += `<div class="panel"><div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>${buildKpiRow(sel.kpis)}</div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Campo</th>
+      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th>
+      <th class="tc">Nacidos vivos</th><th class="tc">Destetados</th>
+    </tr></thead><tbody>`;
+    rodeosFiltrados.forEach(r => {
+      const k = r.kpis;
+      h += `<tr>
+        <td><strong>${r.rodeo.nombre}</strong></td>
+        <td>${campoNombre(r.rodeo.campo_id)}</td>
+        <td class="tc">${pct(k.servicio.indice_prenez)}</td>
+        <td class="tc">${pct(k.paricion.indice_paricion)}</td>
+        <td class="tc">${pct(k.destete.indice_destete)}</td>
+        <td class="tc">${fn(k.paricion.nacidos_vivos)}</td>
+        <td class="tc">${fn(k.destete.total_destetados)}</td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  return h;
+}
+
+function attachIndicesReproduccionEvents() {
+  document.querySelectorAll('[data-campo]').forEach(el => el.onclick = () => {
+    S.selectedCampoId = el.dataset.campo || null;
+    S.selectedRodeoId = null;
+    render();
+  });
+  document.querySelectorAll('[data-rodeo]').forEach(el => el.onclick = () => {
+    S.selectedRodeoId = el.dataset.rodeo || null;
+    render();
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COMPRAS DE HACIENDA
+// ══════════════════════════════════════════════════════════════════════
+// Persistencia local (igual que sueldos — hasta tener hoja en Sheets)
+function comprasHacGetAll_() {
+  return S.cache.compras_hacienda || [];
+}
+
+function buildComprasHacienda() {
+  const compras  = comprasHacGetAll_().sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+  const campos   = (S.catalogs && S.catalogs.campos) || [];
+  const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
+  const campanas = [...new Set([
+    ...compras.map(c => c.campana),
+    ...((S.cache.ventas||[]).map(v => v.campana))
+  ].filter(Boolean))].sort((a,b) => b.localeCompare(a));
+  const categorias = [...new Set([
+    ...compras.map(c => c.categoria).filter(Boolean),
+    'Vaca','Toro','Torito','Ternero','Ternera','Vaquillona','Novillito','Novillo','Vaca venta'
+  ])].sort();
+
+  const totalCabezas = compras.reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+  const totalImporte = compras.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
+
+  let h = `<div class="page-header">
+    <div class="page-title">🛒 Compras de Hacienda</div>
+    <div class="page-sub">Incorporación de animales al establecimiento</div>
+  </div>`;
+
+  // KPIs por categoría
+  const porCat = {};
+  compras.forEach(c => {
+    const cat = (c.categoria||'Sin categoría');
+    if (!porCat[cat]) porCat[cat] = { cabezas: 0, importe: 0 };
+    porCat[cat].cabezas  += Number(c.cantidad) || 0;
+    porCat[cat].importe  += Number(c.importe_total) || 0;
+  });
+  const bgsCat = ['var(--green-bg)','var(--gold-bg)','var(--clay-bg)','var(--blue-bg)','var(--bg2)'];
+  const txtCat = ['var(--green-text)','var(--gold-text)','var(--clay-text)','var(--blue-text)','var(--text2)'];
+
+  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Total compras</div>
+      <div style="font-size:18px;font-weight:700">$ ${fn(totalImporte)}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">${fn(totalCabezas)} cabezas · ${compras.length} registros</div>
+    </div>
+    ${Object.entries(porCat).sort((a,b)=>b[1].cabezas-a[1].cabezas).map(([cat,v],i)=>`
+    <div style="background:${bgsCat[i%bgsCat.length]};border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:${txtCat[i%txtCat.length]};letter-spacing:.05em">${cat}</div>
+      <div style="font-size:18px;font-weight:700;color:${txtCat[i%txtCat.length]}">$ ${fn(v.importe)}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">${fn(v.cabezas)} cabezas</div>
+    </div>`).join('')}
+  </div>`;
+
+  // ── Formulario ──
+  const editando = S._compraEditando || null;
+  h += `<div class="panel" id="ch-form-panel">
+    <div class="panel-title">${editando ? '✏️ Editar compra' : '➕ Registrar compra'}</div>
+    <div class="fgrid">
+      <div class="fg">
+        <label>Fecha</label>
+        <input type="date" id="ch-fecha" value="${editando ? (editando.fecha||today()) : today()}">
+      </div>
+      <div class="fg">
+        <label>Campaña</label>
+        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list" value="${editando ? (editando.campana||'') : ''}">
+        <datalist id="ch-campana-list">${campanas.map(c=>`<option value="${c}">`).join('')}</datalist>
+      </div>
+      <div class="fg">
+        <label>Campo</label>
+        <select id="ch-campo" onchange="window.chActualizarRodeos_()">
+          ${campos.map(c=>`<option value="${c.campo_id}" ${editando && String(c.campo_id)===String(editando.campo_id)?'selected':''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg">
+        <label>Categoría</label>
+        <select id="ch-categoria-sel" onchange="window.chCatChange_()">
+          <option value="">— Seleccioná —</option>
+          ${categorias.map(c=>`<option value="${c}" ${editando && editando.categoria===c?'selected':''}>${c}</option>`).join('')}
+          <option value="__otro__">Otra categoría…</option>
+        </select>
+        <input type="text" id="ch-categoria-txt" placeholder="Escribí la categoría" style="display:none;margin-top:6px" value="${editando ? (editando.categoria||'') : ''}">
+        <input type="hidden" id="ch-categoria" value="${editando ? (editando.categoria||'') : ''}">
+      </div>
+      <div class="fg">
+        <label>Rodeo destino <span class="opt">(opcional)</span></label>
+        <select id="ch-rodeo" onchange="window.chActualizarRodeos_()">
+          <option value="">— Sin asignar —</option>
+          ${rodeos.filter(r=>String(r.campo_id)===String(editando ? editando.campo_id : campos[0]?.campo_id)).map(r=>`<option value="${r.rodeo_id}" ${editando && String(r.rodeo_id)===String(editando.rodeo_id)?'selected':''}>${r.nombre}</option>`).join('')}
+          <option value="__nuevo__">➕ Crear rodeo nuevo…</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Cantidad (cabezas)</label>
+        <input type="number" id="ch-cantidad" placeholder="Ej: 50" min="1" value="${editando ? (editando.cantidad||'') : ''}" oninput="window.chCalcImporte_()">
+      </div>
+      <div class="fg">
+        <label>Precio por cabeza ($)</label>
+        <input type="number" id="ch-precio" placeholder="Ej: 850000" min="0" step="1000" value="${editando ? (editando.precio_cabeza||'') : ''}" oninput="window.chCalcImporte_()">
+      </div>
+      <div class="fg">
+        <label>Importe total</label>
+        <div id="ch-importe-preview" style="font-size:18px;font-weight:700;padding:8px 0;color:var(--green-text)">${editando && editando.importe_total ? '$ '+fn(editando.importe_total) : '—'}</div>
+      </div>
+      <div class="fg">
+        <label>Vendedor / Procedencia</label>
+        <input type="text" id="ch-vendedor" placeholder="Nombre del vendedor" value="${editando ? (editando.vendedor||'') : ''}">
+      </div>
+      <div class="fg" style="flex:2">
+        <label>Observación</label>
+        <input type="text" id="ch-obs" placeholder="Raza, condición corporal, preñez, etc." value="${editando ? (editando.observacion||'') : ''}">
+      </div>
+    </div>
+    <!-- Nuevo rodeo -->
+    <div id="ch-nuevo-rodeo-wrap" style="display:none;background:var(--bg2);border-radius:8px;padding:12px;margin-top:8px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">Nuevo rodeo destino</div>
+      <div class="fgrid">
+        <div class="fg"><label>Nombre</label><input type="text" id="ch-nr-nombre" placeholder="Ej: Vacas 2026"></div>
+        <div class="fg"><label>Categoría del rodeo</label>
+          <select id="ch-nr-categoria">
+            ${[...new Set(rodeos.map(r=>r.categoria).filter(Boolean))].sort().map(c=>`<option value="${c}">${c}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label>Actividad</label>
+          <select id="ch-nr-actividad">
+            <option value="Cría">Cría</option>
+            <option value="Recría">Recría</option>
+            <option value="Engorde">Engorde</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" id="ch-guardar-btn" onclick="this.disabled=true;this.textContent='⏳ Guardando…';window.compraHacGuardar_()">
+        ${editando ? '✏️ Guardar cambios' : '💾 Registrar compra'}
+      </button>
+      ${editando ? `<button class="btn btn-secondary" onclick="S._compraEditando=null;render()">Cancelar</button>` : ''}
+      <span id="ch-msg" style="font-size:13px;color:var(--green)"></span>
+    </div>
+  </div>`;
+
+  // ── Historial ──
+  h += `<div class="panel">
+    <div class="panel-title">📋 Historial de compras</div>`;
+
+  if (!compras.length) {
+    h += '<div class="empty-state"><span class="ico">🛒</span><div class="msg">No hay compras registradas aún.</div></div>';
+  } else {
+    const porCampana = {};
+    compras.forEach(c => {
+      const k = c.campana || 'Sin campaña';
+      if (!porCampana[k]) porCampana[k] = [];
+      porCampana[k].push(c);
+    });
+    Object.entries(porCampana).sort((a,b)=>b[0].localeCompare(a[0])).forEach(([camp, items]) => {
+      const totCamp = items.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
+      h += `<div style="margin-bottom:6px;font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px">
+        <span>📅 Campaña ${camp}</span>
+        <span style="color:var(--clay-text)">$ ${fn(totCamp)}</span>
+      </div>`;
+      h += `<div class="tw" style="margin-bottom:16px"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Categoría</th><th>Campo</th><th>Rodeo destino</th>
+        <th class="tc">Cant.</th><th class="tr">Precio/cab.</th><th class="tr">Total</th>
+        <th>Vendedor</th><th>Obs.</th><th></th>
+      </tr></thead><tbody>`;
+      items.forEach(c => {
+        const rodeoNom = c.rodeo_id ? (rodeos.find(r=>String(r.rodeo_id)===String(c.rodeo_id))?.nombre || '—') : '—';
+        h += `<tr>
+          <td>${fd(c.fecha)}</td>
+          <td><span class="pill pill-green">${c.categoria||'—'}</span></td>
+          <td>${campos.find(f=>String(f.campo_id)===String(c.campo_id))?.nombre||'—'}</td>
+          <td>${rodeoNom}</td>
+          <td class="tc"><strong>${fn(c.cantidad)}</strong></td>
+          <td class="tr">$ ${fn(c.precio_cabeza)}</td>
+          <td class="tr"><strong>$ ${fn(c.importe_total)}</strong></td>
+          <td>${c.vendedor||'—'}</td>
+          <td style="font-size:12px;color:var(--text3)">${c.observacion||'—'}</td>
+          <td style="display:flex;gap:4px">
+            <button class="btn btn-secondary btn-sm" onclick="window.compraHacEditar_('${c.compra_id}')" title="Editar">✎</button>
+            <button class="btn btn-danger btn-sm" onclick="window.compraHacEliminar_('${c.compra_id}')" title="Eliminar">🗑</button>
+          </td>
+        </tr>`;
+      });
+      h += '</tbody></table></div>';
+    });
+  }
+  h += '</div>';
+  return h;
+}
+
+function attachComprasHaciendaEvents() {
+
+  window.chCatChange_ = function() {
+    const sel = document.getElementById('ch-categoria-sel');
+    const txt = document.getElementById('ch-categoria-txt');
+    const hid = document.getElementById('ch-categoria');
+    if (!sel) return;
+    if (sel.value === '__otro__') {
+      if (txt) txt.style.display = 'block';
+      if (txt) txt.oninput = () => { if(hid) hid.value = txt.value; };
+      if (hid) hid.value = '';
+    } else {
+      if (txt) txt.style.display = 'none';
+      if (hid) hid.value = sel.value;
+    }
+  };
+  // Init on load
+  setTimeout(() => window.chCatChange_ && window.chCatChange_(), 50);
+
+  window.chCalcImporte_ = function() {
+    const cant   = Number(document.getElementById('ch-cantidad')?.value) || 0;
+    const precio = Number(document.getElementById('ch-precio')?.value) || 0;
+    const el = document.getElementById('ch-importe-preview');
+    if (el) el.textContent = (cant && precio) ? '$ ' + fn(cant * precio) : '—';
+  };
+
+  window.chActualizarRodeos_ = function() {
+    const campo_id = document.getElementById('ch-campo')?.value || '';
+    const rSelect  = document.getElementById('ch-rodeo');
+    const wrap     = document.getElementById('ch-nuevo-rodeo-wrap');
+
+    // Re-poblar rodeos filtrados por campo
+    if (rSelect) {
+      const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+      const filtrados = rodeos.filter(r => String(r.campo_id) === String(campo_id));
+      const prevVal = rSelect.value;
+      rSelect.innerHTML =
+        '<option value="">— Sin asignar —</option>' +
+        filtrados.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===prevVal?'selected':''}>${r.nombre}</option>`).join('') +
+        '<option value="__nuevo__">➕ Crear rodeo nuevo…</option>';
+    }
+
+    // Mostrar/ocultar form nuevo rodeo
+    const val = document.getElementById('ch-rodeo')?.value;
+    if (wrap) wrap.style.display = val === '__nuevo__' ? 'flex' : 'none';
+  };
+
+  window.compraHacGuardar_ = async function() {
+    const fecha     = document.getElementById('ch-fecha')?.value || '';
+    const campana   = document.getElementById('ch-campana')?.value.trim() || '';
+    const campo_id  = document.getElementById('ch-campo')?.value || '';
+    const categoria = (document.getElementById('ch-categoria')?.value || '').trim();
+    const cantidad  = Number(document.getElementById('ch-cantidad')?.value) || 0;
+    const precio    = Number(document.getElementById('ch-precio')?.value) || 0;
+    const vendedor  = document.getElementById('ch-vendedor')?.value.trim() || '';
+    const obs       = document.getElementById('ch-obs')?.value.trim() || '';
+    const msg       = document.getElementById('ch-msg');
+    const btn       = document.getElementById('ch-guardar-btn');
+
+    const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent = S._compraEditando ? '✏️ Guardar cambios' : '💾 Registrar compra'; } };
+
+    if (!fecha)     { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la fecha.'; return; }
+    if (!campana)   { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la campaña.'; return; }
+    if (!categoria) { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la categoría.'; return; }
+    if (!cantidad)  { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la cantidad.'; return; }
+    if (!precio)    { resetBtn(); if(msg) msg.textContent='⚠ Ingresá el precio por cabeza.'; return; }
+
+    // Crear rodeo nuevo si corresponde
+    let rodeo_id = document.getElementById('ch-rodeo')?.value || '';
+    if (rodeo_id === '__nuevo__') {
+      const nombre   = document.getElementById('ch-nr-nombre')?.value.trim() || '';
+      const catRodeo = document.getElementById('ch-nr-categoria')?.value || '';
+      const activ    = document.getElementById('ch-nr-actividad')?.value || 'Cría';
+      if (!nombre) { resetBtn(); toast('Ingresá el nombre del rodeo nuevo.', 'err'); return; }
+      try {
+        await apiCall('create', { body: { entity: 'rodeos', data: { nombre, campo_id, categoria: catRodeo, activo: true, actividad: activ } } });
+        await loadCatalogs();
+        const nuevos = (S.catalogs && S.catalogs.rodeos) || [];
+        const creado = nuevos.find(r => r.nombre === nombre && String(r.campo_id) === String(campo_id));
+        rodeo_id = creado ? String(creado.rodeo_id) : '';
+        toast('Rodeo "' + nombre + '" creado.', 'ok');
+      } catch(err) { resetBtn(); toast('Error al crear rodeo: ' + err.message, 'err'); return; }
+    }
+
+    const data = {
+      fecha, campana, campo_id, categoria, rodeo_id,
+      cantidad, precio_cabeza: precio,
+      importe_total: cantidad * precio,
+      vendedor, observacion: obs, fecha_carga: today(),
+    };
+
+    try {
+      const editando = S._compraEditando;
+      if (editando) {
+        await apiCall('update', { body: { entity: 'compras_hacienda', id: editando.compra_id, data: { ...editando, ...data } } });
+        S._compraEditando = null;
+        toast('Compra actualizada', 'ok');
+      } else {
+        await apiCall('create', { body: { entity: 'compras_hacienda', data } });
+        toast('Compra registrada — ' + fn(cantidad) + ' ' + categoria + ' · $ ' + fn(cantidad*precio), 'ok');
+      }
+      invalidateCache('compras_hacienda');
+      await loadEntity('compras_hacienda', true);
+      if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+      render();
+    } catch(err) {
+      resetBtn();
+      toast('Error: '+err.message, 'err');
+    }
+  };
+
+  window.compraHacEditar_ = function(compra_id) {
+    const c = comprasHacGetAll_().find(x => String(x.compra_id) === String(compra_id));
+    if (!c) { toast('No se encontró el registro.', 'err'); return; }
+    S._compraEditando = c;
+    render();
+    setTimeout(() => {
+      const panel = document.getElementById('ch-form-panel');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('ch-cantidad')?.focus();
+    }, 100);
+  };
+
+  window.compraHacEliminar_ = async function(compra_id) {
+    if (!confirm('¿Eliminar esta compra?')) return;
+    try {
+      await apiCall('delete', { body: { entity: 'compras_hacienda', id: compra_id } });
+      invalidateCache('compras_hacienda');
+      await loadEntity('compras_hacienda', true);
+      toast('Registro eliminado', 'ok');
+      render();
+    } catch(err) { toast('Error: '+err.message, 'err'); }
+  };
+}
+
+// ── Helper: KPI de sueldos para cada actividad ────────────────────────
+// actividad: 'cria' | 'recria' | 'engorde'
+function buildSueldoKpiPanel_(actividad) {
+  const sueldos = sueldosGetAll_();
+  const mesActual = today().slice(0, 7);
+  const anio = today().slice(0, 4);
+
+  const importeMes = sueldoTotalActividad_(actividad, s => String(s.periodo).slice(0,7) === mesActual);
+  const sueldosAnio = sueldos.filter(s => String(s.periodo).slice(0,4) === anio);
+  const totalAnio = sueldoTotalActividad_(actividad, s => String(s.periodo).slice(0,4) === anio);
+  const pctMes = null; // ya no hay un único % — es por campo
+
+  const labels = { cria: '🐄 Cría', recria: '🐃 Recría', engorde: '🥩 Engorde' };
+  const colors = { cria: 'var(--green)', recria: 'var(--gold)', engorde: 'var(--clay)' };
+  const bgColors = { cria: 'var(--green-bg)', recria: 'var(--gold-bg)', engorde: 'var(--clay-bg)' };
+
+  const color = colors[actividad];
+  const bg    = bgColors[actividad];
+  const label = labels[actividad];
+
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <div style="background:${bg};border-radius:10px;padding:12px 20px;display:flex;align-items:center;gap:16px;flex:1;min-width:240px">
+      <div style="font-size:28px">👤</div>
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${color};margin-bottom:2px">Sueldos imputados — ${label}</div>
+        <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:10px;color:var(--text2)">Mes actual (${mesActual})</div>
+            <div style="font-size:20px;font-weight:800;color:${color}">${importeMes ? '$ ' + fn(importeMes) : '—'}</div>
+            ${pctMes !== null ? `<div style="font-size:11px;color:var(--text3)">${pctMes}% del total</div>` : ''}
+          </div>
+          <div style="width:1px;background:var(--border);align-self:stretch;margin:2px 0"></div>
+          <div>
+            <div style="font-size:10px;color:var(--text2)">Acumulado ${anio}</div>
+            <div style="font-size:20px;font-weight:800;color:${color}">${totalAnio ? '$ ' + fn(totalAnio) : '—'}</div>
+            <div style="font-size:11px;color:var(--text3)">${sueldosAnio.length} ${sueldosAnio.length === 1 ? 'mes' : 'meses'}</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-left:auto">
+        <button class="btn btn-sm btn-ghost" onclick="goto('sueldos')" style="font-size:11px;white-space:nowrap">Ver detalle →</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function buildDashboard() {
   // Mostrar loader mientras cargan los datos
   if (!S.cache.movimientos || !S.cache.ventas) {
@@ -1335,6 +1806,9 @@ function buildDashboard() {
   const sueldos  = sueldosGetAll_();
 
   // Campañas disponibles
+  const _criaMoneda = S.criaMoneda || 'ARS';
+  const fmCria_ = p => egFmon_(p, _criaMoneda);
+
   const campanas = [...new Set([
     ...ventas.map(v=>v.campana).filter(Boolean),
     ...comprasH.map(c=>c.campana).filter(Boolean),
@@ -1519,25 +1993,25 @@ function buildDashboard() {
             <div style="font-weight:600">💰 Ventas de hacienda</div>
             <div style="font-size:11px;color:var(--text3)">${ventasCria.length} ventas liquidadas</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalVentas)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmCria_(totalVentas)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">🔄 Cesiones a Recría/Engorde</div>
             <div style="font-size:11px;color:var(--text3)">${cesiones.length} traslados valorizados</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalCesiones)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmCria_(totalCesiones)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
           <div>
             <div style="font-weight:600">📦 Stock valorizado actual</div>
             <div style="font-size:11px;color:var(--text3)">${haPrecios ? (stockDetalleRows.length + ' rodeos') : '⚠ Sin precios configurados'}</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(stockValCria)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmCria_(stockValCria)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--green)">$ ${fn(totalIngresos)}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--green)">${fmCria_(totalIngresos)}</div>
         </div>
       </div>
     </div>
@@ -1551,14 +2025,14 @@ function buildDashboard() {
             <div style="font-weight:600">🐄 Stock inicial</div>
             <div style="font-size:11px;color:var(--text3)">${saldosIniciales.length} rodeos — precio/cabeza cargado</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSaldoInicial)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalSaldoInicial)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">🛒 Compras de hacienda</div>
             <div style="font-size:11px;color:var(--text3)">${comprasCria.length} compras campaña ${campSelec}</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCompras)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -1572,11 +2046,11 @@ function buildDashboard() {
             <div style="font-weight:600">👤 Sueldos imputados a Cría</div>
             <div style="font-size:11px;color:var(--text3)">histórico total de sueldos × % Cría</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSueldosCria)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalSueldosCria)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--clay)">$ ${fn(totalEgresos)}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fmCria_(totalEgresos)}</div>
         </div>
       </div>
     </div>
@@ -1590,7 +2064,7 @@ function buildDashboard() {
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Cría ${campSelec}</div>
       <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos (excluye insumos por configurar)</div>
     </div>
-    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}$ ${fn(Math.abs(margen))}</div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fmCria_(Math.abs(margen))}</div>
   </div>`;
 
   // ── Detalle stock valorizado ─────────────────────────────────────────
@@ -1612,7 +2086,7 @@ function buildDashboard() {
         <td class="tc">${fn(row.stock)}</td>
         <td class="tr">${row.pesoP ? fn(row.pesoP)+' kg' : '—'}</td>
         <td class="tr" style="font-size:11px;color:var(--text3)">${metodo}</td>
-        <td class="tr"><strong>$ ${fn(row.val)}</strong></td>
+        <td class="tr"><strong>${fmCria_(row.val)}</strong></td>
       </tr>`;
     });
     h += '</tbody></table></div></div>';
