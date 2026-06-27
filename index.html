@@ -421,7 +421,7 @@ async function init() {
   try {
     await loadCatalogs();
     render(); // app navegable de inmediato; el Resumen calcula sus índices solo al visitarlo
-    loadDashboard().then(render).catch(() => {}); // precarga silenciosa en segundo plano
+    loadDashboard().then(render).catch(() => {}); // precarga silenciosa — necesario para Índices de Reproducción
     autofetchCotizacion_(); // buscar cotización del día automáticamente
   } catch (err) {
     toast('Error al conectar: ' + err.message, 'err');
@@ -502,11 +502,9 @@ async function goto(page) {
     if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
   }
-  if (page === 'indices_reproduccion') {
-    if (!S.dashboard) {
-      const t = setTimeout(() => render(), 300);
-      loadDashboard().then(() => { clearTimeout(t); render(); }).catch(() => { clearTimeout(t); render(); });
-    }
+  if (page === 'indices_reproduccion' && !S.dashboard) {
+    const t = setTimeout(() => render(), 500);
+    loadDashboard().then(() => { clearTimeout(t); render(); }).catch(() => { clearTimeout(t); render(); });
   }
   if (page === 'movimientos') {
     // Cargar todo en paralelo para evitar múltiples re-renders
@@ -788,7 +786,14 @@ function attachPageEvents(page) {
 function buildIndicesReproduccion() {
   if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Cargando índices…</div>';
   if (S.dashboardError) return `<div class="empty-state"><span class="ico">⚠</span><div class="msg">Error: ${S.dashboardError}<br><br><button class="btn btn-secondary" onclick="S.dashboardError=null;S.dashboard=null;render()">Reintentar</button></div></div>`;
-  if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Calculando índices…</div>';
+  if (!S.dashboard) {
+    // Si no está cargando, iniciarlo
+    if (!S._dashboardLoading) {
+      S._dashboardLoading = true;
+      loadDashboard().then(() => { S._dashboardLoading = false; render(); }).catch(() => { S._dashboardLoading = false; render(); });
+    }
+    return '<div class="loader"><div class="spinner"></div>Calculando índices reproductivos… esto puede tardar unos segundos.</div>';
+  }
   const g = S.dashboard.general;
   const rodeosList = S.dashboard.rodeos || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
