@@ -862,9 +862,21 @@ function buildIndicesReproduccion() {
   const g          = S.indicesData.general;
   const rodeosList = S.indicesData.rodeos || [];
   const campos     = (S.catalogs && S.catalogs.campos) || [];
+  const criaTabs2 = [
+    { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda',     icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
+    { k: 'tactos',               icon: '◔',  label: 'Tactos' },
+    { k: 'abortos',              icon: '⊘',  label: 'Abortos' },
+    { k: 'pariciones',           icon: '✦',  label: 'Pariciones' },
+    { k: 'destetes',             icon: '⊞',  label: 'Destetes' },
+  ];
   let h = `<div class="page-header">
-    <div class="page-title">📈 Índices de Reproducción</div>
-    <div class="page-sub">Índices de preñez, parición y destete por rodeo</div>
+    <div class="page-title">Cría</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      ${criaTabs2.map(t => `<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
+    </div>
   </div>`;
 
   h += '<div class="section-label">Establecimiento — índices generales</div>';
@@ -1336,10 +1348,22 @@ function buildDashboard() {
   // Rodeos de Cría
   const rodeosCria = rodeos.filter(r => r.actividad === 'Cría' || r.actividad === 'Cria');
 
-  // ── Header ──────────────────────────────────────────────────────────
+  // ── Header con pestañas ─────────────────────────────────────────────
+  const criaTabs = [
+    { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda',     icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
+    { k: 'tactos',               icon: '◔',  label: 'Tactos' },
+    { k: 'abortos',              icon: '⊘',  label: 'Abortos' },
+    { k: 'pariciones',           icon: '✦',  label: 'Pariciones' },
+    { k: 'destetes',             icon: '⊞',  label: 'Destetes' },
+  ];
   let h = `<div class="page-header">
-    <div class="page-title">◈ Dashboard Cría</div>
-    <div class="page-sub">Resultados económicos por campaña</div>
+    <div class="page-title">Cría</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      ${criaTabs.map(t => `<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
+    </div>
   </div>`;
 
   // ── Selector de campaña ─────────────────────────────────────────────
@@ -1607,7 +1631,18 @@ function attachDashboardEvents() {
   });
 }
 
-function buildServicios() {
+function buildServicios() {  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
   const items = S.cache.servicios || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosCriaPorCampo(campos[0]?.campo_id);
@@ -1798,7 +1833,18 @@ function attachServiciosEvents() {
   attachTableDeleteEvents('servicios', 'servicio_id');
 }
 
-function buildTactos() {
+function buildTactos() {  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
   const items = S.cache.tactos || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosConServ = rodeosConServicio();
@@ -1884,7 +1930,18 @@ function attachTactosEvents() {
   attachTableDeleteEvents('tactos', 'tacto_id');
 }
 
-function buildAbortos() {
+function buildAbortos() {  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
   const items = S.cache.abortos || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
@@ -1935,7 +1992,18 @@ function attachAbortosEvents() {
   attachTableDeleteEvents('abortos', 'aborto_id');
 }
 
-function buildPariciones() {
+function buildPariciones() {  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
   const items = S.cache.pariciones || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
@@ -2043,7 +2111,18 @@ function attachMortandadEvents() {
   attachTableDeleteEvents('mortandad', 'mortandad_id');
 }
 
-function buildDestetes() {
+function buildDestetes() {  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
   const items = S.cache.destetes || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConPrenadasPorCampo(campos[0]?.campo_id);
