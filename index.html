@@ -643,7 +643,7 @@ function buildShell() {
 
 function pageTitle(p) {
   const titles = {
-    dashboard: 'Resumen de cría', servicios: 'Servicios', tactos: 'Tactos',
+    dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
     destetes: 'Destetes', movimientos: 'Movimientos/Stock', ventas: 'Ventas', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración',
   };
@@ -651,7 +651,7 @@ function pageTitle(p) {
 }
 function pageSubtitle(p) {
   const subs = {
-    dashboard: 'Índices de preñez, parición y destete por rodeo',
+    dashboard: 'Ingresos, egresos y margen por campaña', indices_reproduccion: 'Índices de preñez, parición y destete por rodeo',
     servicios: 'IATF y servicio con toros a campo',
     tactos: 'Resultado de tacto por rodeo',
     abortos: 'Registro de gestaciones interrumpidas',
@@ -787,8 +787,8 @@ function buildIndicesReproduccion() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
 
   let h = `<div class="page-header">
-    <div class="page-title">📈 Índices de reproducción</div>
-    <div class="page-sub">Preñez, parición y destete — todos los rodeos de Cría</div>
+    <div class="page-title">📈 Índices de Reproducción</div>
+    <div class="page-sub">Índices de preñez, parición y destete por rodeo</div>
   </div>`;
 
   h += '<div class="section-label">Establecimiento — índices generales</div>';
@@ -1255,6 +1255,7 @@ function buildDashboard() {
   ])].sort((a,b)=>b.localeCompare(a));
 
   const campSelec = S._dashCampana || campanas[0] || '';
+  const campSelecField = S._dashCampo || '';
 
   // Rodeos de Cría
   const rodeosCria = rodeos.filter(r => r.actividad === 'Cría' || r.actividad === 'Cria');
@@ -1292,8 +1293,7 @@ function buildDashboard() {
     return h;
   }
 
-  // Selector de campo (ya integrado arriba junto a campaña)
-  const campSelecField = S._dashCampo || '';
+  // Selector de campo integrado arriba
 
   // Advertencia si faltan precios de valorización
   const precios = preciosValGet_();
