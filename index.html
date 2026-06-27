@@ -5894,35 +5894,74 @@ function buildConfig() {
   ${buildPreciosValPanel_()}`;
 }
 
+// Categorías por método de valorización
+// POR CABEZA: vaca, toro, torito
+// POR KG:     vaca venta, ternero, ternera, vaquillona, vaquillona venta, novillito, novillo
+const CATS_POR_CABEZA_ = ['vaca', 'toro', 'torito'];
+const CATS_POR_KG_     = ['vaca venta', 'ternero', 'ternera', 'vaquillona', 'vaquillona venta', 'novillito', 'novillo'];
+
+// Devuelve el valor de un rodeo dado su stock y última pesada
+function valorizarRodeo_(rodeo, stock, pesadaProm) {
+  const p = preciosValGet_();
+  const cat = (rodeo.categoria || '').toLowerCase().trim();
+  const cant = Number(stock) || 0;
+  if (!cant) return 0;
+  if (CATS_POR_CABEZA_.includes(cat)) {
+    // precio por cabeza según categoría
+    const precio = cat === 'toro' ? (p.toro || 0)
+                 : cat === 'torito' ? (p.torito || 0)
+                 : (p.vaca || 0); // vaca
+    return cant * precio;
+  }
+  // precio por kg
+  const kg = Number(pesadaProm) || 0;
+  if (!kg) return 0;
+  const precio = cat === 'ternero'          ? (p.ternero || 0)
+               : cat === 'ternera'          ? (p.ternera || 0)
+               : cat === 'vaquillona'       ? (p.vaquillona || 0)
+               : cat === 'vaquillona venta' ? (p.vaquillona_venta || 0)
+               : cat === 'novillito'        ? (p.novillito || 0)
+               : cat === 'novillo'          ? (p.novillo || 0)
+               : cat === 'vaca venta'       ? (p.vaca_venta || 0)
+               : 0;
+  return cant * kg * precio;
+}
+
 function buildPreciosValPanel_() {
   const p = preciosValGet_();
+
+  function field(id, label, val, ph, step) {
+    return `<div class="fg"><label>${label}</label><input type="number" id="${id}" value="${val||''}" placeholder="${ph}" min="0" step="${step||100}"></div>`;
+  }
+
   return `<div class="panel">
     <div class="panel-title">💲 Precios de valorización de stock</div>
     <p class="helper-text" style="margin-bottom:16px">
-      Estos precios se usan para calcular el valor del stock al cierre de cada campaña.
-      Las madres y toros se valorizan por cabeza; los terneros por kg vivo × precio.
+      Usados para valorizar el stock en el Dashboard. <strong>Por cabeza:</strong> vaca, toro, torito. <strong>Por kg × peso promedio:</strong> el resto.
     </p>
-    <div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.04em;margin-bottom:8px">🐄 Cría</div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.04em;margin-bottom:8px">🐄 Por cabeza</div>
       <div class="fgrid">
-        <div class="fg"><label>Vientres ($ / cabeza)</label><input type="number" id="pv-cria-vientres" value="${p.cria_vientres||''}" placeholder="Ej: 900000" min="0" step="1000"></div>
-        <div class="fg"><label>Toros ($ / cabeza)</label><input type="number" id="pv-cria-toros" value="${p.cria_toros||''}" placeholder="Ej: 2500000" min="0" step="1000"></div>
-        <div class="fg"><label>Terneros machos ($ / kg vivo)</label><input type="number" id="pv-cria-terneros-m" value="${p.cria_terneros_m||''}" placeholder="Ej: 3200" min="0" step="10"></div>
-        <div class="fg"><label>Terneras hembras ($ / kg vivo)</label><input type="number" id="pv-cria-terneros-h" value="${p.cria_terneros_h||''}" placeholder="Ej: 2900" min="0" step="10"></div>
+        ${field('pv-vaca',   '🐄 Vaca reproductora ($/cab)',  p.vaca,   'Ej: 900000',  1000)}
+        ${field('pv-toro',   '🐂 Toro ($/cab)',               p.toro,   'Ej: 2500000', 1000)}
+        ${field('pv-torito', '🐃 Torito ($/cab)',             p.torito, 'Ej: 1800000', 1000)}
       </div>
     </div>
-    <div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.04em;margin-bottom:8px">🐃 Recría</div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">⚖️ Por kg vivo</div>
       <div class="fgrid">
-        <div class="fg"><label>Novillos / vaquillonas ($ / kg vivo)</label><input type="number" id="pv-recria-kg" value="${p.recria_kg||''}" placeholder="Ej: 3100" min="0" step="10"></div>
+        ${field('pv-ternero',          '🐮 Ternero macho ($/kg)',      p.ternero,          'Ej: 3200', 10)}
+        ${field('pv-ternera',          '🐮 Ternera hembra ($/kg)',     p.ternera,          'Ej: 2900', 10)}
+        ${field('pv-vaquillona',       '🐄 Vaquillona ($/kg)',         p.vaquillona,       'Ej: 3000', 10)}
+        ${field('pv-vaquillona-venta', '🐄 Vaquillona venta ($/kg)',   p.vaquillona_venta, 'Ej: 3000', 10)}
+        ${field('pv-novillito',        '🐂 Novillito ($/kg)',          p.novillito,        'Ej: 3100', 10)}
+        ${field('pv-novillo',          '🥩 Novillo ($/kg)',            p.novillo,          'Ej: 3400', 10)}
+        ${field('pv-vaca-venta',       '🐄 Vaca venta ($/kg)',         p.vaca_venta,       'Ej: 2500', 10)}
       </div>
     </div>
-    <div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">🥩 Engorde</div>
-      <div class="fgrid">
-        <div class="fg"><label>Novillos / vaquillonas ($ / kg vivo)</label><input type="number" id="pv-engorde-kg" value="${p.engorde_kg||''}" placeholder="Ej: 3500" min="0" step="10"></div>
-      </div>
-    </div>
+
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
       <button class="btn btn-primary btn-sm" onclick="window.preciosValGuardar_()">💾 Guardar precios</button>
       <span id="pv-msg" style="font-size:13px;color:var(--green)"></span>
@@ -5932,13 +5971,18 @@ function buildPreciosValPanel_() {
 
 function attachConfigEvents() {
   window.preciosValGuardar_ = function() {
+    const g = id => Number(document.getElementById(id)?.value) || 0;
     const p = {
-      cria_vientres:   Number(document.getElementById('pv-cria-vientres')?.value) || 0,
-      cria_toros:      Number(document.getElementById('pv-cria-toros')?.value) || 0,
-      cria_terneros_m: Number(document.getElementById('pv-cria-terneros-m')?.value) || 0,
-      cria_terneros_h: Number(document.getElementById('pv-cria-terneros-h')?.value) || 0,
-      recria_kg:       Number(document.getElementById('pv-recria-kg')?.value) || 0,
-      engorde_kg:      Number(document.getElementById('pv-engorde-kg')?.value) || 0,
+      vaca:            g('pv-vaca'),
+      toro:            g('pv-toro'),
+      torito:          g('pv-torito'),
+      ternero:         g('pv-ternero'),
+      ternera:         g('pv-ternera'),
+      vaquillona:      g('pv-vaquillona'),
+      vaquillona_venta:g('pv-vaquillona-venta'),
+      novillito:       g('pv-novillito'),
+      novillo:         g('pv-novillo'),
+      vaca_venta:      g('pv-vaca-venta'),
     };
     preciosValSave_(p);
     const msg = document.getElementById('pv-msg');
@@ -6054,30 +6098,45 @@ function openEditModal(entity, idCol, id) {
   const items = S.cache[entity] || [];
   const item = items.find(i => String(i[idCol]) === String(id));
   if (!item) { toast('No se encontró el registro.', 'err'); return; }
+  // Para Saldo inicial: asegurarse que precio_cabeza siempre esté disponible para editar
+  if (entity === 'movimientos' && item.tipo === 'Saldo inicial' && !('precio_cabeza' in item)) {
+    item.precio_cabeza = 0;
+  }
   const keys = Object.keys(item).filter(k => k !== idCol);
   const rodeosL = rodeosTodos();
   const camposL = (S.catalogs && S.catalogs.campos) || [];
+
+  // Etiquetas amigables para el modal de edición
+  const FIELD_LABELS_ = {
+    tipo: 'Tipo', caravana: 'Caravana', fecha: 'Fecha', fecha_salida: 'Fecha salida',
+    campo_origen_id: 'Campo origen', campo_destino_id: 'Campo destino',
+    rodeo_origen_id: 'Rodeo origen', rodeo_destino_id: 'Rodeo destino',
+    cantidad: 'Cantidad', observaciones: 'Observación', precio_cabeza: '💲 Precio por cabeza ($)',
+    cant_animales: 'Cantidad animales', comprador: 'Comprador', peso_campo_kg: 'Kg campo',
+    precio_pactado: '$/kg pactado', campana: 'Campaña', estado: 'Estado',
+  };
 
   let fieldsHtml = '';
   keys.forEach(k => {
     const type = fieldInputType_(k, item[k]);
     const fid = 'edit-' + k;
+    const labelText = FIELD_LABELS_[k] || k;
     if (type === 'rodeo') {
-      fieldsHtml += `<div class="fg"><label>${k}</label>
+      fieldsHtml += `<div class="fg"><label>${labelText}</label>
         <select id="${fid}">${rodeosL.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(item[k])?'selected':''}>${r.nombre}</option>`).join('')}</select></div>`;
     } else if (type === 'campo') {
-      fieldsHtml += `<div class="fg"><label>${k}</label>
+      fieldsHtml += `<div class="fg"><label>${labelText}</label>
         <select id="${fid}"><option value="">—</option>${camposL.map(c => `<option value="${c.campo_id}" ${String(c.campo_id)===String(item[k])?'selected':''}>${c.nombre}</option>`).join('')}</select></div>`;
     } else if (type === 'boolean') {
       const esTrue = esPorCampo_(item[k]);
-      fieldsHtml += `<div class="fg"><label>${k}</label>
+      fieldsHtml += `<div class="fg"><label>${labelText}</label>
         <select id="${fid}"><option value="true" ${esTrue?'selected':''}>Sí</option><option value="false" ${!esTrue?'selected':''}>No</option></select></div>`;
     } else if (type === 'date') {
-      fieldsHtml += `<div class="fg"><label>${k}</label><input type="date" id="${fid}" value="${item[k]||''}"></div>`;
+      fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="date" id="${fid}" value="${item[k]||''}"></div>`;
     } else if (type === 'number') {
-      fieldsHtml += `<div class="fg"><label>${k}</label><input type="number" id="${fid}" value="${item[k]!=null?item[k]:''}"></div>`;
+      fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="number" id="${fid}" value="${item[k]!=null?item[k]:''}"></div>`;
     } else {
-      fieldsHtml += `<div class="fg"><label>${k}</label><input type="text" id="${fid}" value="${(item[k]!=null?item[k]:'').toString().replace(/"/g,'&quot;')}"></div>`;
+      fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="text" id="${fid}" value="${(item[k]!=null?item[k]:'').toString().replace(/"/g,'&quot;')}"></div>`;
     }
   });
 
