@@ -1280,6 +1280,19 @@ function buildDashboard() {
     return h;
   }
 
+  // Selector de campo
+  const campSelecField = S._dashCampo || '';
+  const camposFiltro = [{ campo_id: '', nombre: 'Todos los campos' }, ...campos];
+  h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+    <div style="font-size:13px;font-weight:600">Campo:</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${camposFiltro.map(c=>`
+        <button class="btn ${String(c.campo_id)===String(campSelecField)?'btn-primary':'btn-secondary'} btn-sm"
+          onclick="S._dashCampo='${c.campo_id}';render()">${c.nombre}</button>
+      `).join('')}
+    </div>
+  </div>`;
+
   // Advertencia si faltan precios de valorización
   const precios = preciosValGet_();
   const haPrecios = Object.values(precios).some(v => v > 0);
@@ -1294,8 +1307,12 @@ function buildDashboard() {
   }
 
   // ── INGRESOS ────────────────────────────────────────────────────────
+  // Filtrar rodeos de Cría por campo si hay selección
+  const rodeosCriaFilt = campSelecField
+    ? rodeosCria.filter(r => String(r.campo_id) === String(campSelecField))
+    : rodeosCria;
   // 1. Ventas de la campaña (rodeos de Cría)
-  const rodeosCriaIds = new Set(rodeosCria.map(r=>String(r.rodeo_id)));
+  const rodeosCriaIds = new Set(rodeosCriaFilt.map(r=>String(r.rodeo_id)));
   const ventasCria = ventas.filter(v => v.campana === campSelec && rodeosCriaIds.has(String(v.rodeo_id)));
   const totalVentas = ventasCria.reduce((s,v) => s + (Number(v.importe_liq)||0), 0);
 
@@ -1336,7 +1353,7 @@ function buildDashboard() {
 
   let stockValCria = 0;
   const stockDetalleRows = [];
-  rodeosCria.forEach(r => {
+  rodeosCriaFilt.forEach(r => {
     const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
     if (!stock) return;
     const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -1349,17 +1366,22 @@ function buildDashboard() {
   const totalIngresos = totalVentas + totalCesiones + stockValCria;
 
   // ── EGRESOS ─────────────────────────────────────────────────────────
-  // 1. Stock inicial (saldos iniciales de rodeos Cría)
-  const saldosIniciales = movs.filter(m => m.tipo==='Saldo inicial' && rodeosCriaIds.has(String(m.rodeo_destino_id)));
+  // 1. Stock inicial (saldos iniciales de rodeos Cría, filtrado por campo)
+  const saldosIniciales = movs.filter(m => {
+    if (m.tipo !== 'Saldo inicial') return false;
+    if (!rodeosCriaIds.has(String(m.rodeo_destino_id))) return false;
+    if (campSelecField && String(m.campo_destino_id) !== String(campSelecField)) return false;
+    return true;
+  });
   const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
 
   // 2. Compras hacienda de la campaña (rodeos Cría)
-  const comprasCria = comprasH.filter(c => c.campana===campSelec);
+  const comprasCria = comprasH.filter(c => c.campana===campSelec && (!campSelecField || String(c.campo_id)===String(campSelecField)));
   const totalCompras = comprasCria.reduce((s,c) => s+(Number(c.importe_total)||0), 0);
 
   // 3. Insumos consumidos campaña (alimentación y veterinaria) en rodeos Cría
   const prodPorId = Object.fromEntries((productos||[]).map(p=>[String(p.producto_id),p]));
-  const consumosCria = consumos.filter(c => c.campana===campSelec && rodeosCriaIds.has(String(c.rodeo_id)));
+  const consumosCria = consumos.filter(c => c.campana===campSelec && rodeosCriaIds.has(String(c.rodeo_id)) && (!campSelecField || String(c.campo_id)===String(campSelecField)));
   let totalAlim = 0, totalVeter = 0, totalOtrosIns = 0;
   consumosCria.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
@@ -1372,8 +1394,10 @@ function buildDashboard() {
     else totalOtrosIns += cant;
   });
 
-  // 4. Sueldos imputados a Cría
-  const totalSueldosCria = sueldoTotalActividad_('cria');
+  // 4. Sueldos imputados a Cría (filtrado por campo si corresponde)
+  const totalSueldosCria = campSelecField
+    ? sueldoTotalActividad_('cria', s => String(s.campo_id) === String(campSelecField))
+    : sueldoTotalActividad_('cria');
 
   const totalEgresos = totalSaldoInicial + totalCompras + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
@@ -1384,7 +1408,7 @@ function buildDashboard() {
 
     <!-- INGRESOS -->
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — Campaña ${campSelec}</div>
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -1416,7 +1440,7 @@ function buildDashboard() {
 
     <!-- EGRESOS -->
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — Campaña ${campSelec}</div>
+      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
