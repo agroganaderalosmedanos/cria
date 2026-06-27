@@ -502,6 +502,12 @@ async function goto(page) {
     if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); S.dashboardError = err.message; render(); });
   }
+  if (page === 'indices_reproduccion') {
+    if (!S.dashboard) {
+      const t = setTimeout(() => render(), 300);
+      loadDashboard().then(() => { clearTimeout(t); render(); }).catch(() => { clearTimeout(t); render(); });
+    }
+  }
   if (page === 'movimientos') {
     // Cargar todo en paralelo para evitar múltiples re-renders
     const movPromises = [];
@@ -780,6 +786,7 @@ function attachPageEvents(page) {
 // ÍNDICES DE REPRODUCCIÓN (antes era el "Resumen Cría" del panel)
 // ══════════════════════════════════════════════════════════════════════
 function buildIndicesReproduccion() {
+  if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Cargando índices…</div>';
   if (S.dashboardError) return `<div class="empty-state"><span class="ico">⚠</span><div class="msg">Error: ${S.dashboardError}<br><br><button class="btn btn-secondary" onclick="S.dashboardError=null;S.dashboard=null;render()">Reintentar</button></div></div>`;
   if (!S.dashboard) return '<div class="loader"><div class="spinner"></div>Calculando índices…</div>';
   const g = S.dashboard.general;
