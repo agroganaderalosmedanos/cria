@@ -3482,8 +3482,17 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     const kgStk   = egKgStockEstimado_(rid);
     const kgG     = egKgGanadosHastaPesada_(rid);
     const gdp     = egGanDiaria_(rid);
-    const costoAlim = egCostoAlim_(rid);
-    const costoVet  = egCostoAlim_(rid, null, "Veterinaria");
+    // Costos precalculados para este rodeo (evita llamadas múltiples a egCostoAlim_)
+    const consumosRodeo = consumos.filter(c=>String(c.rodeo_id)===String(rid));
+    let costoAlim=0, costoVet=0;
+    consumosRodeo.forEach(c=>{
+      const pid=String(c.producto_id);
+      const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
+      const imp=(Number(c.cantidad)||0)*precioU;
+      const cat=(prodPorId[pid]?.categoria||'').toLowerCase();
+      if(cat.includes('veterin')||cat.includes('sanid')) costoVet+=imp;
+      else costoAlim+=imp;
+    });
     const ingVentas = egIngVentas_(rid);
     const ivStk     = valorizarRodeo_(r, egStock_(rid), egPesadas_(rid).slice(-1)[0]?.peso_prom_kg||0);
     const resultado = ingVentas + ivStk - costoAlim - costoVet;
