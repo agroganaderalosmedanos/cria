@@ -3340,6 +3340,7 @@ function egDiasEngorde_(rodeoId) {
 
 function buildEngordeDashboard_(rodeosEng, fm) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde. Creá rodeos con actividad "Engorde" en la hoja Rodeos.</div></div>';
+  const moneda = S.engordeMoneda || 'ARS';
 
   const campanas = [...new Set([
     ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
