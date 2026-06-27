@@ -865,7 +865,6 @@ function buildIndicesReproduccion() {
   const criaTabs2 = [
     { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
-    { k: 'compras_hacienda',     icon: '🛒', label: 'Compras de hacienda' },
     { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
     { k: 'tactos',               icon: '◔',  label: 'Tactos' },
     { k: 'abortos',              icon: '⊘',  label: 'Abortos' },
@@ -973,24 +972,8 @@ function buildComprasHacienda() {
   const totalCabezas = compras.reduce((s,c)=>s+(Number(c.cantidad)||0),0);
   const totalImporte = compras.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
 
-  const _criaTabs3 = [
-    { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
-    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
-    { k: 'compras_hacienda',     icon: '🛒', label: 'Compras de hacienda' },
-    { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
-    { k: 'tactos',               icon: '◔',  label: 'Tactos' },
-    { k: 'abortos',              icon: '⊘',  label: 'Abortos' },
-    { k: 'pariciones',           icon: '✦',  label: 'Pariciones' },
-    { k: 'destetes',             icon: '⊞',  label: 'Destetes' },
-  ];
   let h = `<div class="page-header">
-    <div class="page-title">Cría</div>
-    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-      ${_criaTabs3.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
-    </div>
-  </div>`;
-  h += `<div class="page-header" style="padding-top:0;margin-top:-8px">
-    <div class="page-title" style="font-size:20px">🛒 Compras de Hacienda</div>
+    <div class="page-title">🛒 Compras de Hacienda</div>
     <div class="page-sub">Incorporación de animales al establecimiento</div>
   </div>`;
 
@@ -1368,7 +1351,6 @@ function buildDashboard() {
   const criaTabs = [
     { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
-    { k: 'compras_hacienda',     icon: '🛒', label: 'Compras de hacienda' },
     { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
     { k: 'tactos',               icon: '◔',  label: 'Tactos' },
     { k: 'abortos',              icon: '⊘',  label: 'Abortos' },
