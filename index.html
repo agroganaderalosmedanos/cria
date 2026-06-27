@@ -1502,7 +1502,7 @@ function buildDashboard() {
       </tr></thead><tbody>`;
     stockDetalleRows.forEach(row => {
       const cat = (row.rodeo.categoria||'').toLowerCase().trim();
-      const metodo = CATS_POR_CABEZA_.includes(cat) ? 'por cabeza' : 'por kg';
+      const metodo = metodoValorizacion_(row.rodeo, row.pesoP);
       h += `<tr>
         <td><strong>${row.rodeo.nombre}</strong></td>
         <td>${campoNombre(row.rodeo.campo_id)}</td>
@@ -6333,24 +6333,47 @@ function valorizarRodeo_(rodeo, stock, pesadaProm) {
   const cant = Number(stock) || 0;
   if (!cant) return 0;
   if (CATS_POR_CABEZA_.includes(cat)) {
-    // precio por cabeza según categoría
-    const precio = cat === 'toro' ? (p.toro || 0)
+    const precio = cat === 'toro'   ? (p.toro   || 0)
                  : cat === 'torito' ? (p.torito || 0)
-                 : (p.vaca || 0); // vaca
+                 : (p.vaca || 0);
     return cant * precio;
   }
   // precio por kg
   const kg = Number(pesadaProm) || 0;
-  if (!kg) return 0;
-  const precio = cat === 'ternero'          ? (p.ternero || 0)
-               : cat === 'ternera'          ? (p.ternera || 0)
-               : cat === 'vaquillona'       ? (p.vaquillona || 0)
-               : cat === 'vaquillona venta' ? (p.vaquillona_venta || 0)
-               : cat === 'novillito'        ? (p.novillito || 0)
-               : cat === 'novillo'          ? (p.novillo || 0)
-               : cat === 'vaca venta'       ? (p.vaca_venta || 0)
-               : 0;
-  return cant * kg * precio;
+  const precioPorKg = cat === 'ternero'          ? (p.ternero          || 0)
+                    : cat === 'ternera'          ? (p.ternera          || 0)
+                    : cat === 'vaquillona'       ? (p.vaquillona       || 0)
+                    : cat === 'vaquillona venta' ? (p.vaquillona_venta || 0)
+                    : cat === 'novillito'        ? (p.novillito        || 0)
+                    : cat === 'novillo'          ? (p.novillo          || 0)
+                    : cat === 'vaca venta'       ? (p.vaca_venta       || 0)
+                    : 0;
+  if (kg && precioPorKg) return cant * kg * precioPorKg;
+
+  // Fallback: precio por cabeza si no hay pesada
+  const precioCab = cat === 'ternero'          ? (p.ternero_cab          || 0)
+                  : cat === 'ternera'          ? (p.ternera_cab          || 0)
+                  : cat === 'vaquillona'       ? (p.vaquillona_cab       || 0)
+                  : cat === 'vaquillona venta' ? (p.vaquillona_venta_cab || 0)
+                  : cat === 'novillito'        ? (p.novillito_cab        || 0)
+                  : cat === 'novillo'          ? (p.novillo_cab          || 0)
+                  : cat === 'vaca venta'       ? (p.vaca_venta_cab       || 0)
+                  : 0;
+  return cant * precioCab;
+}
+
+// Retorna el método de valorización usado para mostrar en tabla
+function metodoValorizacion_(rodeo, pesadaProm) {
+  const p = preciosValGet_();
+  const cat = (rodeo.categoria || '').toLowerCase().trim();
+  if (CATS_POR_CABEZA_.includes(cat)) return 'por cabeza';
+  const kg = Number(pesadaProm) || 0;
+  const precioPorKg = cat === 'ternero' ? p.ternero : cat === 'ternera' ? p.ternera
+    : cat === 'vaquillona' ? p.vaquillona : cat === 'vaquillona venta' ? p.vaquillona_venta
+    : cat === 'novillito' ? p.novillito : cat === 'novillo' ? p.novillo
+    : cat === 'vaca venta' ? p.vaca_venta : 0;
+  if (kg && precioPorKg) return 'por kg';
+  return 'por cabeza (sin pesada)';
 }
 
 function buildPreciosValPage() {
@@ -6444,14 +6467,25 @@ function buildPreciosValPanel_() {
 
     <div style="margin-bottom:16px">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">⚖️ Por kg vivo</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Si un rodeo no tiene pesada cargada, se usa el precio por cabeza como respaldo.</div>
       <div class="fgrid">
-        ${field('pv-ternero',          '🐮 Ternero macho ($/kg)',     p.ternero,          'Ej: 3200', 10)}
-        ${field('pv-ternera',          '🐮 Ternera hembra ($/kg)',    p.ternera,          'Ej: 2900', 10)}
-        ${field('pv-vaquillona',       '🐄 Vaquillona ($/kg)',        p.vaquillona,       'Ej: 3000', 10)}
-        ${field('pv-vaquillona-venta', '🐄 Vaquillona venta ($/kg)',  p.vaquillona_venta, 'Ej: 3000', 10)}
-        ${field('pv-novillito',        '🐂 Novillito ($/kg)',         p.novillito,        'Ej: 3100', 10)}
-        ${field('pv-novillo',          '🥩 Novillo ($/kg)',           p.novillo,          'Ej: 3400', 10)}
-        ${field('pv-vaca-venta',       '🐄 Vaca venta ($/kg)',        p.vaca_venta,       'Ej: 2500', 10)}
+        <div class="fg" style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr 1fr;gap:8px">
+          <div style="font-size:10px;font-weight:700;color:var(--text2);padding-bottom:4px">Categoría</div>
+          <div style="font-size:10px;font-weight:700;color:var(--clay-text);padding-bottom:4px">$/kg</div>
+          <div style="font-size:10px;font-weight:700;color:var(--gold-text);padding-bottom:4px">$/cab (sin pesada)</div>
+        </div>
+        ${[
+          ['ternero',          'pv-ternero',          'pv-ternero-cab',          '🐮 Ternero macho',    p.ternero,          p.ternero_cab],
+          ['ternera',          'pv-ternera',          'pv-ternera-cab',          '🐮 Ternera hembra',   p.ternera,          p.ternera_cab],
+          ['vaquillona',       'pv-vaquillona',       'pv-vaquillona-cab',       '🐄 Vaquillona',       p.vaquillona,       p.vaquillona_cab],
+          ['vaquillona_venta', 'pv-vaquillona-venta', 'pv-vaquillona-venta-cab', '🐄 Vaquillona venta', p.vaquillona_venta, p.vaquillona_venta_cab],
+          ['novillito',        'pv-novillito',        'pv-novillito-cab',        '🐂 Novillito',        p.novillito,        p.novillito_cab],
+          ['novillo',          'pv-novillo',          'pv-novillo-cab',          '🥩 Novillo',          p.novillo,          p.novillo_cab],
+          ['vaca_venta',       'pv-vaca-venta',       'pv-vaca-venta-cab',       '🐄 Vaca venta',       p.vaca_venta,       p.vaca_venta_cab],
+        ].map(([,idKg,idCab,label,valKg,valCab])=>`
+          <div class="fg"><label>${label} ($/kg)</label><input type="number" id="${idKg}" value="${valKg||''}" placeholder="Ej: 3200" min="0" step="10"></div>
+          <div class="fg"><label>${label} ($/cab sin pesada)</label><input type="number" id="${idCab}" value="${valCab||''}" placeholder="Ej: 450000" min="0" step="1000"></div>
+        `).join('')}
       </div>
     </div>
 
@@ -6475,6 +6509,10 @@ function attachPreciosValEvents() {
       ternero: g('pv-ternero'), ternera: g('pv-ternera'),
       vaquillona: g('pv-vaquillona'), vaquillona_venta: g('pv-vaquillona-venta'),
       novillito: g('pv-novillito'), novillo: g('pv-novillo'), vaca_venta: g('pv-vaca-venta'),
+      ternero_cab: g('pv-ternero-cab'), ternera_cab: g('pv-ternera-cab'),
+      vaquillona_cab: g('pv-vaquillona-cab'), vaquillona_venta_cab: g('pv-vaquillona-venta-cab'),
+      novillito_cab: g('pv-novillito-cab'), novillo_cab: g('pv-novillo-cab'),
+      vaca_venta_cab: g('pv-vaca-venta-cab'),
     };
     try {
       const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
