@@ -6154,12 +6154,43 @@ function attachCotizacionEvents() {
 
 
 // ── Precios de valorización por actividad (localStorage) ──────────────
-function preciosValGet_() {
-  // Lee de S.catalogs.precios_valorizacion (Sheets)
-  const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
-  const obj = {};
-  lista.forEach(p => { obj[p.categoria] = Number(p.precio) || 0; });
-  return obj;
+// Retorna los precios vigentes a una fecha dada (YYYY-MM-DD o YYYY-MM)
+// Si no se pasa fecha, usa el registro más reciente
+function preciosValGet_(fecha) {
+  const lista = ((S.catalogs && S.catalogs.precios_valorizacion) || [])
+    .filter(p => p.fecha)
+    .sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+  if (!lista.length) return {};
+  let row;
+  if (fecha) {
+    const f = String(fecha).slice(0,7);
+    row = lista.find(p => String(p.fecha).slice(0,7) <= f) || lista[0];
+  } else {
+    row = lista[0];
+  }
+  return {
+    vaca:             Number(row.vaca)             || 0,
+    toro:             Number(row.toro)             || 0,
+    torito:           Number(row.torito)           || 0,
+    ternero:          Number(row.ternero)          || 0,
+    ternera:          Number(row.ternera)          || 0,
+    vaquillona:       Number(row.vaquillona)       || 0,
+    vaquillona_venta: Number(row.vaquillona_venta) || 0,
+    novillito:        Number(row.novillito)        || 0,
+    novillo:          Number(row.novillo)          || 0,
+    vaca_venta:       Number(row.vaca_venta)       || 0,
+    _fecha: row.fecha,
+  };
+}
+
+// Verifica si hay precios para un período dado, retorna null si no hay
+function preciosValParaPeriodo_(periodo) {
+  const lista = ((S.catalogs && S.catalogs.precios_valorizacion) || [])
+    .filter(p => p.fecha)
+    .sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+  if (!lista.length) return null;
+  const f = String(periodo).slice(0,7);
+  return lista.find(p => String(p.fecha).slice(0,7) <= f) || null;
 }
 
 function buildConfig() {
@@ -6217,24 +6248,81 @@ function valorizarRodeo_(rodeo, stock, pesadaProm) {
 }
 
 function buildPreciosValPage() {
-  return `<div class="page-header">
+  const lista = ((S.catalogs && S.catalogs.precios_valorizacion) || [])
+    .filter(p => p.fecha)
+    .sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+  const vigente = lista[0] || null;
+  const mesActual = today().slice(0,7);
+  const hayMesActual = lista.some(p => String(p.fecha).slice(0,7) === mesActual);
+
+  let h = `<div class="page-header">
     <div class="page-title">💲 Precios de valorización</div>
-    <div class="page-sub">Precios usados para valorizar el stock en los dashboards</div>
-  </div>` + buildPreciosValPanel_();
+    <div class="page-sub">Un registro por mes — el sistema usa el más reciente al generar informes</div>
+  </div>`;
+
+  if (!hayMesActual) {
+    h += `<div style="background:var(--gold-bg);border:1px solid var(--gold);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;align-items:center">
+      <span style="font-size:20px">⚠️</span>
+      <div>
+        <div style="font-weight:600;color:var(--gold-text)">Sin precios para ${mesActual}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">
+          ${vigente ? 'Se usarán los precios de ' + String(vigente.fecha).slice(0,7) + ' hasta que cargues los de este mes.' : 'No hay precios cargados. Cargá los precios para poder generar informes valorizados.'}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  h += buildPreciosValPanel_();
+
+  // Historial
+  if (lista.length > 0) {
+    h += `<div class="panel">
+      <div class="panel-title">📋 Historial de precios</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Período</th>
+        <th class="tr">🐄 Vaca</th><th class="tr">🐂 Toro</th><th class="tr">🐃 Torito</th>
+        <th class="tr">Ternero</th><th class="tr">Ternera</th>
+        <th class="tr">Vaquillona</th><th class="tr">Vaq. venta</th>
+        <th class="tr">Novillito</th><th class="tr">Novillo</th><th class="tr">Vaca venta</th>
+        <th></th>
+      </tr></thead><tbody>`;
+    lista.forEach((p, i) => {
+      const esMesActual = String(p.fecha).slice(0,7) === mesActual;
+      h += `<tr ${esMesActual ? 'style="background:var(--green-bg)"' : ''}>
+        <td><strong>${String(p.fecha).slice(0,7)}</strong>${esMesActual ? ' <span style="font-size:10px;background:var(--green);color:#fff;padding:1px 6px;border-radius:20px">VIGENTE</span>' : i===0&&!esMesActual?' <span style="font-size:10px;background:var(--gold-bg);color:var(--gold-text);padding:1px 6px;border-radius:20px">MÁS RECIENTE</span>':''}</td>
+        <td class="tr">${p.vaca ? '$ '+fn(p.vaca) : '—'}</td>
+        <td class="tr">${p.toro ? '$ '+fn(p.toro) : '—'}</td>
+        <td class="tr">${p.torito ? '$ '+fn(p.torito) : '—'}</td>
+        <td class="tr">${p.ternero ? '$ '+fn(p.ternero) : '—'}</td>
+        <td class="tr">${p.ternera ? '$ '+fn(p.ternera) : '—'}</td>
+        <td class="tr">${p.vaquillona ? '$ '+fn(p.vaquillona) : '—'}</td>
+        <td class="tr">${p.vaquillona_venta ? '$ '+fn(p.vaquillona_venta) : '—'}</td>
+        <td class="tr">${p.novillito ? '$ '+fn(p.novillito) : '—'}</td>
+        <td class="tr">${p.novillo ? '$ '+fn(p.novillo) : '—'}</td>
+        <td class="tr">${p.vaca_venta ? '$ '+fn(p.vaca_venta) : '—'}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="window.preciosValEliminar_('${p.precio_id}')">🗑</button></td>
+      </tr>`;
+    });
+    h += '</tbody></table></div></div>';
+  }
+  return h;
 }
 
 function buildPreciosValPanel_() {
-  const p = preciosValGet_();
+  const mesActual = today().slice(0,7);
+  const p = preciosValGet_() || {};
 
   function field(id, label, val, ph, step) {
     return `<div class="fg"><label>${label}</label><input type="number" id="${id}" value="${val||''}" placeholder="${ph}" min="0" step="${step||100}"></div>`;
   }
 
   return `<div class="panel">
-    <div class="panel-title">💲 Precios de valorización de stock</div>
-    <p class="helper-text" style="margin-bottom:16px">
-      Usados para valorizar el stock en el Dashboard. <strong>Por cabeza:</strong> vaca, toro, torito. <strong>Por kg × peso promedio:</strong> el resto.
-    </p>
+    <div class="panel-title">➕ Cargar precios del mes</div>
+    <div style="margin-bottom:14px">
+      <label>Período</label>
+      <input type="month" id="pv-fecha" value="${mesActual}" style="max-width:180px;display:block;margin-top:4px">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Los campos se precargan con los valores más recientes — modificá lo que cambió.</div>
+    </div>
 
     <div style="margin-bottom:16px">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.04em;margin-bottom:8px">🐄 Por cabeza</div>
@@ -6248,18 +6336,18 @@ function buildPreciosValPanel_() {
     <div style="margin-bottom:16px">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">⚖️ Por kg vivo</div>
       <div class="fgrid">
-        ${field('pv-ternero',          '🐮 Ternero macho ($/kg)',      p.ternero,          'Ej: 3200', 10)}
-        ${field('pv-ternera',          '🐮 Ternera hembra ($/kg)',     p.ternera,          'Ej: 2900', 10)}
-        ${field('pv-vaquillona',       '🐄 Vaquillona ($/kg)',         p.vaquillona,       'Ej: 3000', 10)}
-        ${field('pv-vaquillona-venta', '🐄 Vaquillona venta ($/kg)',   p.vaquillona_venta, 'Ej: 3000', 10)}
-        ${field('pv-novillito',        '🐂 Novillito ($/kg)',          p.novillito,        'Ej: 3100', 10)}
-        ${field('pv-novillo',          '🥩 Novillo ($/kg)',            p.novillo,          'Ej: 3400', 10)}
-        ${field('pv-vaca-venta',       '🐄 Vaca venta ($/kg)',         p.vaca_venta,       'Ej: 2500', 10)}
+        ${field('pv-ternero',          '🐮 Ternero macho ($/kg)',     p.ternero,          'Ej: 3200', 10)}
+        ${field('pv-ternera',          '🐮 Ternera hembra ($/kg)',    p.ternera,          'Ej: 2900', 10)}
+        ${field('pv-vaquillona',       '🐄 Vaquillona ($/kg)',        p.vaquillona,       'Ej: 3000', 10)}
+        ${field('pv-vaquillona-venta', '🐄 Vaquillona venta ($/kg)',  p.vaquillona_venta, 'Ej: 3000', 10)}
+        ${field('pv-novillito',        '🐂 Novillito ($/kg)',         p.novillito,        'Ej: 3100', 10)}
+        ${field('pv-novillo',          '🥩 Novillo ($/kg)',           p.novillo,          'Ej: 3400', 10)}
+        ${field('pv-vaca-venta',       '🐄 Vaca venta ($/kg)',        p.vaca_venta,       'Ej: 2500', 10)}
       </div>
     </div>
 
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-      <button class="btn btn-primary btn-sm" onclick="window.preciosValGuardar_()">💾 Guardar precios</button>
+      <button class="btn btn-primary btn-sm" id="pv-guardar-btn" onclick="this.disabled=true;this.textContent='⏳ Guardando…';window.preciosValGuardar_()">💾 Guardar precios del mes</button>
       <span id="pv-msg" style="font-size:13px;color:var(--green)"></span>
     </div>
   </div>`;
@@ -6268,7 +6356,13 @@ function buildPreciosValPanel_() {
 function attachConfigEvents() {
   window.preciosValGuardar_ = async function() {
     const g = id => Number(document.getElementById(id)?.value) || 0;
-    const precios = {
+    const fecha = document.getElementById('pv-fecha')?.value || today().slice(0,7);
+    const btn = document.getElementById('pv-guardar-btn');
+    const msg = document.getElementById('pv-msg');
+    const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent='💾 Guardar precios del mes'; } };
+
+    const data = {
+      fecha: fecha + '-01', // guardar como fecha completa
       vaca:             g('pv-vaca'),
       toro:             g('pv-toro'),
       torito:           g('pv-torito'),
@@ -6280,23 +6374,31 @@ function attachConfigEvents() {
       novillo:          g('pv-novillo'),
       vaca_venta:       g('pv-vaca-venta'),
     };
-    const msg = document.getElementById('pv-msg');
+
     try {
-      const existing = (S.catalogs && S.catalogs.precios_valorizacion) || [];
-      // Upsert cada categoría
-      for (const [categoria, precio] of Object.entries(precios)) {
-        const metodo = ['vaca','toro','torito'].includes(categoria) ? 'cabeza' : 'kg';
-        const rec = existing.find(p => p.categoria === categoria);
-        const data = { categoria, precio, metodo, fecha_actualizacion: today() };
-        if (rec) {
-          await apiCall('update', { body: { entity: 'precios_valorizacion', id: rec.precio_id, data: { ...rec, ...data } } });
-        } else {
-          await apiCall('create', { body: { entity: 'precios_valorizacion', data } });
-        }
+      const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
+      const existing = lista.find(p => String(p.fecha).slice(0,7) === fecha);
+      if (existing) {
+        await apiCall('update', { body: { entity: 'precios_valorizacion', id: existing.precio_id, data: { ...existing, ...data } } });
+        toast('Precios de ' + fecha + ' actualizados', 'ok');
+      } else {
+        await apiCall('create', { body: { entity: 'precios_valorizacion', data } });
+        toast('Precios de ' + fecha + ' guardados', 'ok');
       }
       await loadCatalogs();
-      if(msg) { msg.textContent = '✅ Precios guardados'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
-      toast('Precios de valorización actualizados', 'ok');
+      resetBtn();
+      if(msg) { msg.textContent = '✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+      render();
+    } catch(err) { resetBtn(); toast('Error: '+err.message, 'err'); }
+  };
+
+  window.preciosValEliminar_ = async function(precio_id) {
+    if (!confirm('¿Eliminar este registro de precios?')) return;
+    try {
+      await apiCall('delete', { body: { entity: 'precios_valorizacion', id: precio_id } });
+      await loadCatalogs();
+      toast('Registro eliminado', 'ok');
+      render();
     } catch(err) { toast('Error: '+err.message, 'err'); }
   };
   document.getElementById('cf-save').onclick = async () => {
