@@ -3942,15 +3942,15 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">💰 Ventas de hacienda</div><div style="font-size:11px;color:var(--text3)">${ventasEng.length} ventas liquidadas</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totalVentas)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totalVentas)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
           <div><div style="font-weight:600">📦 Stock valorizado actual</div><div style="font-size:11px;color:var(--text3)">${stockDetalleRows.length} corrales</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(stockValEng)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(stockValEng)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--green)">$ ${fn(totalIngresos)}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
         </div>
       </div>
     </div>
@@ -3960,35 +3960,35 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🐄 Stock inicial</div><div style="font-size:11px;color:var(--text3)">${saldosIni.length} rodeos × precio/cab</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSaldoIni)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSaldoIni)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cesionesRec.length} traslados valorizados</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCesiones)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesiones)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🛒 Compras de hacienda</div><div style="font-size:11px;color:var(--text3)">${comprasEng.length} compras campaña</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalCompras)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${consumos.length} registros de consumo</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalAlim)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">💉 Veterinaria</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalVeter)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalVeter)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">📦 Otros insumos</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalOtros)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalOtros)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">👤 Sueldos Engorde</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totalSueldosEng)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSueldosEng)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--clay)">$ ${fn(totalEgresos)}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
         </div>
       </div>
     </div>
@@ -4000,7 +4000,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Terminación ${campSelec}${campoLabel}</div>
       <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos</div>
     </div>
-    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}$ ${fn(Math.abs(margen))}</div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
   </div>`;
 
   // ── PRODUCTIVO ──────────────────────────────────────────────────────
