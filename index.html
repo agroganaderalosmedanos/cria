@@ -902,6 +902,69 @@ function buildIndicesReproduccion() {
   const rodeosList = data.rodeos;
   const campos = (S.catalogs && S.catalogs.campos) || [];
 
+  let h = `<div class="page-header">
+    <div class="page-title">📈 Índices de Reproducción</div>
+    <div class="page-sub">Índices de preñez, parición y destete por rodeo</div>
+  </div>`;
+
+  h += '<div class="section-label">Establecimiento — índices generales</div>';
+  h += buildKpiRow(g);
+
+  h += '<div class="section-label">Filtrar por campo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedCampoId ? 'active' : ''}" data-campo=""><div class="rc-name">Todos los campos</div></div>`;
+  campos.forEach(c => {
+    h += `<div class="rodeo-chip ${String(S.selectedCampoId) === String(c.campo_id) ? 'active' : ''}" data-campo="${c.campo_id}"><div class="rc-name">${c.nombre}</div></div>`;
+  });
+  h += '</div>';
+
+  const rodeosFiltrados = (S.selectedCampoId
+    ? rodeosList.filter(r => String(r.rodeo.campo_id) === String(S.selectedCampoId))
+    : rodeosList
+  ).slice().sort((a, b) => {
+    const cmp = campoNombre(a.rodeo.campo_id).localeCompare(campoNombre(b.rodeo.campo_id), 'es', { sensitivity: 'base' });
+    return cmp !== 0 ? cmp : a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
+  });
+
+  if (S.selectedCampoId) {
+    const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
+    h += `<div class="panel"><div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>${buildKpiRow(aggregateKpis_(rodeosFiltrados))}</div>`;
+  }
+
+  h += '<div class="section-label">Por rodeo</div>';
+  h += '<div class="rodeo-strip">';
+  h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo=""><div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
+  rodeosFiltrados.forEach(r => {
+    h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}"><div class="rc-name">${r.rodeo.nombre}</div><div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div></div>`;
+  });
+  h += '</div>';
+
+  if (S.selectedRodeoId) {
+    const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
+    if (sel) h += `<div class="panel"><div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>${buildKpiRow(sel.kpis)}</div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Campo</th>
+      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th>
+      <th class="tc">Nacidos vivos</th><th class="tc">Destetados</th>
+    </tr></thead><tbody>`;
+    rodeosFiltrados.forEach(r => {
+      const k = r.kpis;
+      h += `<tr>
+        <td><strong>${r.rodeo.nombre}</strong></td>
+        <td>${campoNombre(r.rodeo.campo_id)}</td>
+        <td class="tc">${pct(k.servicio.indice_prenez)}</td>
+        <td class="tc">${pct(k.paricion.indice_paricion)}</td>
+        <td class="tc">${pct(k.destete.indice_destete)}</td>
+        <td class="tc">${fn(k.paricion.nacidos_vivos)}</td>
+        <td class="tc">${fn(k.destete.total_destetados)}</td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  return h;
+}
+
 function attachIndicesReproduccionEvents() {
   document.querySelectorAll('[data-campo]').forEach(el => el.onclick = () => {
     S.selectedCampoId = el.dataset.campo || null;
