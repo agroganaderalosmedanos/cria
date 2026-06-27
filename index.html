@@ -3337,17 +3337,29 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const comprasEng = comprasHacGetAll_().filter(c=>c.campana===campSelec&&(!campSelecField||String(c.campo_id)===String(campSelecField)));
   const totalCompras = comprasEng.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
 
-  // Insumos por categoría — usa egCostoAlim_ que ya tiene lógica de costo promedio
-  // Filtramos por rodeos de engorde (sin filtro de campaña en insumos hasta que tengan campaña asignada)
-  let totalAlim=0, totalVeter=0, totalOtros=0;
-  rodeosEngFilt.forEach(r => {
-    totalAlim  += egCostoAlim_(r.rodeo_id, null, 'Alimento');
-    totalVeter += egCostoAlim_(r.rodeo_id, null, 'Veterinaria');
-    // Otros: total - alim - vet
-    const totRodeo = egCostoAlim_(r.rodeo_id);
-    totalOtros += Math.max(0, totRodeo - egCostoAlim_(r.rodeo_id, null, 'Alimento') - egCostoAlim_(r.rodeo_id, null, 'Veterinaria'));
+  // Insumos: precalcular costo promedio por producto una sola vez
+  const comprasInsumos = S.cache.compras_insumos || [];
+  const productosAll   = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+  const prodPorId      = Object.fromEntries(productosAll.map(p=>[String(p.producto_id),p]));
+  const costoProm      = {};
+  comprasInsumos.forEach(c => {
+    const pid = String(c.producto_id);
+    if (!costoProm[pid]) costoProm[pid] = { cant: 0, costo: 0 };
+    costoProm[pid].cant  += Number(c.cantidad)    || 0;
+    costoProm[pid].costo += Number(c.costo_total) || 0;
   });
   const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)));
+  let totalAlim=0, totalVeter=0, totalOtros=0;
+  consumos.forEach(c => {
+    const pid = String(c.producto_id);
+    const cp = costoProm[pid];
+    const precioU = cp && cp.cant > 0 ? cp.costo / cp.cant : 0;
+    const importe = (Number(c.cantidad)||0) * precioU;
+    const cat = (prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    if (cat.includes('aliment'))                              totalAlim  += importe;
+    else if (cat.includes('veterin')||cat.includes('sanid')) totalVeter += importe;
+    else                                                      totalOtros += importe;
+  });
 
   // Sueldos
   const totalSueldosEng = sueldoTotalActividad_('engorde', campSelecField ? s=>String(s.campo_id)===String(campSelecField) : null);
@@ -3482,14 +3494,13 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     const kgStk   = egKgStockEstimado_(rid);
     const kgG     = egKgGanadosHastaPesada_(rid);
     const gdp     = egGanDiaria_(rid);
-    // Costos precalculados para este rodeo (evita llamadas múltiples a egCostoAlim_)
     const consumosRodeo = consumos.filter(c=>String(c.rodeo_id)===String(rid));
     let costoAlim=0, costoVet=0;
     consumosRodeo.forEach(c=>{
       const pid=String(c.producto_id);
       const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
       const imp=(Number(c.cantidad)||0)*precioU;
-      const cat=(prodPorId[pid]?.categoria||'').toLowerCase();
+      const cat=(prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
       if(cat.includes('veterin')||cat.includes('sanid')) costoVet+=imp;
       else costoAlim+=imp;
     });
