@@ -5504,30 +5504,30 @@ function buildSueldos() {
   </div>`;
 
   // KPIs
-  h += `<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:nowrap">
-    <div style="flex:1;background:var(--bg2);border-radius:10px;padding:10px 14px;min-width:0">
-      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:4px">Total histórico</div>
-      <div style="font-size:16px;font-weight:800">${totalMes||totalAnio ? '$ '+fn(sueldos.reduce((s,x)=>s+(Number(x.monto)||0),0)) : '—'}</div>
+  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;flex:1;min-width:0">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Total histórico</div>
+      <div style="font-size:18px;font-weight:700">$ ${fn(sueldos.reduce((s,x)=>s+(Number(x.monto)||0),0))}</div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px">todos los períodos</div>
     </div>
-    <div style="flex:1;background:var(--green-bg);border-radius:10px;padding:10px 14px;min-width:0">
-      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--green-text);margin-bottom:4px">🐄 Cría</div>
-      <div style="font-size:16px;font-weight:800;color:var(--green)">${totCria ? '$ '+fn(totCria) : '—'}</div>
+    <div style="background:var(--green-bg);border-radius:8px;padding:10px 16px;flex:1;min-width:0">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.05em">🐄 Cría</div>
+      <div style="font-size:18px;font-weight:700;color:var(--green)">${totCria ? '$ '+fn(totCria) : '—'}</div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px">acumulado ${anio}</div>
     </div>
-    <div style="flex:1;background:var(--gold-bg);border-radius:10px;padding:10px 14px;min-width:0">
-      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-text);margin-bottom:4px">🐃 Recría</div>
-      <div style="font-size:16px;font-weight:800;color:var(--gold)">${totRecria ? '$ '+fn(totRecria) : '—'}</div>
+    <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px;flex:1;min-width:0">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.05em">🐃 Recría</div>
+      <div style="font-size:18px;font-weight:700;color:var(--gold)">${totRecria ? '$ '+fn(totRecria) : '—'}</div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px">acumulado ${anio}</div>
     </div>
-    <div style="flex:1;background:var(--clay-bg);border-radius:10px;padding:10px 14px;min-width:0">
-      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--clay-text);margin-bottom:4px">🥩 Engorde</div>
-      <div style="font-size:16px;font-weight:800;color:var(--clay)">${totEng ? '$ '+fn(totEng) : '—'}</div>
+    <div style="background:var(--clay-bg);border-radius:8px;padding:10px 16px;flex:1;min-width:0">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.05em">🥩 Engorde</div>
+      <div style="font-size:18px;font-weight:700;color:var(--clay)">${totEng ? '$ '+fn(totEng) : '—'}</div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px">acumulado ${anio}</div>
     </div>
-    <div style="flex:1;background:var(--blue-bg);border-radius:10px;padding:10px 14px;min-width:0">
-      <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--blue-text);margin-bottom:4px">🏗️ Estructura</div>
-      <div style="font-size:16px;font-weight:800;color:var(--blue)">${totEstr ? '$ '+fn(totEstr) : '—'}</div>
+    <div style="background:var(--blue-bg);border-radius:8px;padding:10px 16px;flex:1;min-width:0">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--blue-text);letter-spacing:.05em">🏗️ Estructura</div>
+      <div style="font-size:18px;font-weight:700;color:var(--blue)">${totEstr ? '$ '+fn(totEstr) : '—'}</div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px">acumulado ${anio}</div>
     </div>
   </div>`;
@@ -5718,29 +5718,6 @@ function buildSueldos() {
       h += '</tbody></table></div>';
     });
 
-    // Totales globales
-    h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;padding-top:12px;border-top:2px solid var(--border2)">
-      <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Total histórico</div>
-        <div style="font-size:18px;font-weight:700">$ ${fn(sueldos.reduce((s,x)=>s+(Number(x.monto)||0),0))}</div>
-      </div>
-      <div style="background:var(--green-bg);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.05em">🐄 Cría</div>
-        <div style="font-size:18px;font-weight:700;color:var(--green)">$ ${fn(totCria)}</div>
-      </div>
-      <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.05em">🐃 Recría</div>
-        <div style="font-size:18px;font-weight:700;color:var(--gold)">$ ${fn(totRecria)}</div>
-      </div>
-      <div style="background:var(--clay-bg);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.05em">🥩 Engorde</div>
-        <div style="font-size:18px;font-weight:700;color:var(--clay)">$ ${fn(totEng)}</div>
-      </div>
-      <div style="background:var(--blue-bg);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--blue-text);letter-spacing:.05em">🏗️ Estructura</div>
-        <div style="font-size:18px;font-weight:700;color:var(--blue)">$ ${fn(totEstr)}</div>
-      </div>
-    </div>`;
   }
   h += '</div>';
   return h;
