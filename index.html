@@ -548,8 +548,18 @@ function render() {
     attachSetupEvents();
     return;
   }
+  // Guardar scroll del sidebar antes de reconstruir
+  const sidebarNav = document.querySelector('.sidebar-nav');
+  const savedScroll = sidebarNav ? sidebarNav.scrollTop : 0;
+
   root.innerHTML = buildShell();
   attachShellEvents();
+
+  // Restaurar scroll del sidebar
+  const newSidebarNav = document.querySelector('.sidebar-nav');
+  if (newSidebarNav && savedScroll > 0) {
+    newSidebarNav.scrollTop = savedScroll;
+  }
 }
 
 // Exponer funciones clave en window para que los onclick inline puedan acceder
@@ -5542,7 +5552,7 @@ function buildSueldos() {
 
   // ── Panel: Cargar sueldo mensual ──────────────────────────────
   const campanas = [...new Set(sueldos.map(s=>s.campana||'').filter(Boolean))].sort((a,b)=>b.localeCompare(a));
-  h += `<div class="panel">
+  h += `<div class="panel" id="sueldo-form-panel">
     <div class="panel-title">➕ Cargar sueldo mensual</div>
     <div class="fgrid">
       <div class="fg">
@@ -5628,7 +5638,10 @@ function buildSueldos() {
         const d = distEfectiva_(s);
         const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id));
         const monto = Number(s.monto)||0;
-        const hasOverride = !!s.dist;
+        const distBase = distBaseCampoGet_(s.campo_id);
+        const hasOverride = s.dist_cria !== undefined && s.dist_cria !== null && s.dist_cria !== '' &&
+          (Number(s.dist_cria) !== distBase.cria || Number(s.dist_recria) !== distBase.recria ||
+           Number(s.dist_engorde) !== distBase.engorde || Number(s.dist_estructura) !== distBase.estructura);
         h += `<tr>
           <td>
             <strong>${campo ? campo.nombre : s.campo_id}</strong>
@@ -5641,7 +5654,10 @@ function buildSueldos() {
           <td class="tr" style="color:var(--clay-text)">$ ${fn(sueldoImporteActividad_(s,'engorde'))}</td>
           <td class="tr" style="color:var(--blue-text)">$ ${fn(sueldoImporteActividad_(s,'estructura'))}</td>
           <td style="font-size:11px;color:var(--text3)">${d.cria}/${d.recria}/${d.engorde}/${d.estructura}</td>
-          <td><button class="btn btn-danger btn-sm" onclick="window.sueldoEliminar_(${idx})">🗑</button></td>
+          <td style="display:flex;gap:4px">
+            <button class="btn btn-secondary btn-sm" onclick="window.sueldoEditar_('${s.periodo}','${s.campo_id}')" title="Editar">✎</button>
+            <button class="btn btn-danger btn-sm" onclick="window.sueldoEliminar_(${idx})" title="Eliminar">🗑</button>
+          </td>
         </tr>`;
       });
       h += '</tbody></table></div>';
@@ -5803,6 +5819,16 @@ function attachSueldosEvents() {
       const btnE = document.getElementById('sd-guardar-btn');
       if (btnE) { btnE.disabled = false; btnE.textContent = '💾 Guardar sueldo'; }
     }
+  };
+
+  window.sueldoEditar_ = function(periodo, campo_id) {
+    const el_periodo = document.getElementById('sd-periodo');
+    const el_campo   = document.getElementById('sd-campo');
+    if (el_periodo) el_periodo.value = periodo;
+    if (el_campo)   el_campo.value   = String(campo_id);
+    window.sdLoadDist_ && window.sdLoadDist_();
+    const panel = document.querySelector('#sueldo-form-panel, .panel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   window.sueldoEliminar_ = async function(i) {
