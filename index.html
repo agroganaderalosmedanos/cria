@@ -4723,6 +4723,7 @@ function buildEngordeCierre_(rodeoId, fm) {
       fSalida = d.toISOString().slice(0,10);
     }
     const hoy = today();
+    const fi = egFechaIngreso_(rid);
     const diasHastaSalida = fSalida ? Math.max(0, Math.round((new Date(fSalida)-new Date(hoy))/86400000)) : null;
     const caAcum = egCostoAlim_(rid);
     const cc = egCostoCompra_(rid);
