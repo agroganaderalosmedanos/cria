@@ -700,7 +700,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
+    destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
   };
   return titles[p] || p;
 }
@@ -755,6 +755,7 @@ function buildPage(page) {
     case 'pesadas':      return buildPesadas();
     case 'cotizacion':  return buildCotizacion();
     case 'config':     return buildConfig();
+    case 'abm':         return buildABM();
     default: return '';
   }
 }
@@ -825,7 +826,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -7684,37 +7685,38 @@ function preciosValParaPeriodo_(periodo) {
 }
 
 function buildConfig() {
-  const tab = S.configTab || 'conexion';
+  return `
+  <div class="panel">
+    <div class="panel-title">Conexión con la planilla</div>
+    <div class="fgrid">
+      <div class="fg"><label>URL de la API</label><input type="text" id="cf-url" value="${S.apiUrl}"></div>
+      <div class="fg"><label>Token de acceso</label><input type="password" id="cf-token" value="${S.apiToken}"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-primary" id="cf-save">Guardar y reconectar</button>
+      <button class="btn btn-secondary" id="cf-test">Probar conexión</button>
+    </div>
+    <div id="cf-status" style="margin-top:10px;font-size:12.5px"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Estado de catálogos</div>
+    <p class="helper-text">Rodeos: ${(S.catalogs && S.catalogs.rodeos || []).length} · Campos: ${(S.catalogs && S.catalogs.campos || []).length} · Compradores: ${(S.catalogs && S.catalogs.compradores || []).length}</p>
+  </div>
+  `;
+}
+
+function buildABM() {
+  const tab = S.abmTab || 'campos';
   const tabs = [
-    { k: 'conexion',     label: '🔌 Conexión' },
-    { k: 'campos',       label: '🏡 Campos' },
-    { k: 'rodeos',       label: '🐄 Rodeos' },
-    { k: 'compradores',  label: '🤝 Compradores' },
+    { k: 'campos',      label: '🏡 Campos' },
+    { k: 'rodeos',      label: '🐄 Rodeos' },
+    { k: 'compradores', label: '🤝 Compradores' },
   ];
   let h = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">`;
   tabs.forEach(t => {
-    h += `<button class="btn ${tab===t.k?'btn-primary':'btn-secondary'}" onclick="S.configTab='${t.k}';render()">${t.label}</button>`;
+    h += `<button class="btn ${tab===t.k?'btn-primary':'btn-secondary'}" onclick="S.abmTab='${t.k}';render()">${t.label}</button>`;
   });
   h += `</div>`;
-
-  if (tab === 'conexion') {
-    h += `<div class="panel">
-      <div class="panel-title">Conexión con la planilla</div>
-      <div class="fgrid">
-        <div class="fg"><label>URL de la API</label><input type="text" id="cf-url" value="${S.apiUrl}"></div>
-        <div class="fg"><label>Token de acceso</label><input type="password" id="cf-token" value="${S.apiToken}"></div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-primary" id="cf-save">Guardar y reconectar</button>
-        <button class="btn btn-secondary" id="cf-test">Probar conexión</button>
-      </div>
-      <div id="cf-status" style="margin-top:10px;font-size:12.5px"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-title">Estado de catálogos</div>
-      <p class="helper-text">Rodeos: ${(S.catalogs && S.catalogs.rodeos || []).length} · Campos: ${(S.catalogs && S.catalogs.campos || []).length} · Compradores: ${(S.catalogs && S.catalogs.compradores || []).length}</p>
-    </div>`;
-  }
 
   if (tab === 'campos') {
     const campos = (S.catalogs && S.catalogs.campos) || [];
@@ -7740,7 +7742,7 @@ function buildConfig() {
 
   if (tab === 'rodeos') {
     const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
-    const campos  = (S.catalogs && S.catalogs.campos)  || [];
+    const campos  = (S.catalogs && S.catalogs.campos) || [];
     const cats = ['vaca','vaquillona','ternera','toro','torito','novillito','novillo','ternero','vaquilloncita','vaquillona proximo servicio'];
     h += `<div class="panel">
       <div class="panel-title">Nuevo rodeo / corral</div>
@@ -8052,73 +8054,75 @@ function attachPreciosValEvents() {
 }
 
 function attachConfigEvents() {
-  const tab = S.configTab || 'conexion';
+  document.getElementById('cf-save').onclick = async () => {
+    S.apiUrl = document.getElementById('cf-url').value.trim();
+    S.apiToken = document.getElementById('cf-token').value.trim();
+    save();
+    const statusEl = document.getElementById('cf-status');
+    statusEl.textContent = 'Reconectando…';
+    try {
+      await loadCatalogs(); await loadDashboard();
+      S.cache = {};
+      statusEl.textContent = 'Conectado correctamente.'; statusEl.style.color = 'var(--green)';
+      render();
+    } catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
+  };
+  document.getElementById('cf-test').onclick = async () => {
+    const statusEl = document.getElementById('cf-status');
+    statusEl.textContent = 'Probando…';
+    try { await apiCall('catalog'); statusEl.textContent = 'Conexión exitosa.'; statusEl.style.color = 'var(--green)'; }
+    catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
+  };
+}
 
-  if (tab === 'conexion') {
-    document.getElementById('cf-save').onclick = async () => {
-      S.apiUrl = document.getElementById('cf-url').value.trim();
-      S.apiToken = document.getElementById('cf-token').value.trim();
-      save();
-      const statusEl = document.getElementById('cf-status');
-      statusEl.textContent = 'Reconectando…';
-      try {
-        await loadCatalogs(); await loadDashboard();
-        S.cache = {};
-        statusEl.textContent = 'Conectado correctamente.'; statusEl.style.color = 'var(--green)';
-        render();
-      } catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
-    };
-    document.getElementById('cf-test').onclick = async () => {
-      const statusEl = document.getElementById('cf-status');
-      statusEl.textContent = 'Probando…';
-      try { await apiCall('catalog'); statusEl.textContent = 'Conexión exitosa.'; statusEl.style.color = 'var(--green)'; }
-      catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
-    };
-  }
+function attachABMEvents() {
+  const tab = S.abmTab || 'campos';
+  function disableBtn(btn, label) { btn.disabled = true; btn.style.opacity = '0.4'; btn.style.cursor = 'wait'; btn.textContent = '⏳ Guardando…'; }
+  function enableBtn(btn, label) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; btn.textContent = label; }
 
   if (tab === 'campos') {
-    document.getElementById('cf-campo-save').onclick = async () => {
+    const btn = document.getElementById('cf-campo-save');
+    if (btn) btn.onclick = async () => {
       const nombre = document.getElementById('cf-campo-nombre').value.trim();
       const tipo   = document.getElementById('cf-campo-tipo').value;
       if (!nombre) { toast('Ingresá el nombre del campo', 'err'); return; }
+      disableBtn(btn);
       try {
         await apiCall('create', { body: { entity: 'campos', data: { nombre, tipo } } });
-        await loadCatalogs();
-        toast('Campo agregado', 'ok');
-        render();
-      } catch (err) { toast(err.message, 'err'); }
+        await loadCatalogs(); toast('Campo agregado', 'ok'); render();
+      } catch (err) { enableBtn(btn, '➕ Agregar campo'); toast(err.message, 'err'); }
     };
     attachTableDeleteEvents('campos', 'campo_id');
   }
 
   if (tab === 'rodeos') {
-    document.getElementById('cf-rodeo-save').onclick = async () => {
+    const btn = document.getElementById('cf-rodeo-save');
+    if (btn) btn.onclick = async () => {
       const nombre    = document.getElementById('cf-rodeo-nombre').value.trim();
       const campo_id  = document.getElementById('cf-rodeo-campo').value;
       const categoria = document.getElementById('cf-rodeo-cat').value;
       const actividad = document.getElementById('cf-rodeo-act').value;
       if (!nombre) { toast('Ingresá el nombre del rodeo', 'err'); return; }
+      disableBtn(btn);
       try {
         await apiCall('create', { body: { entity: 'rodeos', data: { nombre, campo_id, categoria, actividad, activo: 'TRUE' } } });
-        await loadCatalogs();
-        toast('Rodeo agregado', 'ok');
-        render();
-      } catch (err) { toast(err.message, 'err'); }
+        await loadCatalogs(); toast('Rodeo agregado', 'ok'); render();
+      } catch (err) { enableBtn(btn, '➕ Agregar rodeo'); toast(err.message, 'err'); }
     };
     attachTableDeleteEvents('rodeos', 'rodeo_id');
   }
 
   if (tab === 'compradores') {
-    document.getElementById('cf-comp-save').onclick = async () => {
+    const btn = document.getElementById('cf-comp-save');
+    if (btn) btn.onclick = async () => {
       const nombre = document.getElementById('cf-comp-nombre').value.trim();
       const tipo   = document.getElementById('cf-comp-tipo').value;
       if (!nombre) { toast('Ingresá el nombre del comprador', 'err'); return; }
+      disableBtn(btn);
       try {
         await apiCall('create', { body: { entity: 'compradores', data: { nombre, tipo } } });
-        await loadCatalogs();
-        toast('Comprador agregado', 'ok');
-        render();
-      } catch (err) { toast(err.message, 'err'); }
+        await loadCatalogs(); toast('Comprador agregado', 'ok'); render();
+      } catch (err) { enableBtn(btn, '➕ Agregar comprador'); toast(err.message, 'err'); }
     };
     attachTableDeleteEvents('compradores', 'comprador_id');
   }
