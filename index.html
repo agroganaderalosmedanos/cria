@@ -4710,6 +4710,7 @@ function buildEngordeCierre_(rodeoId, fm) {
     const rid = r.rodeo_id;
     const stk = egStock_(rid);
     const cfg = egConfig_(rid);
+    const fi = egFechaIngreso_(rid);
     const pesoObj = Number(cfg.pesoObjetivo||520);
     const pes = egPesadas_(rid);
     const ultima = pes.length ? pes[pes.length-1] : null;
@@ -4723,7 +4724,6 @@ function buildEngordeCierre_(rodeoId, fm) {
       fSalida = d.toISOString().slice(0,10);
     }
     const hoy = today();
-    const fi = egFechaIngreso_(rid);
     const diasHastaSalida = fSalida ? Math.max(0, Math.round((new Date(fSalida)-new Date(hoy))/86400000)) : null;
     const caAcum = egCostoAlim_(rid);
     const cc = egCostoCompra_(rid);
@@ -4849,7 +4849,7 @@ function buildEngordeCierre_(rodeoId, fm) {
   });
 
   // Resumen consolidado si hay más de un corral
-  if (lista.length > 1) {
+  if (!rodeoId && lista.length > 1) {
     let totCaAcum=0, totCostoProyect=0, totCostoFinal=0, totIvProyect=0, totUtil=0, countUtil=0;
     lista.forEach(r => {
       const rid = r.rodeo_id;
