@@ -591,9 +591,17 @@ async function goto(page) {
     }
   }
   if (page === 'margenbruto') {
-    if (!S.cache.precios_internos) {
-      try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ }
-    }
+    if (!S.cache.precios_internos)   { try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ } }
+    if (!S.resumenRecria)            { try { S.resumenRecria = await apiCall('resumenRecria'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.ventas)             { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.egresos_recria)     { try { await loadEntity('egresos_recria'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.consumos_insumos)   { try { await loadEntity('consumos_insumos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.destetes)           { try { await loadEntity('destetes'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.movimientos)        { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.sueldos)            { try { await loadEntity('sueldos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.mortandad)          { try { await loadEntity('mortandad'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.pesadas)            { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
+    if (!S.stock)                    { try { await loadStock(); } catch (err) { /* silencioso */ } }
     if (S.corralesTipoCambio === undefined) {
       try { await loadCorralesStock(); } catch (err) { /* silencioso */ }
     }
@@ -6241,42 +6249,41 @@ function vistaUsdMargenBruto_(mb) {
 }
 
 function buildMargenBruto() {
-  const precios = (S.cache.precios_internos || []).slice().sort((a, b) => String(b.fecha_desde || '').localeCompare(String(a.fecha_desde || '')));
-  const mb = S.margenBruto;
-  if (mb && mb.ingresos) {
-    mb.ingresos.detalle_ventas = mb.ingresos.detalle_ventas || [];
-    mb.ingresos.detalle_destetes = mb.ingresos.detalle_destetes || [];
-  }
-  if (mb && mb.egresos) {
-    mb.egresos.detalle_por_producto = mb.egresos.detalle_por_producto || [];
-    mb.egresos.detalle_consumos = mb.egresos.detalle_consumos || [];
-    mb.egresos.diferidos_proxima_campana = mb.egresos.diferidos_proxima_campana || [];
+  const tabMB = S.mbTab || 'resultado';
+  const moneda = S.margenBrutoMoneda || 'ARS';
+  const simb = moneda === 'USD' ? 'U$D ' : '$ ';
+  const dec  = moneda === 'USD' ? 2 : 0;
+  const mb   = S.margenBruto; // Cría (viene del GS)
+
+  function fmMB(v) {
+    if (moneda === 'USD' && S.corralesTipoCambio) return 'U$D ' + fn(convertirAMoneda_(v, today(), 'USD'), 2);
+    return '$ ' + fn(Math.round(v||0));
   }
 
-  let h = `<div class="panel">
-    <div class="panel-title">Precio de transferencia interno</div>
-    <p class="helper-text" style="margin-bottom:14px">Valor del kg vivo usado para valorizar la cesión de terneros destetados hacia Recría. Cada destete usa el precio vigente a su fecha — cargá uno nuevo cuando cambie, no edites los anteriores. El equivalente en dólares se calcula solo con la cotización BNA que ya cargás en Corrales.</p>
-    <div class="fgrid">
-      <div class="fg"><label>Vigente desde</label><input type="date" id="pi-fecha" value="${today()}" onchange="actualizarPreviewUsd_()"></div>
-      <div class="fg"><label>Precio $/kg (ARS)</label><input type="number" id="pi-ars" placeholder="Ej: 1800" min="0" step="0.01" oninput="actualizarPreviewUsd_()"></div>
-      <div class="fg"><label>Equivalente U$D/kg</label><div id="pi-usd-preview" style="font-size:15px;font-weight:600;padding:9px 0;color:var(--text2)">—</div></div>
-      <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="pi-obs" placeholder="Opcional"></div>
-    </div>
-    <button class="btn btn-primary" id="pi-save" style="margin-top:6px">Guardar precio</button>
+  let h = `<div class="page-header">
+    <div class="page-title">📊 Margen Bruto Ganadero</div>
+    <div class="page-sub">Resultado económico consolidado de las tres actividades</div>
   </div>`;
 
-  h += '<div class="section-label">Historial de precios internos</div>';
-  h += buildEntityTable(precios, [
-    { key: 'fecha_desde', label: 'Vigente desde', render: v => fd(v) },
-    { key: 'precio_ars_kg', label: '$/kg ARS', render: v => v ? '$ ' + fn(v, 2) : '—' },
-    { key: 'precio_usd_kg', label: 'U$D/kg', render: v => v ? 'U$D ' + fn(v, 2) : '—' },
-    { key: 'observacion', label: 'Observación', render: v => v || '—' },
-  ], 'precios_internos', 'precio_id');
+  // Pestañas
+  const tabs = [
+    { k: 'resultado',    label: '💰 Resultado económico' },
+    { k: 'productivo',   label: '📋 Resultados productivos' },
+  ];
+  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
+  tabs.forEach(t => {
+    h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`;
+  });
+  h += `<div style="margin-left:auto;display:flex;gap:8px">
+    <div class="radio-group" id="mb-moneda-group">
+      <div class="radio-pill ${moneda==='ARS'?'selected':''}" data-moneda="ARS">$ ARS</div>
+      <div class="radio-pill ${moneda==='USD'?'selected':''}" data-moneda="USD">U$D</div>
+    </div>
+  </div></div>`;
 
-  h += '<div class="section-label">Margen bruto de Cría</div>';
-  const moneda = S.margenBrutoMoneda || 'ARS';
-  h += `<div class="panel">
-    <div class="fgrid" style="align-items:flex-end">
+  // Selector de período
+  h += `<div class="panel" style="padding:12px 16px;margin-bottom:16px">
+    <div class="fgrid" style="margin:0;align-items:flex-end">
       <div class="fg"><label>Período</label>
         <select id="mb-preset">
           <option value="anio">Este año</option>
@@ -6285,15 +6292,9 @@ function buildMargenBruto() {
           <option value="custom">Personalizado</option>
         </select>
       </div>
-      <div class="fg" id="mb-desde-wrap" style="display:none"><label>Desde</label><input type="date" id="mb-desde" value="${S.margenBrutoPeriodo ? S.margenBrutoPeriodo.desde : ''}"></div>
-      <div class="fg" id="mb-hasta-wrap" style="display:none"><label>Hasta</label><input type="date" id="mb-hasta" value="${S.margenBrutoPeriodo ? S.margenBrutoPeriodo.hasta : ''}"></div>
+      <div class="fg" id="mb-desde-wrap" style="display:none"><label>Desde</label><input type="date" id="mb-desde" value="${S.margenBrutoPeriodo?S.margenBrutoPeriodo.desde:''}"></div>
+      <div class="fg" id="mb-hasta-wrap" style="display:none"><label>Hasta</label><input type="date" id="mb-hasta" value="${S.margenBrutoPeriodo?S.margenBrutoPeriodo.hasta:''}"></div>
       <div class="fg" style="flex:0"><button class="btn btn-primary" id="mb-calcular">Calcular</button></div>
-      <div class="fg" style="flex:0"><label>Moneda</label>
-        <div class="radio-group" id="mb-moneda-group">
-          <div class="radio-pill ${moneda === 'ARS' ? 'selected' : ''}" data-moneda="ARS">$ ARS</div>
-          <div class="radio-pill ${moneda === 'USD' ? 'selected' : ''}" data-moneda="USD">U$D</div>
-        </div>
-      </div>
     </div>
   </div>`;
 
@@ -6303,127 +6304,292 @@ function buildMargenBruto() {
   }
 
   if (moneda === 'USD' && !S.corralesTipoCambio) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No se pudo traer la cotización del dólar desde Corrales en este momento. Probá de nuevo en unos segundos, o cargá el tipo de cambio en Corrales primero.</div></div>';
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No se pudo traer la cotización del dólar. Cargá el tipo de cambio en Corrales primero.</div></div>';
     return h;
   }
 
-  const vw = moneda === 'USD' ? vistaUsdMargenBruto_(mb) : null;
-  const simb = moneda === 'USD' ? 'U$D ' : '$ ';
-  const dec = moneda === 'USD' ? 2 : 0;
-  const valIngresos = vw ? vw.total : mb.ingresos.total;
-  const valEgresos = vw ? vw.insumos : mb.egresos.insumos;
-  const valResultado = vw ? vw.resultado : mb.resultado;
-  const valVentas = vw ? vw.ventas : mb.ingresos.ventas;
-  const valCesion = vw ? vw.cesion : mb.ingresos.cesion_destete_ars;
+  // ── Datos por actividad ───────────────────────────────────────────────
+  // CRÍA — viene del GS via S.margenBruto
+  const ingCria  = mb.ingresos.total || 0;
+  const egCria   = mb.egresos.insumos || 0;
+  const marCria  = mb.resultado || 0;
 
-  const resultadoPositivo = valResultado >= 0;
-  h += `<div class="kpi-row">
-    <div class="kpi-card accent-green">
-      <div class="kpi-icon">↑</div><div class="kpi-label">Ingresos totales</div>
-      <div class="kpi-value">${simb}${fn(valIngresos, dec)}</div>
-      <div class="kpi-sub">Ventas + cesión por destete</div>
-    </div>
-    <div class="kpi-card accent-clay">
-      <div class="kpi-icon">↓</div><div class="kpi-label">Egresos (insumos)</div>
-      <div class="kpi-value">${simb}${fn(valEgresos, dec)}</div>
-      <div class="kpi-sub">Alimentación y veterinaria consumida</div>
-    </div>
-    <div class="kpi-card ${resultadoPositivo ? 'accent-green' : 'accent-red'}">
-      <div class="kpi-icon">${resultadoPositivo ? '✓' : '!'}</div><div class="kpi-label">Margen bruto</div>
-      <div class="kpi-value">${simb}${fn(valResultado, dec)}</div>
-      <div class="kpi-sub">${fd(mb.periodo.desde)} — ${fd(mb.periodo.hasta)}</div>
-    </div>
-  </div>`;
-  if (vw && (vw.ventasSinCotizacion || vw.consumosSinCotizacion)) {
-    h += `<div class="helper-text" style="margin-bottom:10px;color:var(--clay-text)">⚠ ${vw.ventasSinCotizacion ? vw.ventasSinCotizacion + ' venta(s) ' : ''}${vw.ventasSinCotizacion && vw.consumosSinCotizacion ? 'y ' : ''}${vw.consumosSinCotizacion ? vw.consumosSinCotizacion + ' consumo(s) ' : ''}sin cotización BNA cargada en Corrales para su fecha — quedaron fuera de este total en dólares.</div>`;
-  }
+  // RECRÍA — calculado en frontend igual que buildRecriaDashboard
+  const rodeosRecria = ((S.resumenRecria && S.resumenRecria.rodeos) || []);
+  const rodeosIdRec  = new Set(rodeosRecria.map(r=>String(r.rodeo_id)));
+  const preciosInt   = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
+  function precioIntEn(f) { const v=preciosInt.filter(p=>p.fecha_desde<=f); return v.length?v[0]:null; }
+  const ventasRec   = (S.cache.ventas||[]).filter(v=>rodeosIdRec.has(String(v.rodeo_id)));
+  const consumosRec = (S.cache.consumos_insumos||[]).filter(c=>rodeosIdRec.has(String(c.rodeo_id)));
+  const egresosRec  = (S.cache.egresos_recria||[]).filter(e=>rodeosIdRec.has(String(e.rodeo_id)));
+  const destetes    = (S.cache.destetes||[]);
+  const productos   = (S.catalogs&&S.catalogs.productos)||[];
+  let ingVentasRec=0, ingCesEng=0, egCesionCria=0, egAlimRec=0, egVetRec=0, egSueldosRec=0, egCompExtRec=0;
+  ventasRec.forEach(v=>{ ingVentasRec+=Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0; });
+  egresosRec.filter(e=>e.destino==='Engorde').forEach(e=>{ const p=precioIntEn(e.fecha); const kg=(Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0); ingCesEng+=kg*(p?Number(p.precio_ars_kg)||0:0); });
+  destetes.forEach(d=>{ if(!rodeosIdRec.has(String(d.rodeo_id)))return; const p=precioIntEn(d.fecha); const kg=(Number(d.total)||0)*(Number(d.peso_prom_kg)||0); egCesionCria+=kg*(p?Number(p.precio_ars_kg)||0:0); });
+  (S.cache.movimientos||[]).filter(m=>rodeosIdRec.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual').forEach(m=>{ egCompExtRec+=(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0); });
+  consumosRec.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id); if(prod&&prod.categoria==='Veterinaria') egVetRec+=costo; else egAlimRec+=costo; });
+  (S.cache.sueldos||[]).forEach(s=>{ egSueldosRec+=(Number(s.monto)||0)*(Number(s.dist_recria)||0)/100; });
+  let stockValRec=0;
+  rodeosRecria.forEach(r=>{ const stk=Math.max(0,r.stock||0); if(!stk)return; const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:0; stockValRec+=valorizarRodeo_((S.catalogs&&S.catalogs.rodeos||[]).find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{},stk,pp); });
+  const ingRec  = ingVentasRec + ingCesEng + stockValRec;
+  const egRec   = egCesionCria + egCompExtRec + egAlimRec + egVetRec + egSueldosRec;
+  const marRec  = ingRec - egRec;
 
-  h += `<div class="panel">
-    <div class="panel-title">Detalle de ingresos</div>
-    <div class="fgrid">
-      <div class="fg"><label>Ventas reales</label><div style="font-size:18px;font-weight:600">${simb}${fn(valVentas, dec)}</div><div class="helper-text">${mb.ingresos.cant_ventas} venta${mb.ingresos.cant_ventas === 1 ? '' : 's'}${mb.ingresos.ventas_sin_precio ? ' — ⚠ ' + mb.ingresos.ventas_sin_precio + ' sin precio cargado' : ''}</div></div>
-      <div class="fg"><label>Cesión interna por destete</label><div style="font-size:18px;font-weight:600">${simb}${fn(valCesion, dec)}</div><div class="helper-text">${mb.ingresos.cant_destetes} destete${mb.ingresos.cant_destetes === 1 ? '' : 's'}${moneda === 'ARS' ? ' · ref. U$D ' + fn(mb.ingresos.cesion_destete_usd_ref, 2) : ''}${mb.ingresos.destetes_sin_precio_interno.length ? ' — ⚠ ' + mb.ingresos.destetes_sin_precio_interno.length + ' sin precio interno vigente' : ''}</div></div>
-    </div>
-  </div>`;
+  // TERMINACIÓN — usa funciones egIngVentas_, egCostoCompra_, egCostoAlim_
+  const rodeosEng = ((S.catalogs&&S.catalogs.rodeos)||[]).filter(r=>r.actividad==='Engorde'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  let ingVentasEng=0, egCompraEng=0, egAlimEng=0, egVetEng=0, egSueldosEng=0, stockValEng=0;
+  rodeosEng.forEach(r=>{ ingVentasEng+=egIngVentas_(r.rodeo_id); egCompraEng+=egCostoCompra_(r.rodeo_id); egAlimEng+=egCostoAlim_(r.rodeo_id,null,'Alimentación'); egVetEng+=egCostoAlim_(r.rodeo_id,null,'Veterinaria'); });
+  (S.cache.sueldos||[]).forEach(s=>{ egSueldosEng+=(Number(s.monto)||0)*(Number(s.dist_engorde)||0)/100; });
+  const stockEngList = S.stock||[];
+  rodeosEng.forEach(r=>{ const stk=stockEngList.find(s=>String(s.rodeo_id)===String(r.rodeo_id)); if(stk&&stk.stock>0) stockValEng+=valorizarRodeo_(r,stk.stock,0); });
+  const ingEng  = ingVentasEng + stockValEng;
+  const egEng   = egCompraEng + egAlimEng + egVetEng + egSueldosEng;
+  const marEng  = ingEng - egEng;
 
-  h += `<div class="panel">
-    <div class="panel-title">Detalle de ventas reales</div>`;
-  if (!mb.ingresos.detalle_ventas.length) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin ventas en este período.</div></div>';
-  } else {
-    const filasVentas = vw ? vw.detalle_ventas : mb.ingresos.detalle_ventas;
-    h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th>Comprador</th><th class="tc">Cantidad</th><th class="tc">Precio/animal</th><th class="tc">Importe</th></tr></thead><tbody>';
-    filasVentas.forEach(v => {
-      const importeMostrado = vw ? v.importe_usd : v.importe;
+  // TOTALES
+  const ingTotal = ingCria + ingRec + ingEng;
+  const egTotal  = egCria  + egRec  + egEng;
+  const marTotal = marCria + marRec + marEng;
+  const mc = marTotal>=0?'var(--green)':'var(--red)';
+  const mb2 = marTotal>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
+
+  // Mortandad
+  const mortandad   = (S.cache.mortandad||[]);
+  const mortCria    = mortandad.filter(m=>{const r=(S.catalogs&&S.catalogs.rodeos||[]).find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&r.actividad==='Cría';}).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortRec     = mortandad.filter(m=>rodeosIdRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortEng     = mortandad.filter(m=>{const r=rodeosEng.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return !!r;}).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortTotal2  = mortCria + mortRec + mortEng;
+
+  if (tabMB === 'resultado') {
+    // ── DOS COLUMNAS INGRESOS / EGRESOS ─────────────────────────────────
+    h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+
+      <!-- INGRESOS -->
+      <div class="panel" style="margin-bottom:0">
+        <div class="panel-title" style="color:var(--green-text)">📈 Ingresos totales</div>
+        <table class="dt"><tbody>
+          <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🐄 Cría</td></tr>
+          <tr><td style="padding-left:20px">Ventas reales</td><td class="tr">${fmMB(mb.ingresos.ventas)}</td></tr>
+          <tr><td style="padding-left:20px">Cesión por destete</td><td class="tr">${fmMB(mb.ingresos.cesion_destete_ars)}</td></tr>
+          <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(ingCria)}</strong></td></tr>
+
+          <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
+          <tr><td style="padding-left:20px">Ventas directas</td><td class="tr">${fmMB(ingVentasRec)}</td></tr>
+          <tr><td style="padding-left:20px">Cesión a Terminación</td><td class="tr">${fmMB(ingCesEng)}</td></tr>
+          <tr><td style="padding-left:20px">Stock valorizado</td><td class="tr">${fmMB(stockValRec)}</td></tr>
+          <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(ingRec)}</strong></td></tr>
+
+          <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
+          <tr><td style="padding-left:20px">Ventas</td><td class="tr">${fmMB(ingVentasEng)}</td></tr>
+          <tr><td style="padding-left:20px">Stock valorizado</td><td class="tr">${fmMB(stockValEng)}</td></tr>
+          <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(ingEng)}</strong></td></tr>
+
+          <tr style="background:var(--green-bg);font-size:15px"><td><strong>TOTAL INGRESOS</strong></td><td class="tr" style="color:var(--green)"><strong>${fmMB(ingTotal)}</strong></td></tr>
+        </tbody></table>
+      </div>
+
+      <!-- EGRESOS -->
+      <div class="panel" style="margin-bottom:0">
+        <div class="panel-title" style="color:var(--red)">📉 Egresos totales</div>
+        <table class="dt"><tbody>
+          <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🐄 Cría</td></tr>
+          <tr><td style="padding-left:20px">Insumos y veterinaria</td><td class="tr">${fmMB(egCria)}</td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td style="padding-left:20px"><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(egCria)}</strong></td></tr>
+
+          <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
+          <tr><td style="padding-left:20px">Cesión desde Cría</td><td class="tr">${fmMB(egCesionCria)}</td></tr>
+          ${egCompExtRec>0?`<tr><td style="padding-left:20px">Compra externa</td><td class="tr">${fmMB(egCompExtRec)}</td></tr>`:''}
+          <tr><td style="padding-left:20px">Alimentación</td><td class="tr">${fmMB(egAlimRec)}</td></tr>
+          <tr><td style="padding-left:20px">Veterinaria</td><td class="tr">${fmMB(egVetRec)}</td></tr>
+          <tr><td style="padding-left:20px">Sueldos</td><td class="tr">${fmMB(egSueldosRec)}</td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td style="padding-left:20px"><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(egRec)}</strong></td></tr>
+
+          <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
+          <tr><td style="padding-left:20px">Costo de compra</td><td class="tr">${fmMB(egCompraEng)}</td></tr>
+          <tr><td style="padding-left:20px">Alimentación</td><td class="tr">${fmMB(egAlimEng)}</td></tr>
+          <tr><td style="padding-left:20px">Veterinaria</td><td class="tr">${fmMB(egVetEng)}</td></tr>
+          <tr><td style="padding-left:20px">Sueldos</td><td class="tr">${fmMB(egSueldosEng)}</td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td style="padding-left:20px"><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(egEng)}</strong></td></tr>
+
+          <tr style="background:rgba(220,50,50,0.1);font-size:15px"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMB(egTotal)}</strong></td></tr>
+        </tbody></table>
+      </div>
+    </div>`;
+
+    // Margen total
+    h += `<div class="panel" style="background:${mb2};border:2px solid ${mc};margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto ganadero total</div>
+        <div style="font-size:36px;font-weight:800;color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</div>
+      </div>
+    </div>`;
+
+    // Comparativo por actividad
+    const acts = [
+      { nombre: '🐄 Cría',         ing: ingCria, eg: egCria, mar: marCria },
+      { nombre: '🌱 Recría',       ing: ingRec,  eg: egRec,  mar: marRec  },
+      { nombre: '🏭 Terminación',  ing: ingEng,  eg: egEng,  mar: marEng  },
+    ].sort((a,b)=>b.mar-a.mar);
+
+    h += `<div class="panel">
+      <div class="panel-title">📊 Resultado por actividad</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Actividad</th>
+        <th class="tc">Ingresos</th>
+        <th class="tc">Egresos</th>
+        <th class="tc">Margen</th>
+        <th class="tc">% del total</th>
+      </tr></thead><tbody>`;
+    acts.forEach(a=>{
+      const pct = marTotal !== 0 ? Math.round(a.mar/Math.abs(marTotal)*100) : 0;
+      const cm  = a.mar>=0?'var(--green)':'var(--red)';
       h += `<tr>
-        <td>${fd(v.fecha)}</td>
-        <td>${rodeoNombre(v.rodeo_id)}</td>
-        <td>${v.comprador || '—'}</td>
-        <td class="tc">${fn(v.cant_animales)}</td>
-        <td class="tc">${v.precio_pactado ? simb + fn(vw ? v.precio_pactado_usd : v.precio_pactado, dec) : '<span class="pill pill-clay">sin precio</span>'}</td>
-        <td class="tc"><strong>${importeMostrado == null ? '<span class="pill pill-clay">sin cotización</span>' : simb + fn(importeMostrado, dec)}</strong></td>
+        <td><strong>${a.nombre}</strong></td>
+        <td class="tc">${fmMB(a.ing)}</td>
+        <td class="tc">${fmMB(a.eg)}</td>
+        <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMB(Math.abs(a.mar))}</td>
+        <td class="tc"><span class="pill ${a.mar>=0?'pill-green':'pill-red'}">${pct}%</span></td>
       </tr>`;
     });
-    h += '</tbody></table></div>';
-  }
-  h += '</div>';
+    h += `</tbody></table></div></div>`;
 
-  h += `<div class="panel">
-    <div class="panel-title">Detalle de cesiones por destete</div>`;
-  if (!mb.ingresos.detalle_destetes.length) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin destetes en este período.</div></div>';
-  } else {
-    h += '<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cant.</th><th class="tc">Peso prom.</th><th class="tc">Kg totales</th><th class="tc">' + (moneda === 'USD' ? 'U$D/kg usado' : '$/kg usado') + '</th><th class="tc">Valor</th></tr></thead><tbody>';
-    mb.ingresos.detalle_destetes.forEach(d => {
-      const precioUsado = moneda === 'USD' ? d.precio_usd_kg_usado : d.precio_ars_kg_usado;
-      const valor = moneda === 'USD' ? d.valor_usd : d.valor_ars;
-      h += `<tr>
-        <td>${fd(d.fecha)}</td>
-        <td>${rodeoNombre(d.rodeo_id)}</td>
-        <td class="tc">${fn(d.total)}</td>
-        <td class="tc">${fn(d.peso_prom_kg)} kg</td>
-        <td class="tc">${fn(d.kg_total)} kg</td>
-        <td class="tc">${d.sin_precio ? '<span class="pill pill-clay">sin precio vigente</span>' : simb + fn(precioUsado, dec === 0 ? 2 : dec)}</td>
-        <td class="tc"><strong>${d.sin_precio ? '—' : simb + fn(valor, dec)}</strong></td>
-      </tr>`;
-    });
-    h += '</tbody></table></div>';
-  }
-  h += '</div>';
+    // Mortandad resumen
+    if (mortTotal2 > 0) {
+      h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.05)">
+        <div class="panel-title" style="color:var(--red)">💀 Mortandad por actividad</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Actividad</th><th class="tc">Bajas</th>
+        </tr></thead><tbody>
+          ${mortCria>0?`<tr><td>🐄 Cría</td><td class="tc" style="color:var(--red);font-weight:700">${mortCria} animales</td></tr>`:''}
+          ${mortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--red);font-weight:700">${mortRec} animales</td></tr>`:''}
+          ${mortEng>0?`<tr><td>🏭 Terminación</td><td class="tc" style="color:var(--red);font-weight:700">${mortEng} animales</td></tr>`:''}
+          <tr style="background:rgba(200,50,50,0.1)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:16px">${mortTotal2} animales</td></tr>
+        </tbody></table></div>
+        <div style="font-size:12px;color:var(--red);margin-top:8px">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock valorizado.</div>
+      </div>`;
+    }
 
-  h += `<div class="panel">
-    <div class="panel-title">Detalle de egresos por producto</div>`;
-  const filasProducto = vw ? vw.detalle_por_producto : mb.egresos.detalle_por_producto;
-  if (!filasProducto.length) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin consumos de insumos en este período.</div></div>';
-  } else {
-    h += '<div class="tw"><table class="dt"><thead><tr><th>Producto</th><th class="tc">Costo</th></tr></thead><tbody>';
-    filasProducto.forEach(p => {
-      h += `<tr><td>${p.producto}</td><td class="tc">${simb}${fn(p.costo, dec)}</td></tr>`;
-    });
-    h += '</tbody></table></div>';
-  }
-  h += '</div>';
-
-  h += `<div class="panel">
-    <div class="panel-title">Costos diferidos — próxima campaña</div>
-    <p class="helper-text" style="margin-bottom:14px">Gastos ya cargados en Insumos pero etiquetados con una campaña futura (ej. semen, sincronización para el próximo servicio) — no entran en el margen de este período, quedan acá hasta que los imputes al servicio al que corresponden. Siempre en pesos.</p>`;
-  const diferidos = mb.egresos.diferidos_proxima_campana;
-  if (!diferidos.length) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay gastos diferidos cargados.</div></div>';
-  } else {
-    diferidos.forEach(d => {
-      h += `<div style="margin-bottom:16px">
-        <div style="font-weight:700;font-size:14.5px;margin-bottom:4px">${d.campana} <span class="pill pill-gold" style="margin-left:6px">${d.cant_items} ítem${d.cant_items === 1 ? '' : 's'}</span></div>
-        <div style="font-size:17px;font-weight:600;margin-bottom:6px">$ ${fn(d.total)}</div>
-        <div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Producto</th><th class="tc">Cantidad</th><th class="tc">Costo</th></tr></thead><tbody>`;
-      d.detalle.forEach(it => {
-        h += `<tr><td>${fd(it.fecha)}</td><td>${it.producto}</td><td class="tc">${fn(it.cantidad)}</td><td class="tc">$ ${fn(it.costo)}</td></tr>`;
+    // Detalle Cría (costos diferidos)
+    if (mb.egresos.diferidos_proxima_campana && mb.egresos.diferidos_proxima_campana.length) {
+      h += `<div class="panel">
+        <div class="panel-title">📌 Costos diferidos Cría — próxima campaña</div>
+        <p class="helper-text" style="margin-bottom:12px">Gastos etiquetados con campaña futura — no entran en este margen.</p>`;
+      mb.egresos.diferidos_proxima_campana.forEach(d=>{
+        h += `<div style="margin-bottom:12px">
+          <div style="font-weight:700">${d.campana} <span class="pill pill-gold">${d.cant_items} ítem${d.cant_items===1?'':'s'}</span></div>
+          <div style="font-size:16px;font-weight:600">$ ${fn(d.total)}</div>
+        </div>`;
       });
-      h += '</tbody></table></div></div>';
-    });
+      h += `</div>`;
+    }
   }
-  h += '</div>';
+
+  if (tabMB === 'productivo') {
+    // ── RESULTADOS PRODUCTIVOS ───────────────────────────────────────────
+    // Existencia inicial y final (stock actual simplificado)
+    const stockTodos = S.stock || [];
+    const rodeosAll  = (S.catalogs&&S.catalogs.rodeos)||[];
+
+    // Agrupar stock por actividad y categoría
+    function stockPorActividad(actividad) {
+      const rodAct = rodeosAll.filter(r=>r.actividad===actividad);
+      const cats = {};
+      rodAct.forEach(r=>{
+        const stk = stockTodos.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
+        const cant = stk ? (stk.stock||0) : 0;
+        if (!cats[r.categoria]) cats[r.categoria]=0;
+        cats[r.categoria] += cant;
+      });
+      return cats;
+    }
+
+    const stockCria = stockPorActividad('Cría');
+    const stockRec  = stockPorActividad('Recría');
+    const stockEng  = stockPorActividad('Engorde');
+
+    h += `<div class="panel">
+      <div class="panel-title">📦 Stock actual por actividad y categoría</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">`;
+
+    function buildStockActBloque(titulo, cats) {
+      const total = Object.values(cats).reduce((s,v)=>s+v,0);
+      let b = `<div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--text2);text-transform:uppercase">${titulo}</div>`;
+      Object.entries(cats).filter(([,v])=>v>0).forEach(([cat,cant])=>{
+        b += `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--text2);font-size:13px">${cat}</span>
+          <strong>${fn(cant)}</strong>
+        </div>`;
+      });
+      b += `<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:4px">
+        <span style="font-weight:700">Total</span>
+        <strong style="font-size:16px;color:var(--gold-text)">${fn(total)}</strong>
+      </div></div>`;
+      return b;
+    }
+
+    h += buildStockActBloque('🐄 Cría', stockCria);
+    h += buildStockActBloque('🌱 Recría', stockRec);
+    h += buildStockActBloque('🏭 Terminación', stockEng);
+    h += `</div></div>`;
+
+    // Ranking de rentabilidad
+    const rents = [
+      { nombre: '🐄 Cría',        mar: marCria, eg: egCria,  stock: Object.values(stockCria).reduce((s,v)=>s+v,0) },
+      { nombre: '🌱 Recría',      mar: marRec,  eg: egRec,   stock: Object.values(stockRec).reduce((s,v)=>s+v,0)  },
+      { nombre: '🏭 Terminación', mar: marEng,  eg: egEng,   stock: Object.values(stockEng).reduce((s,v)=>s+v,0)  },
+    ].sort((a,b)=>b.mar-a.mar);
+
+    h += `<div class="panel">
+      <div class="panel-title">🏆 Ranking de actividades</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>#</th><th>Actividad</th>
+        <th class="tc">Margen total</th>
+        <th class="tc">Margen/cabeza</th>
+        <th class="tc">ROI (mar/egreso)</th>
+      </tr></thead><tbody>`;
+    rents.forEach((a,i)=>{
+      const marCab = a.stock>0 ? a.mar/a.stock : null;
+      const roi    = a.eg>0 ? (a.mar/a.eg*100) : null;
+      const cm     = a.mar>=0?'var(--green)':'var(--red)';
+      const medal  = ['🥇','🥈','🥉'][i]||'';
+      h += `<tr>
+        <td style="font-size:20px">${medal}</td>
+        <td><strong>${a.nombre}</strong></td>
+        <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMB(Math.abs(a.mar))}</td>
+        <td class="tc">${marCab!==null?`<span style="color:${cm};font-weight:600">${a.mar>=0?'':'-'}${fmMB(Math.abs(marCab))}/cab`:'—'}</td>
+        <td class="tc">${roi!==null?`<span class="pill ${roi>=0?'pill-green':'pill-red'}">${roi.toFixed(1)}%</span>`:'—'}</td>
+      </tr>`;
+    });
+    h += `</tbody></table></div>`;
+
+    // Análisis narrativo
+    const mejor = rents[0];
+    const peor  = rents[rents.length-1];
+    h += `<div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:13px;line-height:1.6">
+      <strong>Análisis:</strong> La actividad que más aportó al resultado fue <strong>${mejor.nombre}</strong> con ${fmMB(mejor.mar)}.
+      ${peor.mar < 0 ? `<strong>${peor.nombre}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.` : `Las tres actividades tuvieron resultado positivo.`}
+      ${marTotal >= 0 ? `El margen ganadero total fue positivo: <strong>${fmMB(marTotal)}</strong>.` : `El margen ganadero total fue negativo: <strong>-${fmMB(Math.abs(marTotal))}</strong>.`}
+    </div></div>`;
+
+    // Mortandad detallada
+    if (mortTotal2 > 0) {
+      h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.05)">
+        <div class="panel-title" style="color:var(--red)">💀 Resumen de mortandad</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Actividad</th><th class="tc">Bajas (cabezas)</th>
+        </tr></thead><tbody>
+          ${mortCria>0?`<tr><td>🐄 Cría</td><td class="tc" style="color:var(--red);font-weight:700">${mortCria}</td></tr>`:''}
+          ${mortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--red);font-weight:700">${mortRec}</td></tr>`:''}
+          ${mortEng>0?`<tr><td>🏭 Terminación</td><td class="tc" style="color:var(--red);font-weight:700">${mortEng}</td></tr>`:''}
+          <tr style="background:rgba(200,50,50,0.12)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:18px">${mortTotal2}</td></tr>
+        </tbody></table></div>
+        <div style="font-size:12px;color:var(--red);margin-top:8px">⚠ Impacto reflejado en menor stock valorizado, no como egreso explícito.</div>
+      </div>`;
+    }
+  }
 
   return h;
 }
@@ -8162,6 +8328,27 @@ function buildPreciosValPage() {
   }
 
   h += buildPreciosValPanel_();
+
+  // Precio de transferencia interno (cesiones Cría → Recría)
+  const preciosInt = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
+  h += `<div class="panel" style="margin-top:8px">
+    <div class="panel-title">🔁 Precio de transferencia interno ($/kg vivo)</div>
+    <p class="helper-text" style="margin-bottom:14px">Valor del kg vivo usado para valorizar la cesión de terneros destetados hacia Recría. Cada destete usa el precio vigente a su fecha — cargá uno nuevo cuando cambie, no edites los anteriores.</p>
+    <div class="fgrid">
+      <div class="fg"><label>Vigente desde</label><input type="date" id="pi-fecha" value="${today()}" onchange="actualizarPreviewUsd_()"></div>
+      <div class="fg"><label>Precio $/kg (ARS)</label><input type="number" id="pi-ars" placeholder="Ej: 6800" min="0" step="0.01" oninput="actualizarPreviewUsd_()"></div>
+      <div class="fg"><label>Equivalente U$D/kg</label><div id="pi-usd-preview" style="font-size:15px;font-weight:600;padding:9px 0;color:var(--text2)">—</div></div>
+      <div class="fg"><label>Observación</label><input type="text" id="pi-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="pi-save" style="margin-top:6px">Guardar precio</button>
+  </div>`;
+  h += '<div class="section-label">Historial de precios internos</div>';
+  h += buildEntityTable(preciosInt, [
+    { key: 'fecha_desde', label: 'Vigente desde', render: v => fd(v) },
+    { key: 'precio_ars_kg', label: '$/kg ARS', render: v => v ? '$ ' + fn(v, 2) : '—' },
+    { key: 'precio_usd_kg', label: 'U$D/kg', render: v => v ? 'U$D ' + fn(v, 2) : '—' },
+    { key: 'observacion', label: 'Observación', render: v => v || '—' },
+  ], 'precios_internos', 'precio_id');
 
   // Historial
   if (lista.length > 0) {
