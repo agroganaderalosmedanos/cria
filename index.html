@@ -4975,23 +4975,16 @@ function buildEngordeCierre_(rodeoId, fm) {
       const hace302 = new Date(today()); hace302.setDate(hace302.getDate()-30);
       const f302 = hace302.toISOString().slice(0,10);
       const cons302 = todosC2.filter(c=>c.fecha>=f302);
-      const costo302 = cons302.reduce((s,c)=>s+(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id),0);
-      let costoDiario2 = costo302>0 ? costo302/30 : (fi2&&caAcum2>0 ? caAcum2/Math.max(1,Math.round((new Date(today())-new Date(fi2))/86400000)) : 0);
-      const costoProyect2 = diasHasta2!==null ? Math.round(costoDiario2*diasHasta2) : null;
       const pesoUlt2 = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
       const ivStk2 = valorizarRodeo_(r, stk, pesoObj>0?pesoObj:pesoUlt2);
       totCaAcum += caAcum2;
-      if (costoProyect2!==null) totCostoProyect += costoProyect2;
-      if (costoProyect2!==null) totCostoFinal += cc2 + caAcum2 + costoProyect2;
-      totIvProyect += convertirAMoneda_(ivStk2, today(), S.engordeMoneda||'ARS');
-      const util2 = egIngVentas_(rid) + convertirAMoneda_(ivStk2,today(),S.engordeMoneda||'ARS') - (cc2+caAcum2+(costoProyect2||0));
-      totUtil += util2; countUtil++;
 
-      // Acumular insumos por producto para este corral
+      // Calcular costoProyect2 sumando desde insumos (misma lógica que tabla → siempre coinciden)
+      let costoProyect2 = null;
       if (diasHasta2 !== null && diasHasta2 > 0) {
         const prodIds2 = [...new Set(todosC2.map(c => c.producto_id))];
+        let costoProyectCorral = 0;
         prodIds2.forEach(pid => {
-          // Saltar si inactivo para este corral a la fecha proyectada
           if (!egEsProductoActivo_(rid, pid, fSalida2 || today())) return;
           const prod = productos.find(p => String(p.producto_id) === String(pid));
           const costoUnit = egCostoPromProducto_(pid);
@@ -5000,13 +4993,20 @@ function buildEngordeCierre_(rodeoId, fm) {
           const cant30p2 = cons30prod2.reduce((s,c) => s+(Number(c.cantidad)||0), 0);
           let cantDiaria2 = cant30p2 > 0 ? cant30p2/30 : (fi2 ? cantAcum2/Math.max(1,Math.round((new Date(today())-new Date(fi2))/86400000)) : 0);
           const cantProyect2 = Math.round(cantDiaria2 * diasHasta2);
+          costoProyectCorral += cantProyect2 * costoUnit;
           if (cantProyect2 > 0) {
             const key = String(pid);
             if (!insumosMap[key]) insumosMap[key] = { nombre: prod?.nombre||'Producto '+pid, unidad: prod?.unidad||'', cantProyect: 0, costoUnit };
             insumosMap[key].cantProyect += cantProyect2;
           }
         });
+        costoProyect2 = Math.round(costoProyectCorral);
       }
+      if (costoProyect2!==null) totCostoProyect += costoProyect2;
+      if (costoProyect2!==null) totCostoFinal += cc2 + caAcum2 + costoProyect2;
+      totIvProyect += convertirAMoneda_(ivStk2, today(), S.engordeMoneda||'ARS');
+      const util2 = egIngVentas_(rid) + convertirAMoneda_(ivStk2,today(),S.engordeMoneda||'ARS') - (cc2+caAcum2+(costoProyect2||0));
+      totUtil += util2; countUtil++;
     });
 
     const mc = totUtil>=0?'var(--green)':'var(--red)';
