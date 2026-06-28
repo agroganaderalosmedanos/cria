@@ -4331,33 +4331,68 @@ function buildEngordeCostos_(rodeoId, fm) {
 
   let h = '';
 
-  // KPIs principales
-  h += `<div class="kpi-grid" style="margin-bottom:8px">
-    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Costo de compra</div><div class="kpi-val">${fm(cc)}</div><div class="kpi-sub">${fn(cantIng,0)} animales × ${fn(kgIngProm,0)} kg × ${cc>0?fm(cc/Math.max(kgI,1))+'/kg':'sin precio'}</div></div>
-    <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alim. acumulado</div><div class="kpi-val">${fm(ca)}</div><div class="kpi-sub">todos los insumos hasta hoy</div></div>
-    <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Costo alim. hasta pesada</div><div class="kpi-val">${fm(caHP)}</div><div class="kpi-sub">${ultima?'hasta '+fd(ultima.fecha):'igual al total'}</div></div>
-    <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo total</div><div class="kpi-val">${fm(costoTotal)}</div><div class="kpi-sub">compra + alimentación</div></div>
-  </div>
-  <div class="kpi-grid" style="margin-bottom:8px">
-    <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso ventas</div><div class="kpi-val">${fm(iv)}</div><div class="kpi-sub">${fn(kgV,0)} kg vendidos</div></div>
-    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val">${ivStock>0?fm(ivStock):'—'}</div><div class="kpi-sub">${fn(stk,0)} anim.${pesoUltima?' · '+fn(pesoUltima,0)+' kg prom.':' · sin pesada'}</div></div>
-    <div class="kpi"><div class="kpi-icon">💰</div><div class="kpi-label">Ingresos totales</div><div class="kpi-val kpi-pos">${fm(ivTotal)}</div><div class="kpi-sub">ventas + stock valorizado</div></div>
-    <div class="kpi"><div class="kpi-icon">${util>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${fm(util)}</div><div class="kpi-sub">${util>=0?'✓ Ganancia':'⚠ Pérdida'}</div></div>
-    <div class="kpi"><div class="kpi-icon">🔢</div><div class="kpi-label">% Margen</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${ivTotal>0?egPct_(util,ivTotal):'—'}</div></div>
-  </div>
-  <div class="kpi-grid" style="margin-bottom:8px">
-    <div class="kpi"><div class="kpi-icon">📥</div><div class="kpi-label">Kg ingresados</div><div class="kpi-val">${fn(kgI,0)}</div><div class="kpi-sub">${fn(cantIng,0)} anim. × ${fn(kgIngProm,0)} kg</div></div>
-    <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Kg vendidos</div><div class="kpi-val">${fn(kgV,0)}</div></div>
-    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Kg en stock (pesada)</div><div class="kpi-val">${fn(kgStk,0)}</div><div class="kpi-sub">${fn(stk,0)} anim. × ${ultima?fn(ultima.peso_prom_kg,0)+' kg':'prom. ingreso'}</div></div>
-    <div class="kpi"><div class="kpi-icon">📊</div><div class="kpi-label">Kg ganados</div><div class="kpi-val kpi-pos">${fn(kgG,0)}</div><div class="kpi-sub">${ultima&&kgIngProm?fn(Number(ultima.peso_prom_kg)-kgIngProm,1)+' kg/animal':'sin pesadas'}</div></div>
-    <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">GDP</div><div class="kpi-val kpi-pos">${ganDiaria!==null?fn(ganDiaria,3)+' kg/día':'—'}</div><div class="kpi-sub">${fi&&ultima?fd(fi)+' → '+fd(ultima.fecha):''}</div></div>
-  </div>
-  <div class="kpi-grid" style="margin-bottom:16px">
-    <div class="kpi"><div class="kpi-icon">💹</div><div class="kpi-label">Precio venta prom.</div><div class="kpi-val">${precVentaProm?fm(precVentaProm):'—'}</div><div class="kpi-sub">por kg vendido</div></div>
-    <div class="kpi"><div class="kpi-icon">🌾</div><div class="kpi-label">Alim. / kg ganado</div><div class="kpi-val">${caXkg?fm(caXkg):'—'}</div></div>
-    <div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Compra / kg ganado</div><div class="kpi-val">${ccXkg?fm(ccXkg):'—'}</div></div>
-    <div class="kpi"><div class="kpi-icon">⚖️</div><div class="kpi-label">Break-even</div><div class="kpi-val ${breakEven&&precVentaProm&&precVentaProm<breakEven?'kpi-neg':''}">${breakEven?fm(breakEven):'—'}</div><div class="kpi-sub">precio mín. para recuperar costo</div></div>
-    ${margenVsBE!==null?`<div class="kpi" style="border-top:2px solid ${margenVsBE>=0?'var(--green)':'var(--red)'}"><div class="kpi-icon">${margenVsBE>=0?'✅':'❌'}</div><div class="kpi-label">Precio vs break-even</div><div class="kpi-val ${margenVsBE>=0?'kpi-pos':'kpi-neg'}">${margenVsBE>=0?'+':''}${fm(margenVsBE)}/kg</div></div>`:''}
+  // Layout ingresos/egresos como el dashboard
+  h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — ${r.nombre}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">💰 Ventas de hacienda</div><div style="font-size:11px;color:var(--text3)">${fn(kgV,0)} kg vendidos</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(iv)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+          <div><div style="font-weight:600">📦 Stock valorizado</div><div style="font-size:11px;color:var(--text3)">${fn(stk,0)} anim. · ${pesoUltima?fn(pesoUltima,0)+' kg prom.':'sin pesada'}</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${ivStock>0?fm(ivStock):'—'}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
+          <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
+          <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(ivTotal)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — ${r.nombre}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🔄 Costo de entrada (cesión/compra)</div><div style="font-size:11px;color:var(--text3)">${fn(cantIng,0)} anim. × ${fn(kgIngProm,0)} kg</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${cc>0?fm(cc):'—'}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${ultima?'hasta '+fd(ultima.fecha):'acumulado'}</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caHP)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">💉 Veterinaria y otros</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(costoTotal-cc-caHP>0?costoTotal-cc-caHP:0)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
+          <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
+          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fm(costoTotal)}</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  // Margen
+  const margenColor = util>=0?'var(--green)':'var(--red)';
+  const margenBg2   = util>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
+  h += `<div style="background:${margenBg2};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — ${r.nombre}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:3px">${ivTotal>0?egPct_(util,ivTotal)+' sobre ingresos':''} ${breakEven?'· Break-even: '+fm(breakEven)+'/kg':''}</div>
+    </div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${util>=0?'':'-'}${fm(Math.abs(util))}</div>
+  </div>`;
+
+  // KPIs productivos compactos
+  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg ingresados</div><div style="font-size:18px;font-weight:700">${fn(kgI,0)}</div></div>
+    <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Kg ganados</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${fn(kgG,0)}</div><div style="font-size:10px;color:var(--text3)">${ultima&&kgIngProm?fn(Number(ultima.peso_prom_kg)-kgIngProm,1)+' kg/animal':''}</div></div>
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">GDP</div><div style="font-size:18px;font-weight:700">${ganDiaria!==null?fn(ganDiaria,3)+' kg/día':'—'}</div><div style="font-size:10px;color:var(--text3)">${fi&&ultima?fd(fi)+' → '+fd(ultima.fecha):''}</div></div>
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg vendidos</div><div style="font-size:18px;font-weight:700">${fn(kgV,0)}</div></div>
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg en stock</div><div style="font-size:18px;font-weight:700">${fn(kgStk,0)}</div><div style="font-size:10px;color:var(--text3)">${fn(stk,0)} anim.</div></div>
+    ${caXkg?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fm(caXkg)}</div></div>`:''}
+    ${precVentaProm?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Precio venta prom.</div><div style="font-size:18px;font-weight:700">${fm(precVentaProm)}/kg</div></div>`:''}
   </div>`;
 
   // Tabla de costos por alimento
