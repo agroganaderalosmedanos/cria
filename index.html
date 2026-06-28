@@ -4824,7 +4824,7 @@ function buildEngordeCierre_(rodeoId, fm) {
     const todosConsumos = egConsumos_(rid);
     const cons30 = todosConsumos.filter(c => c.fecha >= f30);
     const costo30 = cons30.reduce((s,c) => s+(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id), 0);
-    // Si no hay datos en últimos 30 días, usar promedio histórico completo
+    // costoDiario solo para mostrar en KPI (referencia)
     let costoDiario;
     if (costo30 > 0) {
       costoDiario = costo30 / 30;
@@ -4834,7 +4834,25 @@ function buildEngordeCierre_(rodeoId, fm) {
     } else {
       costoDiario = 0;
     }
-    const costoProyect = diasHastaSalida !== null ? Math.round(costoDiario * diasHastaSalida) : null;
+    // costoProyect calculado desde productos (misma lógica que la tabla → siempre coinciden)
+    let costoProyect = null;
+    if (diasHastaSalida !== null && diasHastaSalida > 0) {
+      const productos_ = (S.catalogs && S.catalogs.productos) || [];
+      const prodIdsCalc = [...new Set(todosConsumos.map(c => c.producto_id))];
+      let costoProyectSum = 0;
+      prodIdsCalc.forEach(pid => {
+        if (!egEsProductoActivo_(rid, pid, fSalida || hoy)) return;
+        const costoUnit = egCostoPromProducto_(pid);
+        const cantAcumP = todosConsumos.filter(c => String(c.producto_id)===String(pid)).reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+        const inactivoReg = egRodeoProductosTodos_().find(x => String(x.rodeo_id)===String(rid) && String(x.producto_id)===String(pid));
+        const fechaBajaRef = inactivoReg?.fecha_baja || hoy;
+        const cons30p = cons30.filter(c => String(c.producto_id)===String(pid) && String(c.fecha)<fechaBajaRef);
+        const cant30p = cons30p.reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+        let cantDiaria = cant30p > 0 ? cant30p/30 : (fi ? cantAcumP/Math.max(1,Math.round((new Date(hoy)-new Date(fi))/86400000)) : 0);
+        costoProyectSum += Math.round(cantDiaria * diasHastaSalida) * costoUnit;
+      });
+      costoProyect = Math.round(costoProyectSum);
+    }
     const costoTotalCierre = costoProyect !== null ? caAcum + costoProyect : null;
     const costoFinal = costoTotalCierre !== null ? cc + costoTotalCierre : null;
     const stkP = Number(cfg.precioStock||0);
