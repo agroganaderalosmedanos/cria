@@ -4848,7 +4848,7 @@ function buildEngordeCierre_(rodeoId, fm) {
   });
 
   // Resumen consolidado si hay más de un corral
-  if (!rodeoId && lista.length > 1) {
+  if (lista.length > 1) {
     let totCaAcum=0, totCostoProyect=0, totCostoFinal=0, totIvProyect=0, totUtil=0, countUtil=0;
     lista.forEach(r => {
       const rid = r.rodeo_id;
