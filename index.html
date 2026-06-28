@@ -610,10 +610,10 @@ function buildShell() {
   const activeSection = NAV.find(sec => sec.items.some(it => it.k === S.page));
   // Secciones expandidas: la activa + las que el usuario haya expandido manualmente
   if (!S._expandedSections) S._expandedSections = {};
-  // No forzar expansión — respetar lo que el usuario eligió
-  // Solo expandir automáticamente si no hay ninguna sección abierta y hay una activa
-  const anyOpen = Object.values(S._expandedSections || {}).some(Boolean);
-  if (activeSection && !anyOpen) {
+  if (!S.hasOwnProperty('_manuallyClosed')) S._manuallyClosed = null;
+  // Auto-expandir la sección activa solo si ninguna está abierta Y el usuario no la cerró
+  const anyOpen = Object.values(S._expandedSections).some(Boolean);
+  if (activeSection && !anyOpen && S._manuallyClosed !== activeSection.section) {
     S._expandedSections = { [activeSection.section]: true };
   }
 
@@ -623,10 +623,16 @@ function buildShell() {
     return `
     <button class="nav-section-btn${isActive ? ' active-sec' : ''}"
       onclick="
-        const exp = window.S._expandedSections || {};
-        const wasOpen = !!exp['${sec.section}'];
+        const wasOpen = !!(window.S._expandedSections || {})['${sec.section}'];
         window.S._expandedSections = {};
-        if (!wasOpen) { window.S._expandedSections['${sec.section}'] = true; goto('${sec.defaultPage}'); } else { render(); }
+        if (wasOpen) {
+          window.S._manuallyClosed = '${sec.section}';
+          render();
+        } else {
+          window.S._manuallyClosed = null;
+          window.S._expandedSections['${sec.section}'] = true;
+          goto('${sec.defaultPage}');
+        }
       ">
       <i class="ti ${sec.icon}" aria-hidden="true"></i>
       <span>${sec.section}</span>
