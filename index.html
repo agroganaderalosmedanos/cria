@@ -5488,12 +5488,31 @@ function buildInsumos() {
 
   const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
   h += '<div class="section-label">Productos</div>';
-  h += buildEntityTable((S.cache.productos || []).slice(), [
+  // Enriquecer productos con stock actual
+  const stockMap_ = {};
+  (S.stockProductos || []).forEach(p => { stockMap_[String(p.producto_id)] = p; });
+  const productosConStock = (S.cache.productos || []).map(p => {
+    const sp = stockMap_[String(p.producto_id)];
+    let stockStr = '—';
+    if (sp) {
+      if (sp.por_campo && sp.stock_por_campo) {
+        const campos_ = S.catalogs?.campos || [];
+        stockStr = Object.entries(sp.stock_por_campo)
+          .map(([cid, cant]) => { const c = campos_.find(x => String(x.campo_id) === String(cid)); return `${c?.nombre||cid}: ${Number(cant).toLocaleString('es-AR')}`; })
+          .join(' / ');
+      } else {
+        stockStr = sp.stock !== null && sp.stock !== undefined ? Number(sp.stock).toLocaleString('es-AR') + ' ' + (p.unidad||'') : '—';
+      }
+    }
+    return { ...p, _stock: stockStr };
+  });
+  h += buildEntityTable(productosConStock, [
     { key: 'nombre', label: 'Nombre' },
     { key: 'categoria', label: 'Categoría' },
     { key: 'unidad', label: 'Unidad' },
     { key: 'por_campo', label: 'Por campo', render: v => esPorCampo_(v) ? '<span class="pill pill-gold">Sí, por campo</span>' : '<span class="pill pill-green">Pozo común</span>' },
-    { key: 'activo', label: 'Activo', render: v => esPorCampo_(v) ? 'Sí' : 'No' },
+    { key: '_stock', label: 'Stock actual', render: v => `<span style="font-weight:600;color:var(--gold)">${v}</span>` },
+    { key: 'activo', label: 'Activo', render: v => String(v).toUpperCase() === 'TRUE' || v === true ? 'Sí' : 'No' },
   ], 'productos', 'producto_id');
 
   h += `<div class="section-label">Historial de insumos</div>
