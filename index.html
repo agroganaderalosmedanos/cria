@@ -4701,7 +4701,10 @@ function buildProyeccionInsumos_(rodeoId, diasRestantes, fm) {
 
 function buildEngordeCierre_(rodeoId, fm) {
   const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
-  const lista = rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))].filter(Boolean) : rodeosEng;
+  const campFiltro = S._engCampoFiltro || '';
+  const rodeosEngFilt = campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(campFiltro)) : rodeosEng;
+  const lista = rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))].filter(Boolean) : rodeosEngFilt;
+  if (!lista.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
   let h = '';
   lista.forEach(r => {
     const rid = r.rodeo_id;
@@ -4725,9 +4728,19 @@ function buildEngordeCierre_(rodeoId, fm) {
     const cc = egCostoCompra_(rid);
     const hace30 = new Date(hoy); hace30.setDate(hace30.getDate()-30);
     const f30 = hace30.toISOString().slice(0,10);
-    const cons30 = egConsumos_(rid).filter(c => c.fecha >= f30);
+    const todosConsumos = egConsumos_(rid);
+    const cons30 = todosConsumos.filter(c => c.fecha >= f30);
     const costo30 = cons30.reduce((s,c) => s+(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id), 0);
-    const costoDiario = costo30 / 30;
+    // Si no hay datos en últimos 30 días, usar promedio histórico completo
+    let costoDiario;
+    if (costo30 > 0) {
+      costoDiario = costo30 / 30;
+    } else if (todosConsumos.length && fi) {
+      const diasTotales = Math.max(1, Math.round((new Date(hoy)-new Date(fi))/86400000));
+      costoDiario = caAcum / diasTotales;
+    } else {
+      costoDiario = 0;
+    }
     const costoProyect = diasHastaSalida !== null ? Math.round(costoDiario * diasHastaSalida) : null;
     const costoTotalCierre = costoProyect !== null ? caAcum + costoProyect : null;
     const costoFinal = costoTotalCierre !== null ? cc + costoTotalCierre : null;
@@ -4783,7 +4796,16 @@ function buildEngordeCierre_(rodeoId, fm) {
           // Diario últimos 30 días
           const cons30prod = cons30.filter(c => String(c.producto_id) === String(pid));
           const cant30 = cons30prod.reduce((s,c) => s+(Number(c.cantidad)||0), 0);
-          const cantDiaria = cant30 / 30;
+          // Si no hay datos en 30 días, usar promedio histórico del producto
+          let cantDiaria;
+          if (cant30 > 0) {
+            cantDiaria = cant30 / 30;
+          } else if (fi) {
+            const diasTotales = Math.max(1, Math.round((new Date(hoy)-new Date(fi))/86400000));
+            cantDiaria = cantAcum / diasTotales;
+          } else {
+            cantDiaria = 0;
+          }
           // Proyectado
           const cantProyect = Math.round(cantDiaria * diasHastaSalida);
           const costoP = Math.round(cantProyect * costoUnit);
@@ -4824,6 +4846,63 @@ function buildEngordeCierre_(rodeoId, fm) {
     }
     h += '</div>';
   });
+
+  // Resumen consolidado si hay más de un corral
+  if (!rodeoId && lista.length > 1) {
+    let totCaAcum=0, totCostoProyect=0, totCostoFinal=0, totIvProyect=0, totUtil=0, countUtil=0;
+    lista.forEach(r => {
+      const rid = r.rodeo_id;
+      const stk = egStock_(rid);
+      const cfg = egConfig_(rid);
+      const pesoObj = Number(cfg.pesoObjetivo||520);
+      const pes = egPesadas_(rid);
+      const ultima = pes.length ? pes[pes.length-1] : null;
+      const gd = egGanDiaria_(rid);
+      const kgActual = ultima ? Number(ultima.peso_prom_kg) : null;
+      const fi2 = egFechaIngreso_(rid);
+      let fSalida2 = null;
+      if (kgActual && gd && gd>0 && kgActual<pesoObj) {
+        const diasR = Math.ceil((pesoObj-kgActual)/gd);
+        const d = new Date(ultima.fecha); d.setDate(d.getDate()+diasR);
+        fSalida2 = d.toISOString().slice(0,10);
+      }
+      const diasHasta2 = fSalida2 ? Math.max(0,Math.round((new Date(fSalida2)-new Date(today()))/86400000)) : null;
+      const caAcum2 = egCostoAlim_(rid);
+      const cc2 = egCostoCompra_(rid);
+      const todosC2 = egConsumos_(rid);
+      const hace302 = new Date(today()); hace302.setDate(hace302.getDate()-30);
+      const f302 = hace302.toISOString().slice(0,10);
+      const cons302 = todosC2.filter(c=>c.fecha>=f302);
+      const costo302 = cons302.reduce((s,c)=>s+(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id),0);
+      let costoDiario2 = costo302>0 ? costo302/30 : (fi2&&caAcum2>0 ? caAcum2/Math.max(1,Math.round((new Date(today())-new Date(fi2))/86400000)) : 0);
+      const costoProyect2 = diasHasta2!==null ? Math.round(costoDiario2*diasHasta2) : null;
+      const pesoUlt2 = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+      const ivStk2 = valorizarRodeo_(r, stk, pesoObj>0?pesoObj:pesoUlt2);
+      totCaAcum += caAcum2;
+      if (costoProyect2!==null) totCostoProyect += costoProyect2;
+      if (costoProyect2!==null) totCostoFinal += cc2 + caAcum2 + costoProyect2;
+      totIvProyect += convertirAMoneda_(ivStk2, today(), S.engordeMoneda||'ARS');
+      const util2 = egIngVentas_(rid) + convertirAMoneda_(ivStk2,today(),S.engordeMoneda||'ARS') - (cc2+caAcum2+(costoProyect2||0));
+      totUtil += util2; countUtil++;
+    });
+
+    const mc = totUtil>=0?'var(--green)':'var(--red)';
+    const mb = totUtil>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
+    h += `<div class="panel" style="border-top:2px solid var(--border2);margin-top:8px">
+      <div class="panel-title">📊 Resumen consolidado — todos los corrales</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div style="background:var(--clay-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text)">Alim. acumulada</div><div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totCaAcum)}</div></div>
+        <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Alim. proyectada</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${fm(totCostoProyect)}</div></div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Costo total al cierre</div><div style="font-size:18px;font-weight:700">${fm(totCostoFinal)}</div></div>
+        <div style="background:var(--green-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text)">Stock valorizado proyectado</div><div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totIvProyect)}</div></div>
+      </div>
+      <div style="background:${mb};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Utilidad proyectada consolidada</div>
+        <div style="font-size:28px;font-weight:800;color:${mc}">${totUtil>=0?'':'-'}${fm(Math.abs(totUtil))}</div>
+      </div>
+    </div>`;
+  }
+
   return h;
 }
 
