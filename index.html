@@ -5839,6 +5839,14 @@ function attachInsumosEvents() {
       } else {
         const rodeoId = document.getElementById('in-rodeo').value;
         if (!rodeoId) { toast('Seleccioná el rodeo que consume.', 'err'); save.disabled = false; return; }
+        // Validar que el producto no esté inactivo para este rodeo a la fecha del consumo
+        if (!egEsProductoActivo_(rodeoId, productoId, fecha)) {
+          const rp = egRodeoProductosTodos_().find(x => String(x.rodeo_id) === String(rodeoId) && String(x.producto_id) === String(productoId));
+          const prod = (S.catalogs?.productos || []).find(p => String(p.producto_id) === String(productoId));
+          toast(`"${prod?.nombre || 'Este insumo'}" está inactivo para este rodeo desde ${rp?.fecha_baja || 'una fecha anterior'}.`, 'err');
+          save.disabled = false;
+          return;
+        }
         const data = {
           fecha, producto_id: productoId,
           campo_id: document.getElementById('in-campo').value, rodeo_id: rodeoId,
