@@ -610,8 +610,10 @@ function buildShell() {
   const activeSection = NAV.find(sec => sec.items.some(it => it.k === S.page));
   // Secciones expandidas: la activa + las que el usuario haya expandido manualmente
   if (!S._expandedSections) S._expandedSections = {};
-  // Solo expandir la sección activa, no acumular
-  if (activeSection && !S._expandedSections[activeSection.section]) {
+  // No forzar expansión — respetar lo que el usuario eligió
+  // Solo expandir automáticamente si no hay ninguna sección abierta y hay una activa
+  const anyOpen = Object.values(S._expandedSections || {}).some(Boolean);
+  if (activeSection && !anyOpen) {
     S._expandedSections = { [activeSection.section]: true };
   }
 
