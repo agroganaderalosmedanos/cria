@@ -4531,9 +4531,9 @@ function buildEngordeComparacion_(rodeosEng, fm) {
     const kgIng = egKgIngreso_(rid);
     const caXkg = kgG > 0 ? egCostoAlim_(rid, ultima?.fecha) / kgG : null;
     const ccXkg = kgG > 0 ? cc / kgG : null;
-    const cfg = egConfig_(rid);
-    const stkP = Number(cfg.precioStock||0);
-    const ivStock = stkP>0&&ultima ? stk*Number(ultima.peso_prom_kg)*stkP : 0;
+    const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+    const ivStockARS2 = valorizarRodeo_(r, stk, pesoUltimaC);
+    const ivStock = convertirAMoneda_(ivStockARS2, today(), S.engordeMoneda||'ARS');
     const util = iv + ivStock - ca - cc;
     const dias = fi ? Math.round((new Date()-new Date(fi))/86400000) : null;
     return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, util, gd, caXkg, ccXkg, dias, kgIng, ultima };
