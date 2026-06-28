@@ -6261,7 +6261,7 @@ function buildStockHacienda() {
   h += '<div class="panel"><div class="panel-title">📅 Reporte histórico</div><div class="fgrid">' +
     '<div class="fg"><label>Fecha desde</label><input type="date" id="sh-desde" value="' + hoy.slice(0,8) + '01"></div>' +
     '<div class="fg"><label>Fecha hasta</label><input type="date" id="sh-hasta" value="' + hoy + '"></div>' +
-    '<div class="fg"><label>Campo</label><select id="sh-campo"><option value="">Todos los campos</option>' +
+    '<div class="fg"><label>Campo</label><select id="sh-campo" onchange="actualizarCatsHistorico_()" ><option value="">Todos los campos</option>' +
     campos.map(function(c){ return '<option value="' + c.campo_id + '">' + c.nombre + '</option>'; }).join('') +
     '</select></div>' +
     '<div class="fg"><label>Categoría</label><select id="sh-cat"><option value="">Todas las categorías</option>' +
@@ -6275,6 +6275,18 @@ function buildStockHacienda() {
 
   h += '<div id="sh-resultado"></div>';
   return h;
+}
+
+function actualizarCatsHistorico_() {
+  const campoId = document.getElementById('sh-campo')?.value || '';
+  const stockList = (S.stock || []).filter(function(s){
+    return campoId ? String(s.campo_id) === String(campoId) : true;
+  });
+  const cats = [...new Set(stockList.map(function(s){ return s.categoria; }).filter(Boolean))].sort(function(a,b){ return a.localeCompare(b,'es'); });
+  const sel = document.getElementById('sh-cat');
+  if (sel) {
+    sel.innerHTML = '<option value="">Todas las categorías</option>' + cats.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('');
+  }
 }
 
 function renderStockHaciendaActual_() {
