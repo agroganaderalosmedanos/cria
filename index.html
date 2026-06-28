@@ -6554,8 +6554,17 @@ function attachStockHaciendaEvents() {
       desde: document.getElementById('sh-desde')?.value || '',
       hasta: document.getElementById('sh-hasta')?.value || '',
       campoId: document.getElementById('sh-campo')?.value || '',
+      catFiltro: document.getElementById('sh-cat')?.value || '',
       mensual: document.getElementById('sh-mensual')?.value === 'si',
     };
+  }
+
+  function calcConFiltro_(p) {
+    let data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+    if (p.catFiltro) {
+      data = { ...data, filas: Object.fromEntries(Object.entries(data.filas).filter(function([k]){ return k === p.catFiltro; })) };
+    }
+    return data;
   }
 
   const prevBtn = document.getElementById('sh-preview');
@@ -6564,7 +6573,7 @@ function attachStockHaciendaEvents() {
     if (!p.desde || !p.hasta) { toast('Ingresa las fechas', 'err'); return; }
     const campos_ = (S.catalogs && S.catalogs.campos) || [];
     const campo = campos_.find(function(c){ return String(c.campo_id) === String(p.campoId); });
-    const data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+    const data = calcConFiltro_(p);
     const el = document.getElementById('sh-resultado');
     if (el) el.innerHTML = buildStockHaciendaTable_(data, p.desde, p.hasta, campo?.nombre || '', p.mensual);
   };
@@ -6579,14 +6588,14 @@ function attachStockHaciendaEvents() {
       s.onload = function() {
         const campos_ = (S.catalogs && S.catalogs.campos) || [];
         const campo = campos_.find(function(c){ return String(c.campo_id) === String(p.campoId); });
-        const data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+        const data = calcConFiltro_(p);
         exportStockHaciendaXLSX_(data, p.desde, p.hasta, campo?.nombre || '', p.mensual);
       };
       document.head.appendChild(s);
     } else {
       const campos_ = (S.catalogs && S.catalogs.campos) || [];
       const campo = campos_.find(function(c){ return String(c.campo_id) === String(p.campoId); });
-      const data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
+      const data = calcConFiltro_(p);
       exportStockHaciendaXLSX_(data, p.desde, p.hasta, campo?.nombre || '', p.mensual);
     }
   };
