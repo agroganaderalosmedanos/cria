@@ -6309,10 +6309,17 @@ function buildMargenBruto() {
   }
 
   // ── Datos por actividad ───────────────────────────────────────────────
-  // CRÍA — viene del GS via S.margenBruto
-  const ingCria  = mb.ingresos.total || 0;
+  // CRÍA — viene del GS via S.margenBruto + stock valorizado actual
+  const rodeosCria = ((S.catalogs&&S.catalogs.rodeos)||[]).filter(r=>r.actividad==='Cría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const stockTodosC = S.stock || [];
+  let stockValCria = 0;
+  rodeosCria.forEach(r=>{
+    const stk = stockTodosC.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
+    if (stk && stk.stock > 0) stockValCria += valorizarRodeo_(r, stk.stock, 0);
+  });
+  const ingCria  = (mb.ingresos.total || 0) + stockValCria;
   const egCria   = mb.egresos.insumos || 0;
-  const marCria  = mb.resultado || 0;
+  const marCria  = ingCria - egCria;
 
   // RECRÍA — calculado en frontend igual que buildRecriaDashboard
   const rodeosRecria = ((S.resumenRecria && S.resumenRecria.rodeos) || []);
@@ -6373,6 +6380,7 @@ function buildMargenBruto() {
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🐄 Cría</td></tr>
           <tr><td style="padding-left:20px">Ventas reales</td><td class="tr">${fmMB(mb.ingresos.ventas)}</td></tr>
           <tr><td style="padding-left:20px">Cesión por destete</td><td class="tr">${fmMB(mb.ingresos.cesion_destete_ars)}</td></tr>
+          <tr><td style="padding-left:20px">Stock valorizado actual</td><td class="tr">${fmMB(stockValCria)}</td></tr>
           <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(ingCria)}</strong></td></tr>
 
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
