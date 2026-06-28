@@ -3255,195 +3255,232 @@ function attachMovimientosEvents() {
 
 // ── RECRÍA ────────────────────────────────────────────────────────────────
 function buildRecriaDashboard() {
-  const rodeos = (S.resumenRecria && S.resumenRecria.rodeos) || [];
-  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeos    = (S.resumenRecria && S.resumenRecria.rodeos) || [];
+  const campos    = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const rodeosPorId = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
   const fm = v => '$ ' + fn(Math.round(v||0));
 
-  // Filtros
-  const campSelec = S.rcDashCampo || '';
-  const campanas  = [...new Set((S.cache.consumos_insumos||[]).map(c=>c.campana).filter(Boolean))].sort().reverse();
+  const campSelec  = S.rcDashCampo || '';
+  const moneda     = S.rcDashMoneda || 'ARS';
+  const fmM = v => moneda === 'USD' ? 'U$S ' + fn(Math.round(convertirAMoneda_(v, today(), 'USD'))) : fm(v);
 
-  let h = `<div class="page-header"><div class="page-title">Dashboard Recría</div><div class="page-sub">Resultado económico de la actividad de Recría</div></div>`;
+  // Mortandad
+  const mortandad = (S.cache.mortandad||[]);
+  const rodeosFiltBase = rodeos.filter(r => !campSelec || String(r.campo_id) === String(campSelec));
+  const rodeosIdsFilt  = new Set(rodeosFiltBase.map(r=>String(r.rodeo_id)));
+  const mortFilt = mortandad.filter(m=>rodeosIdsFilt.has(String(m.rodeo_id)));
+  const mortTotal = mortFilt.reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortPorRodeo = {};
+  mortFilt.forEach(m=>{ const rid=String(m.rodeo_id); mortPorRodeo[rid]=(mortPorRodeo[rid]||0)+(Number(m.cantidad)||1); });
 
-  // Filtros
-  h += `<div class="panel" style="padding:12px 16px">
-    <div class="fgrid" style="margin:0">
-      <div class="fg"><label>Campo</label>
-        <select id="rcd-campo" onchange="S.rcDashCampo=this.value;render()">
-          <option value="">Todos los campos</option>
-          ${campos.map(c=>`<option value="${c.campo_id}" ${campSelec==c.campo_id?'selected':''}>${c.nombre}</option>`).join('')}
-        </select>
-      </div>
+  let h = `<div class="page-header">
+    <div class="page-title">Dashboard Recría</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button onclick="S.rcDashMoneda=S.rcDashMoneda==='USD'?'ARS':'USD';render()"
+        style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
+        💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
+      </button>
     </div>
   </div>`;
 
-  // Rodeos filtrados
-  const rodeosFilt = rodeos.filter(r => !campSelec || String(r.campo_id) === String(campSelec));
-  const rodeosIds  = new Set(rodeosFilt.map(r => String(r.rodeo_id)));
+  // Filtros
+  h += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600">Campo:</label>
+      <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
+        onchange="S.rcDashCampo=this.value;render()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}" ${campSelec==c.campo_id?'selected':''}>${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
 
-  const ventas    = (S.cache.ventas||[]).filter(v => rodeosIds.has(String(v.rodeo_id)));
-  const egresos   = (S.cache.egresos_recria||[]).filter(e => rodeosIds.has(String(e.rodeo_id)));
-  const consumos  = (S.cache.consumos_insumos||[]).filter(c => rodeosIds.has(String(c.rodeo_id)));
-  const movs      = (S.cache.movimientos||[]);
-  const destetes  = (S.cache.destetes||[]);
-  const pesadas   = (S.cache.pesadas||[]).filter(p => rodeosIds.has(String(p.rodeo_id)));
-  const mortandad = (S.cache.mortandad||[]).filter(m => rodeosIds.has(String(m.rodeo_id)));
-  const precios   = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
-  const productos = (S.catalogs&&S.catalogs.productos)||[];
+  // Mortandad — panel rojo destacado
+  if (mortTotal > 0) {
+    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Recría</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+    Object.entries(mortPorRodeo).forEach(([rid,cant])=>{
+      const r = rodeosFiltBase.find(x=>String(x.rodeo_id)===String(rid));
+      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:8px 14px;border:1px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+      </div>`;
+    });
+    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:8px 14px;border:2px solid var(--red)">
+      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+      <div style="font-size:26px;font-weight:800;color:var(--red)">${mortTotal} <span style="font-size:13px">bajas</span></div>
+    </div></div>
+      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se suma como egreso — su impacto ya está reflejado en el menor stock al cierre.</div>
+    </div>`;
+  }
+
+  // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
+  const ventas     = (S.cache.ventas||[]).filter(v=>rodeosIdsFilt.has(String(v.rodeo_id)));
+  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIdsFilt.has(String(c.rodeo_id)));
+  const movs       = (S.cache.movimientos||[]);
+  const destetes   = (S.cache.destetes||[]);
+  const egresos    = (S.cache.egresos_recria||[]).filter(e=>rodeosIdsFilt.has(String(e.rodeo_id)));
+  const precios    = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
+  const productos  = (S.catalogs&&S.catalogs.productos)||[];
 
   function precioInternoEn(fecha) {
     const v = precios.filter(p=>p.fecha_desde<=fecha);
     return v.length ? v[0] : null;
   }
 
-  // ── INGRESOS ──────────────────────────────────────────────────────────
+  // INGRESOS
+  // 1. Ventas directas de Recría
   let ingVentas = 0;
-  ventas.forEach(v => {
-    ingVentas += Number(v.importe_liq) || (Number(v.precio_pactado)*Number(v.peso_campo_kg)) || (Number(v.precio_pactado)*Number(v.cant_animales)) || 0;
+  const detalleVentas = [];
+  ventas.forEach(v=>{
+    const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+    ingVentas += imp;
+    detalleVentas.push({ fecha: v.fecha_salida, rodeo: rodeoNombre(v.rodeo_id), cant: Number(v.cant_animales)||0, importe: imp });
   });
 
-  let ingCesionEng = 0, ingCesionEngKg = 0;
-  egresos.filter(e=>e.destino==='Engorde').forEach(e => {
+  // 2. Cesiones a Terminación (egresos con destino Engorde, valoradas a precio interno)
+  let ingCesionEng = 0;
+  const detalleCesEng = [];
+  egresos.filter(e=>e.destino==='Engorde').forEach(e=>{
     const p = precioInternoEn(e.fecha);
-    const kgTot = (Number(e.cant_animales)||0) * (Number(e.peso_prom_kg)||0);
-    ingCesionEng += kgTot * (p ? Number(p.precio_ars_kg)||0 : 0);
-    ingCesionEngKg += kgTot;
+    const kgTot = (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0);
+    const imp = kgTot*(p?Number(p.precio_ars_kg)||0:0);
+    ingCesionEng += imp;
+    detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant: Number(e.cant_animales)||0, kg: kgTot, importe: imp, sinPrecio: !p });
   });
 
-  // ── EGRESOS ───────────────────────────────────────────────────────────
+  // 3. Stock valorizado actual
+  let stockValRecria = 0;
+  const preciosVal = preciosValGet_();
+  rodeosFiltBase.forEach(r=>{
+    const stock = Math.max(0, r.stock||0);
+    if (!stock) return;
+    const pesoP = r.ultima_pesada ? Number(r.ultima_pesada.peso_prom_kg)||0 : 0;
+    stockValRecria += valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{}, stock, pesoP);
+  });
+
+  const totalIngresos = ingVentas + ingCesionEng + stockValRecria;
+
+  // EGRESOS
+  // 1. Cesión desde Cría (destetes que entraron a rodeos de recría, valorados a precio interno)
   let egCesionCria = 0;
-  destetes.forEach(d => {
-    if (!rodeosIds.has(String(d.rodeo_id))) return;
+  const detalleCesCria = [];
+  destetes.forEach(d=>{
+    if (!rodeosIdsFilt.has(String(d.rodeo_id))) return;
     const p = precioInternoEn(d.fecha);
-    const kgTot = (Number(d.total)||0) * (Number(d.peso_prom_kg)||0);
-    egCesionCria += kgTot * (p ? Number(p.precio_ars_kg)||0 : 0);
+    const kgTot = (Number(d.total)||0)*(Number(d.peso_prom_kg)||0);
+    const imp = kgTot*(p?Number(p.precio_ars_kg)||0:0);
+    egCesionCria += imp;
+    detalleCesCria.push({ fecha: d.fecha, rodeo: rodeoNombre(d.rodeo_id), total: Number(d.total)||0, kg: kgTot, importe: imp });
   });
 
+  // 2. Compra externa (movimientos hacia rodeos de recría con precio)
   let egCompraExterna = 0;
-  movs.filter(m=>rodeosIds.has(String(m.rodeo_destino_id)) && m.tipo!=='Saldo inicial' && m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual').forEach(m=>{
-    egCompraExterna += (Number(m.cantidad)||0) * (Number(m.precio_cabeza)||0);
+  movs.filter(m=>rodeosIdsFilt.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual').forEach(m=>{
+    egCompraExterna += (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0);
   });
 
+  // 3. Alimentación y veterinaria
   let egAlim = 0, egVet = 0;
-  consumos.forEach(c => {
+  consumos.forEach(c=>{
     const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
-    const costo = (Number(c.cantidad)||0) * egCostoPromProducto_(c.producto_id);
-    if (prod && prod.categoria === 'Veterinaria') egVet += costo;
+    const costo = (Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id);
+    if (prod&&prod.categoria==='Veterinaria') egVet += costo;
     else egAlim += costo;
   });
 
+  // 4. Sueldos prorrateados a Recría
   let egSueldos = 0;
-  (S.cache.sueldos||[]).forEach(s=>{
-    egSueldos += (Number(s.monto)||0) * (Number(s.dist_recria)||0) / 100;
-  });
+  (S.cache.sueldos||[]).forEach(s=>{ egSueldos += (Number(s.monto)||0)*(Number(s.dist_recria)||0)/100; });
 
-  const totalIngresos = ingVentas + ingCesionEng;
   const totalEgresos  = egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
   const mc = margen>=0?'var(--green)':'var(--red)';
   const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
-  // ── KPIs PRODUCCIÓN ───────────────────────────────────────────────────
+  // KPIs producción
+  const pesadas = (S.cache.pesadas||[]).filter(p=>rodeosIdsFilt.has(String(p.rodeo_id)));
   let kgGanadoTotal = 0, cabezasConPesada = 0;
-  rodeosIds.forEach(rid => {
+  rodeosIdsFilt.forEach(rid=>{
     const pesR = pesadas.filter(p=>String(p.rodeo_id)===String(rid)).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
-    if (pesR.length >= 2) {
+    if (pesR.length>=2) {
       const cab = Number(pesR[pesR.length-1].cantidad)||0;
-      kgGanadoTotal += cab * ((Number(pesR[pesR.length-1].peso_prom_kg)||0) - (Number(pesR[0].peso_prom_kg)||0));
+      kgGanadoTotal += cab*((Number(pesR[pesR.length-1].peso_prom_kg)||0)-(Number(pesR[0].peso_prom_kg)||0));
       cabezasConPesada += cab;
     }
   });
-  const costoPorKg  = kgGanadoTotal > 0 ? totalEgresos  / kgGanadoTotal : null;
-  const margenPorKg = kgGanadoTotal > 0 ? margen / kgGanadoTotal : null;
+  const costoPorKg  = kgGanadoTotal>0 ? totalEgresos/kgGanadoTotal : null;
+  const margenPorKg = kgGanadoTotal>0 ? margen/kgGanadoTotal : null;
 
-  // ── MORTANDAD ─────────────────────────────────────────────────────────
-  const mortTotal = mortandad.reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-  const mortPorRodeo = {};
-  mortandad.forEach(m=>{
-    const rid = String(m.rodeo_id);
-    mortPorRodeo[rid] = (mortPorRodeo[rid]||0) + (Number(m.cantidad)||1);
-  });
+  // ── LAYOUT DOS COLUMNAS ───────────────────────────────────────────────
+  h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
 
-  // ── RENDER ────────────────────────────────────────────────────────────
+    <!-- INGRESOS -->
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos</div>
+      <table class="dt" style="margin-bottom:12px"><tbody>
+        <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fmM(ingVentas)}</strong></td></tr>
+        <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fmM(ingCesionEng)}</strong></td></tr>
+        <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmM(stockValRecria)}</strong></td></tr>
+        <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green)"><strong>${fmM(totalIngresos)}</strong></td></tr>
+      </tbody></table>
+      ${detalleVentas.length ? `<div style="font-size:11px;color:var(--text2);margin-top:8px"><strong>Ventas:</strong> ${detalleVentas.map(v=>`${fd(v.fecha)} — ${v.rodeo} (${fn(v.cant)} cab.) ${fmM(v.importe)}`).join('<br>')}</div>` : ''}
+      ${detalleCesEng.length ? `<div style="font-size:11px;color:var(--text2);margin-top:6px"><strong>Cesiones a Terminación:</strong> ${detalleCesEng.map(e=>`${fd(e.fecha)} — ${e.rodeo} ${fn(e.cant)} cab. · ${fn(Math.round(e.kg))} kg ${e.sinPrecio?'<span style="color:var(--red)">⚠ sin precio interno</span>':fmM(e.importe)}`).join('<br>')}</div>` : ''}
+    </div>
 
-  // Mortandad en rojo
-  if (mortTotal > 0) {
-    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06)">
-      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Recría</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
-    Object.entries(mortPorRodeo).forEach(([rid, cant]) => {
-      const r = rodeosFilt.find(x=>String(x.rodeo_id)===String(rid));
-      h += `<div style="background:rgba(200,50,50,0.12);border-radius:8px;padding:8px 14px;border:1px solid var(--red)">
-        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
-        <div style="font-size:22px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
-      </div>`;
-    });
-    h += `<div style="background:rgba(200,50,50,0.2);border-radius:8px;padding:8px 14px;border:1px solid var(--red)">
-      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
-      <div style="font-size:22px;font-weight:800;color:var(--red)">${mortTotal} <span style="font-size:13px">baja${mortTotal>1?'s':''}</span></div>
-    </div>`;
-    h += `</div>
-      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se suma como egreso — su impacto ya está en el menor stock al cierre.</div>
-    </div>`;
-  }
+    <!-- EGRESOS -->
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title" style="color:var(--red)">📉 Egresos</div>
+      <table class="dt" style="margin-bottom:12px"><tbody>
+        <tr><td>⬅ Cesión desde Cría</td><td class="tr"><strong>${fmM(egCesionCria)}</strong></td></tr>
+        ${egCompraExterna>0?`<tr><td>🛒 Compra externa</td><td class="tr"><strong>${fmM(egCompraExterna)}</strong></td></tr>`:''}
+        <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fmM(egAlim)}</strong></td></tr>
+        <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fmM(egVet)}</strong></td></tr>
+        <tr><td>👷 Sueldos</td><td class="tr"><strong>${fmM(egSueldos)}</strong></td></tr>
+        <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red)"><strong>${fmM(totalEgresos)}</strong></td></tr>
+      </tbody></table>
+    </div>
+  </div>`;
+
+  // Margen
+  h += `<div class="panel" style="background:${mb};border:2px solid ${mc};margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto Recría</div>
+        ${margenPorKg!==null?`<div style="font-size:12px;color:${mc};margin-top:2px">${fmM(margenPorKg)}/kg ganado</div>`:''}
+      </div>
+      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fmM(Math.abs(margen))}</div>
+    </div>
+  </div>`;
 
   // KPIs producción
   h += `<div class="panel">
     <div class="panel-title">📊 KPIs de producción</div>
     <div class="kpi-grid">
-      <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Rodeos activos</div><div class="kpi-val">${rodeosIds.size}</div></div>
+      <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Rodeos activos</div><div class="kpi-val">${rodeosIdsFilt.size}</div></div>
       <div class="kpi"><div class="kpi-icon">⚖</div><div class="kpi-label">Kg ganado total</div><div class="kpi-val">${kgGanadoTotal>0?fn(Math.round(kgGanadoTotal))+' kg':'—'}</div><div class="kpi-sub">${cabezasConPesada>0?fn(cabezasConPesada)+' cab. con 2+ pesadas':''}</div></div>
-      ${costoPorKg!==null?`<div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo/kg ganado</div><div class="kpi-val">${fm(costoPorKg)}</div></div>`:''}
-      ${margenPorKg!==null?`<div class="kpi"><div class="kpi-icon">${margenPorKg>=0?'📈':'📉'}</div><div class="kpi-label">Margen/kg ganado</div><div class="kpi-val ${margenPorKg>=0?'kpi-pos':'kpi-neg'}">${fm(margenPorKg)}</div></div>`:''}
+      ${costoPorKg!==null?`<div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo/kg ganado</div><div class="kpi-val">${fmM(costoPorKg)}</div></div>`:''}
+      ${margenPorKg!==null?`<div class="kpi"><div class="kpi-icon">${margenPorKg>=0?'📈':'📉'}</div><div class="kpi-label">Margen/kg ganado</div><div class="kpi-val ${margenPorKg>=0?'kpi-pos':'kpi-neg'}">${fmM(margenPorKg)}</div></div>`:''}
     </div>
   </div>`;
 
-  // Ingresos
-  h += `<div class="panel">
-    <div class="panel-title">📥 Ingresos</div>
-    <div class="kpi-grid">
-      <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ventas directas</div><div class="kpi-val kpi-pos">${fm(ingVentas)}</div><div class="kpi-sub">${ventas.length} venta${ventas.length!==1?'s':''}</div></div>
-      <div class="kpi"><div class="kpi-icon">➡</div><div class="kpi-label">Cesión a Terminación</div><div class="kpi-val kpi-pos">${fm(ingCesionEng)}</div><div class="kpi-sub">${ingCesionEngKg>0?fn(Math.round(ingCesionEngKg))+' kg cedidos':egresos.filter(e=>e.destino==='Engorde').length+' egresos'}</div></div>
-      <div class="kpi" style="background:var(--green-bg)"><div class="kpi-icon">∑</div><div class="kpi-label">Total ingresos</div><div class="kpi-val kpi-pos">${fm(totalIngresos)}</div></div>
-    </div>
-  </div>`;
-
-  // Egresos
-  h += `<div class="panel">
-    <div class="panel-title">📤 Egresos</div>
-    <div class="kpi-grid">
-      <div class="kpi"><div class="kpi-icon">⬅</div><div class="kpi-label">Cesión desde Cría</div><div class="kpi-val kpi-neg">${fm(egCesionCria)}</div></div>
-      ${egCompraExterna>0?`<div class="kpi"><div class="kpi-icon">🛒</div><div class="kpi-label">Compra externa</div><div class="kpi-val kpi-neg">${fm(egCompraExterna)}</div></div>`:''}
-      <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Alimentación</div><div class="kpi-val kpi-neg">${fm(egAlim)}</div></div>
-      <div class="kpi"><div class="kpi-icon">💉</div><div class="kpi-label">Veterinaria</div><div class="kpi-val kpi-neg">${fm(egVet)}</div></div>
-      <div class="kpi"><div class="kpi-icon">👷</div><div class="kpi-label">Sueldos</div><div class="kpi-val kpi-neg">${fm(egSueldos)}</div></div>
-      <div class="kpi" style="background:rgba(220,50,50,0.08)"><div class="kpi-icon">∑</div><div class="kpi-label">Total egresos</div><div class="kpi-val kpi-neg">${fm(totalEgresos)}</div></div>
-    </div>
-  </div>`;
-
-  // Margen
-  h += `<div class="panel" style="background:${mb};border:2px solid ${mc}">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto Recría</div>
-      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
-    </div>
-  </div>`;
-
-  // Sueldos KPI panel
+  // Sueldos KPI
   h += buildSueldoKpiPanel_('recria');
 
   // Stock por rodeo
   h += `<div class="panel"><div class="panel-title">🐄 Stock actual por rodeo</div>
     <div style="display:flex;flex-wrap:wrap;gap:10px">`;
-  rodeosFilt.forEach(r => {
+  rodeosFiltBase.forEach(r=>{
     const up = r.ultima_pesada;
-    const mort = mortPorRodeo[String(r.rodeo_id)] || 0;
+    const mort = mortPorRodeo[String(r.rodeo_id)]||0;
     h += `<div style="background:var(--bg2);border:1px solid ${mort>0?'var(--red)':'var(--border)'};border-radius:10px;padding:14px 18px;min-width:180px">
       <div style="font-weight:700;font-size:14px">${r.nombre}</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${r.campo_nombre||''}</div>
       <div style="font-size:22px;font-weight:800;color:var(--gold-text)">${fn(r.stock)} <span style="font-size:12px;font-weight:500">animales</span></div>
       ${up?`<div style="font-size:11px;color:var(--muted);margin-top:3px">Última pesada: <strong>${fn(up.peso_prom_kg)} kg</strong> (${fd(up.fecha)})</div>`:''}
-      ${mort>0?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">💀 ${mort} baja${mort>1?'s':''}</div>`:''}
+      ${mort>0?`<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:4px">💀 ${mort} baja${mort>1?'s':''}</div>`:''}
     </div>`;
   });
   h += `</div></div>`;
