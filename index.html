@@ -53,11 +53,11 @@ body { min-height: 100vh; }
 .btn-logout-sidebar:hover { color: #fff; }
 
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; }
-.nav-section-btn { display:flex;align-items:center;gap:9px;width:100%;padding:9px 14px;background:none;border:none;cursor:pointer;color:rgba(255,255,255,.65);font-size:13px;font-weight:600;text-align:left;border-top:1px solid rgba(255,255,255,.06);margin-top:2px; }
+.nav-section-btn { display:flex;align-items:center;gap:9px;width:100%;padding:9px 14px;background:none;border:none;cursor:pointer;color:#d4b65f;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left;border-top:1px solid rgba(212,182,95,.2);margin-top:6px; }
 .nav-section-btn:first-child { border-top:none;margin-top:0; }
-.nav-section-btn:hover { background:rgba(255,255,255,.06);color:#fff; }
-.nav-section-btn.active-sec { color:#d4b65f; }
-.nav-section-btn i:first-child { font-size:16px;width:18px;text-align:center;flex-shrink:0; }
+.nav-section-btn:hover { background:rgba(255,255,255,.06);color:#e8cc7a; }
+.nav-section-btn.active-sec { color:#f0d878; }
+.nav-section-btn i:first-child { font-size:15px;width:18px;text-align:center;flex-shrink:0; }
 .nav-item {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
   color: #cfc9bd; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s;
@@ -610,21 +610,29 @@ function buildShell() {
   const activeSection = NAV.find(sec => sec.items.some(it => it.k === S.page));
   // Secciones expandidas: la activa + las que el usuario haya expandido manualmente
   if (!S._expandedSections) S._expandedSections = {};
-  if (activeSection) S._expandedSections[activeSection.section] = true;
+  // Solo expandir la sección activa, no acumular
+  if (activeSection && !S._expandedSections[activeSection.section]) {
+    S._expandedSections = { [activeSection.section]: true };
+  }
 
   const navHtml = NAV.map(sec => {
-    const isActive  = sec === activeSection;
-    const isExpanded = S._expandedSections[sec.section] || isActive;
+    const isActive   = sec === activeSection;
+    const isExpanded = !!S._expandedSections[sec.section];
     return `
     <button class="nav-section-btn${isActive ? ' active-sec' : ''}"
-      onclick="S._expandedSections=S._expandedSections||{};S._expandedSections['${sec.section}']=!S._expandedSections['${sec.section}'];if(!S._expandedSections['${sec.section}']){}else{goto('${sec.defaultPage}')};render()">
+      onclick="
+        const exp = window.S._expandedSections || {};
+        const wasOpen = !!exp['${sec.section}'];
+        window.S._expandedSections = {};
+        if (!wasOpen) { window.S._expandedSections['${sec.section}'] = true; goto('${sec.defaultPage}'); } else { render(); }
+      ">
       <i class="ti ${sec.icon}" aria-hidden="true"></i>
       <span>${sec.section}</span>
       <i class="ti ${isExpanded ? 'ti-chevron-down' : 'ti-chevron-right'}" style="margin-left:auto;font-size:12px;opacity:.6" aria-hidden="true"></i>
     </button>
     ${isExpanded ? sec.items.map(it => `
-      <button class="nav-item ${S.page === it.k ? 'active' : ''}" data-nav="${it.k}">
-        <i class="ti ${it.icon} nav-icon" aria-hidden="true"></i>${it.label}
+      <button class="nav-item ${S.page === it.k ? 'active' : ''}" data-nav="${it.k}" style="padding-left:32px;font-size:12.5px;color:rgba(255,255,255,.75)">
+        <i class="ti ${it.icon} nav-icon" style="font-size:13px;opacity:.7" aria-hidden="true"></i>${it.label}
       </button>
     `).join('') : ''}
   `;}).join('');
