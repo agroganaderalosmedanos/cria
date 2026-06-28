@@ -3648,14 +3648,17 @@ function egConfig_(rodeoId) {
   try { return JSON.parse(localStorage.getItem('eg_cfg') || '{}')[rodeoId] || {}; } catch(e) { return {}; }
 }
 // Devuelve lista de { producto_id, fecha_baja } de productos inactivos para un corral
-// Lee rodeo_productos de S.cache (cargado desde Sheets)
+// Lee rodeo_productos de S.cache o catalogs (lo que esté disponible)
+function egRodeoProductosTodos_() {
+  return S.cache.rodeo_productos || (S.catalogs && S.catalogs.rodeo_productos) || [];
+}
 function egProductosInactivos_(rodeoId) {
-  return (S.cache.rodeo_productos || [])
+  return egRodeoProductosTodos_()
     .filter(x => String(x.rodeo_id) === String(rodeoId) && String(x.activo).toUpperCase() !== 'TRUE');
 }
 // Devuelve true si el producto está activo para ese corral en la fecha indicada
 function egEsProductoActivo_(rodeoId, productoId, fecha) {
-  const todos = S.cache.rodeo_productos || [];
+  const todos = egRodeoProductosTodos_();
   const reg = todos.find(x => String(x.rodeo_id) === String(rodeoId) && String(x.producto_id) === String(productoId));
   if (!reg) return true; // no registrado → activo por defecto
   if (String(reg.activo).toUpperCase() === 'TRUE') return true; // marcado activo
@@ -4526,7 +4529,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   }
 
   // ── Gestión de insumos activos/inactivos para proyección ──────────────────
-  const inactivosReg = (S.cache.rodeo_productos || []).filter(x => String(x.rodeo_id) === String(rodeoId));
+  const inactivosReg = egRodeoProductosTodos_().filter(x => String(x.rodeo_id) === String(rodeoId));
   const todosProds = (S.catalogs && S.catalogs.productos) || [];
   // Todos los productos que este corral consumió alguna vez
   const prodHistoricos = [...new Set(consumosCrl.map(c => c.producto_id))];
@@ -4557,7 +4560,7 @@ function buildEngordeCostos_(rodeoId, fm) {
 }
 
 async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo) {
-  const todos = S.cache.rodeo_productos || [];
+  const todos = S.cache.rodeo_productos || (S.catalogs && S.catalogs.rodeo_productos) || [];
   const reg = todos.find(x => String(x.rodeo_id) === String(rodeoId) && String(x.producto_id) === String(productoId));
   const fecha = document.getElementById('eg-pi-fecha-'+productoId)?.value || today();
   try {
@@ -4576,7 +4579,9 @@ async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo) {
       }});
     }
     invalidateCache('rodeo_productos');
+    if (S.catalogs) delete S.catalogs.rodeo_productos;
     await loadEntity('rodeo_productos', true);
+    if (S.catalogs) S.catalogs.rodeo_productos = S.cache.rodeo_productos;
     toast(marcarInactivo ? 'Insumo marcado como inactivo' : 'Insumo reactivado', 'ok');
     render();
   } catch(err) {
