@@ -6940,7 +6940,7 @@ function attachCotizacionEvents() {
     const registros = [];
     const errores = [];
     lineas.forEach((l, i) => {
-      const partes = l.split(/	|;|,/).map(p=>p.trim());
+      const partes = l.split(/[	;,]/).map(p=>p.trim());
       const fecha = partes[0];
       const valor = Number(partes[1]?.replace(',','.'));
       if (!fecha || !valor || isNaN(valor)) { errores.push('Línea '+(i+1)+': formato inválido'); return; }
