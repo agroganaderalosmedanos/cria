@@ -4343,6 +4343,30 @@ function buildEngordeCostos_(rodeoId, fm) {
       </div>
       <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
     </div>`;
+    // KPIs productivos consolidados
+    let totKgI=0,totKgG=0,totKgV=0,totKgStk=0,totAn=0;
+    const gdpsTodos=[];
+    rodeosEng.forEach(r=>{
+      totKgI  += egKgIngresados_(r.rodeo_id);
+      totKgG  += egKgGanadosHastaPesada_(r.rodeo_id);
+      totKgV  += egKgVend_(r.rodeo_id);
+      totKgStk+= egKgStockEstimado_(r.rodeo_id);
+      totAn   += egStock_(r.rodeo_id);
+      const gdp = egGanDiaria_(r.rodeo_id);
+      if (gdp) gdpsTodos.push(gdp);
+    });
+    const gdpPromTodos = gdpsTodos.length ? gdpsTodos.reduce((s,v)=>s+v,0)/gdpsTodos.length : null;
+    const caXkgTodos = totKgG>0 ? totalAlim/totKgG : null;
+
+    h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg ingresados</div><div style="font-size:18px;font-weight:700">${fn(totKgI)}</div></div>
+      <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Kg ganados</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${fn(totKgG)}</div></div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">GDP promedio</div><div style="font-size:18px;font-weight:700">${gdpPromTodos?fn(gdpPromTodos,3)+' kg/día':'—'}</div></div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg vendidos</div><div style="font-size:18px;font-weight:700">${fn(totKgV)}</div></div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg en stock</div><div style="font-size:18px;font-weight:700">${fn(totKgStk)}</div><div style="font-size:10px;color:var(--text3)">${fn(totAn)} anim.</div></div>
+      ${caXkgTodos?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fm(caXkgTodos)}</div></div>`:''}
+    </div>`;
+
     h += '<div class="section-label">Detalle por corral — seleccioná uno para ver el análisis completo</div>';
     h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th>Campo</th><th class="tc">Stock</th><th class="tr">Alim.</th><th class="tr">Vet.</th><th class="tr">Total costos</th></tr></thead><tbody>';
     rodeosEng.forEach(r => {
