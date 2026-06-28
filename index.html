@@ -6935,8 +6935,7 @@ function attachCotizacionEvents() {
     const btn  = document.getElementById('tc-bulk-btn');
     const msg  = document.getElementById('tc-msg');
     const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent='📥 Importar cotizaciones'; } };
-    const lineas = raw.split('
-').map(l=>l.trim()).filter(Boolean);
+    const lineas = raw.split('\n').map(l=>l.trim()).filter(Boolean);
     if (!lineas.length) { resetBtn(); toast('Pegá al menos una línea', 'err'); return; }
     const registros = [];
     const errores = [];
@@ -6946,7 +6945,7 @@ function attachCotizacionEvents() {
       const valor = Number(partes[1]?.replace(',','.'));
       if (!fecha || !valor || isNaN(valor)) { errores.push('Línea '+(i+1)+': formato inválido'); return; }
       // Validar formato fecha
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { errores.push('Línea '+(i+1)+': fecha debe ser YYYY-MM-DD'); return; }
+      if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(fecha)) { errores.push('Línea '+(i+1)+': fecha debe ser YYYY-MM-DD'); return; }
       registros.push({ fecha, valor });
     });
     if (errores.length) { resetBtn(); toast(errores[0], 'err'); return; }
