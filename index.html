@@ -4560,7 +4560,13 @@ function buildEngordeCostos_(rodeoId, fm) {
 }
 
 async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo, btn) {
-  if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'wait'; }
+  if (btn) {
+    btn.disabled = true;
+    btn.style.opacity = '0.4';
+    btn.style.cursor = 'wait';
+    btn.textContent = '⏳';
+    await new Promise(r => setTimeout(r, 0)); // forzar repintado
+  }
   const todos = S.cache.rodeo_productos || (S.catalogs && S.catalogs.rodeo_productos) || [];
   const reg = todos.find(x => String(x.rodeo_id) === String(rodeoId) && String(x.producto_id) === String(productoId));
   const fecha = document.getElementById('eg-pi-fecha-'+productoId)?.value || today();
