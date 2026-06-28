@@ -53,8 +53,11 @@ body { min-height: 100vh; }
 .btn-logout-sidebar:hover { color: #fff; }
 
 .sidebar-nav { flex: 1; padding: 14px 10px; overflow-y: auto; }
-.nav-section-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #d4b65f; padding: 16px 10px 6px; border-top: 1px solid rgba(212,182,95,0.2); margin-top: 4px; }
-.nav-section-label:first-child { border-top: none; margin-top: 0; padding-top: 6px; }
+.nav-section-btn { display:flex;align-items:center;gap:9px;width:100%;padding:9px 14px;background:none;border:none;cursor:pointer;color:rgba(255,255,255,.65);font-size:13px;font-weight:600;text-align:left;border-top:1px solid rgba(255,255,255,.06);margin-top:2px; }
+.nav-section-btn:first-child { border-top:none;margin-top:0; }
+.nav-section-btn:hover { background:rgba(255,255,255,.06);color:#fff; }
+.nav-section-btn.active-sec { color:#d4b65f; }
+.nav-section-btn i:first-child { font-size:16px;width:18px;text-align:center;flex-shrink:0; }
 .nav-item {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
   color: #cfc9bd; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s;
@@ -62,7 +65,7 @@ body { min-height: 100vh; }
 }
 .nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
 .nav-item.active { background: var(--bordeaux); color: #fff; }
-.nav-item .nav-icon { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+.nav-item .nav-icon { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; display:inline-flex;align-items:center;justify-content:center; }
 
 .sidebar-footer { padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: #8a8174; }
 .sidebar-footer .sync-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
@@ -429,44 +432,44 @@ async function init() {
 }
 
 const NAV = [
-  { section: 'Cría', destacada: true, items: [
-    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
-    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de reproducción' },
-    { k: 'servicios', icon: '⚭', label: 'Servicios' },
-    { k: 'tactos', icon: '◔', label: 'Tactos' },
-    { k: 'abortos', icon: '⊘', label: 'Abortos' },
-    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
-    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  { section: 'Cría', icon: 'ti-cow', defaultPage: 'dashboard', items: [
+    { k: 'dashboard',            icon: 'ti-chart-bar',   label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: 'ti-activity',    label: 'Índices de reproducción' },
+    { k: 'servicios',            icon: 'ti-heart',       label: 'Servicios' },
+    { k: 'tactos',               icon: 'ti-stethoscope', label: 'Tactos' },
+    { k: 'abortos',              icon: 'ti-ban',         label: 'Abortos' },
+    { k: 'pariciones',           icon: 'ti-baby',        label: 'Pariciones' },
+    { k: 'destetes',             icon: 'ti-checklist',   label: 'Destetes' },
   ]},
-  { section: 'Recría', destacada: true, items: [
-    { k: 'recria', icon: '🐄', label: 'Recría' },
+  { section: 'Recría', icon: 'ti-arrow-up-circle', defaultPage: 'recria', items: [
+    { k: 'recria', icon: 'ti-chart-bar', label: 'Dashboard' },
   ]},
-  { section: 'Terminación', destacada: true, items: [
-    { k: 'engorde', icon: '📊', label: 'Dashboard' },
-    { k: 'engorde_costos', icon: '💲', label: 'Costos' },
-    { k: 'engorde_comparacion', icon: '⇌', label: 'Comparación' },
-    { k: 'engorde_proyeccion', icon: '📅', label: 'Proyección de salidas' },
-    { k: 'engorde_cierre', icon: '🔮', label: 'Costo proyectado' },
-    { k: 'engorde_historial', icon: '📋', label: 'Historial de lotes' },
+  { section: 'Terminación', icon: 'ti-meat', defaultPage: 'engorde', items: [
+    { k: 'engorde',              icon: 'ti-chart-bar',      label: 'Dashboard' },
+    { k: 'engorde_costos',       icon: 'ti-coin',           label: 'Costos' },
+    { k: 'engorde_comparacion',  icon: 'ti-arrows-diff',    label: 'Comparación' },
+    { k: 'engorde_proyeccion',   icon: 'ti-calendar-event', label: 'Proyección de salidas' },
+    { k: 'engorde_cierre',       icon: 'ti-telescope',      label: 'Proyección de costos' },
+    { k: 'engorde_historial',    icon: 'ti-history',        label: 'Historial de lotes' },
   ]},
-  { section: 'General', destacada: true, items: [
-    { k: 'ia', icon: '✦', label: 'Análisis IA' },
-    { k: 'sueldos', icon: '👤', label: 'Sueldos' },
-    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
-    { k: 'precios_valorizacion', icon: '💲', label: 'Precios para Valorización de Stock' },
-    { k: 'stock_hacienda', icon: '📋', label: 'Stock Hacienda' },
-    { k: 'movimientos', icon: '⇄', label: 'Movimientos / Stock' },
-    { k: 'ventas', icon: '$', label: 'Ventas' },
-    { k: 'insumos', icon: '🌿', label: 'Insumos y Veterinaria' },
-    { k: 'pesadas', icon: '⚖', label: 'Pesadas' },
-    { k: 'mortandad', icon: '†', label: 'Mortandad' },
+  { section: 'Resultados', icon: 'ti-report-analytics', defaultPage: 'margenbruto', items: [
+    { k: 'margenbruto', icon: 'ti-chart-pie', label: 'Margen Bruto' },
+    { k: 'ia',          icon: 'ti-sparkles',  label: 'Análisis IA' },
   ]},
-  { section: 'Resultados', destacada: true, items: [
-    { k: 'margenbruto', icon: '◑', label: 'Margen Bruto' },
+  { section: 'Acciones Comunes', icon: 'ti-folders', defaultPage: 'stock_hacienda', items: [
+    { k: 'stock_hacienda',       icon: 'ti-list',            label: 'Stock Hacienda' },
+    { k: 'movimientos',          icon: 'ti-transfer',        label: 'Movimientos' },
+    { k: 'compras_hacienda',     icon: 'ti-shopping-cart',   label: 'Compras de hacienda' },
+    { k: 'ventas',               icon: 'ti-cash',            label: 'Ventas' },
+    { k: 'insumos',              icon: 'ti-leaf',            label: 'Insumos y Veterinaria' },
+    { k: 'pesadas',              icon: 'ti-scale',           label: 'Pesadas' },
+    { k: 'sueldos',              icon: 'ti-user-dollar',     label: 'Sueldos' },
+    { k: 'mortandad',            icon: 'ti-skull',           label: 'Mortandad' },
+    { k: 'cotizacion',           icon: 'ti-currency-dollar', label: 'Cotización U$S' },
+    { k: 'precios_valorizacion', icon: 'ti-tag',             label: 'Precios para Valorización' },
   ]},
-  { section: 'Sistema', items: [
-    { k: 'cotizacion', icon: '💵', label: 'Cotización U$S' },
-    { k: 'config', icon: '⚙', label: 'Configuración' },
+  { section: 'Configuración', icon: 'ti-settings', defaultPage: 'config', items: [
+    { k: 'config', icon: 'ti-adjustments', label: 'Configuración' },
   ]},
 ];
 
@@ -603,14 +606,28 @@ function render() {
 setTimeout(() => { window.goto = goto; window.render = render; }, 0);
 
 function buildShell() {
-  const navHtml = NAV.map(sec => `
-    <div class="nav-section-label${sec.destacada ? ' destacada' : ''}">${sec.section}</div>
-    ${sec.items.map(it => `
+  // Determinar sección activa
+  const activeSection = NAV.find(sec => sec.items.some(it => it.k === S.page));
+  // Secciones expandidas: la activa + las que el usuario haya expandido manualmente
+  if (!S._expandedSections) S._expandedSections = {};
+  if (activeSection) S._expandedSections[activeSection.section] = true;
+
+  const navHtml = NAV.map(sec => {
+    const isActive  = sec === activeSection;
+    const isExpanded = S._expandedSections[sec.section] || isActive;
+    return `
+    <button class="nav-section-btn${isActive ? ' active-sec' : ''}"
+      onclick="S._expandedSections=S._expandedSections||{};S._expandedSections['${sec.section}']=!S._expandedSections['${sec.section}'];if(!S._expandedSections['${sec.section}']){}else{goto('${sec.defaultPage}')};render()">
+      <i class="ti ${sec.icon}" aria-hidden="true"></i>
+      <span>${sec.section}</span>
+      <i class="ti ${isExpanded ? 'ti-chevron-down' : 'ti-chevron-right'}" style="margin-left:auto;font-size:12px;opacity:.6" aria-hidden="true"></i>
+    </button>
+    ${isExpanded ? sec.items.map(it => `
       <button class="nav-item ${S.page === it.k ? 'active' : ''}" data-nav="${it.k}">
-        <span class="nav-icon">${it.icon}</span>${it.label}
+        <i class="ti ${it.icon} nav-icon" aria-hidden="true"></i>${it.label}
       </button>
-    `).join('')}
-  `).join('');
+    `).join('') : ''}
+  `;}).join('');
 
   return `
   <div class="app-shell">
