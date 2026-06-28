@@ -3812,7 +3812,7 @@ function buildEngorde() {
     h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:8px">
         <label style="font-size:13px;font-weight:600;white-space:nowrap">Campo:</label>
-        <select onchange="S._engCampoFiltro=this.value;render()"
+        <select onchange="S._engCampoFiltro=this.value;egSetCorralId('');render()"
           style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px">
           <option value="">Todos los campos</option>
           ${campos.map(c=>`<option value="${c.campo_id}" ${String(S._engCampoFiltro||'')===String(c.campo_id)?'selected':''}>${c.nombre}</option>`).join('')}
@@ -4306,6 +4306,9 @@ function buildEngordeCostos_(rodeoId, fm) {
   const kgI = egKgIngresados_(rodeoId);
   const ca = egCostoAlim_(rodeoId);
   const caHP = egCostoAlim_(rodeoId, ultima?.fecha);
+  const caVet = egCostoAlim_(rodeoId, null, 'Veterinaria');
+  const caVetHP = egCostoAlim_(rodeoId, ultima?.fecha, 'Veterinaria');
+  const caAlimHP = caHP - caVetHP;
   const cc = egCostoCompra_(rodeoId);
   const iv = egIngVentas_(rodeoId);
   const kgV = egKgVend_(rodeoId);
@@ -4359,11 +4362,11 @@ function buildEngordeCostos_(rodeoId, fm) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${ultima?'hasta '+fd(ultima.fecha):'acumulado'}</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caHP)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caAlimHP)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">💉 Veterinaria y otros</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(costoTotal-cc-caHP>0?costoTotal-cc-caHP:0)}</div>
+          <div><div style="font-weight:600">💉 Veterinaria</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caVetHP)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
