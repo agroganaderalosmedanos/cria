@@ -3457,6 +3457,26 @@ function buildRecriaDashboard() {
     </div>
   </div>`;
 
+  // Mortandad — DESPUÉS del resultado, destacada en rojo
+  if (mortTotal > 0) {
+    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Recría</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+    Object.entries(mortPorRodeo).forEach(([rid,cant])=>{
+      const r = rodeosFiltBase.find(x=>String(x.rodeo_id)===String(rid));
+      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+      </div>`;
+    });
+    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
+      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortTotal} <span style="font-size:13px">bajas</span></div>
+    </div></div>
+      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
+    </div>`;
+  }
+
   // KPIs producción
   h += `<div class="panel">
     <div class="panel-title">📊 KPIs de producción</div>
@@ -3471,21 +3491,28 @@ function buildRecriaDashboard() {
   // Sueldos KPI
   h += buildSueldoKpiPanel_('recria');
 
-  // Stock por rodeo
+  // Stock por rodeo — formato tabla/líneas, solo stock > 0
   h += `<div class="panel"><div class="panel-title">🐄 Stock actual por rodeo</div>
-    <div style="display:flex;flex-wrap:wrap;gap:10px">`;
-  rodeosFiltBase.forEach(r=>{
-    const up = r.ultima_pesada;
-    const mort = mortPorRodeo[String(r.rodeo_id)]||0;
-    h += `<div style="background:var(--bg2);border:1px solid ${mort>0?'var(--red)':'var(--border)'};border-radius:10px;padding:14px 18px;min-width:180px">
-      <div style="font-weight:700;font-size:14px">${r.nombre}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${r.campo_nombre||''}</div>
-      <div style="font-size:22px;font-weight:800;color:var(--gold-text)">${fn(r.stock)} <span style="font-size:12px;font-weight:500">animales</span></div>
-      ${up?`<div style="font-size:11px;color:var(--muted);margin-top:3px">Última pesada: <strong>${fn(up.peso_prom_kg)} kg</strong> (${fd(up.fecha)})</div>`:''}
-      ${mort>0?`<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:4px">💀 ${mort} baja${mort>1?'s':''}</div>`:''}
-    </div>`;
-  });
-  h += `</div></div>`;
+    <div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Campo</th><th class="tc">Animales</th><th class="tc">Última pesada</th><th class="tc">Bajas</th>
+    </tr></thead><tbody>`;
+  const rodeoConStock = rodeosFiltBase.filter(r => (r.stock||0) > 0);
+  if (!rodeoConStock.length) {
+    h += `<tr><td colspan="5" class="tc" style="color:var(--muted)">Sin stock activo</td></tr>`;
+  } else {
+    rodeoConStock.forEach(r=>{
+      const up = r.ultima_pesada;
+      const mort = mortPorRodeo[String(r.rodeo_id)]||0;
+      h += `<tr style="${mort>0?'background:rgba(200,50,50,0.04)':''}">
+        <td><strong>${r.nombre}</strong></td>
+        <td style="color:var(--text2)">${r.campo_nombre||'—'}</td>
+        <td class="tc"><span style="font-size:18px;font-weight:800;color:var(--gold-text)">${fn(r.stock)}</span></td>
+        <td class="tc" style="color:var(--text2)">${up?`${fn(up.peso_prom_kg)} kg (${fd(up.fecha)})`:'—'}</td>
+        <td class="tc">${mort>0?`<span style="font-size:16px;font-weight:800;color:var(--red)">💀 ${mort}</span>`:'<span style="color:var(--muted)">—</span>'}</td>
+      </tr>`;
+    });
+  }
+  h += `</tbody></table></div></div>`;
 
   return h;
 }
