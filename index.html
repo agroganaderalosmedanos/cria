@@ -459,14 +459,14 @@ const NAV = [
   { section: 'Acciones Comunes', icon: 'ti-folders', defaultPage: 'stock_hacienda', items: [
     { k: 'stock_hacienda',       icon: 'ti-list',            label: 'Stock de Hacienda' },
     { k: 'movimientos',          icon: 'ti-transfer',        label: 'Movimientos de Hacienda' },
-    { k: 'compras_hacienda',     icon: 'ti-shopping-cart',   label: 'Compras de hacienda' },
+    { k: 'compras_hacienda',     icon: 'ti-shopping-cart',   label: 'Compras de Hacienda' },
     { k: 'ventas',               icon: 'ti-cash',            label: 'Ventas de Hacienda' },
     { k: 'insumos',              icon: 'ti-leaf',            label: 'Insumos y Veterinaria' },
     { k: 'pesadas',              icon: 'ti-scale',           label: 'Pesadas' },
     { k: 'sueldos',              icon: 'ti-user-dollar',     label: 'Sueldos' },
     { k: 'mortandad',            icon: 'ti-skull',           label: 'Mortandad' },
     { k: 'cotizacion',           icon: 'ti-currency-dollar', label: 'Cotización U$S' },
-    { k: 'precios_valorizacion', icon: 'ti-tag',             label: 'Precios para Valorización' },
+    { k: 'precios_valorizacion', icon: 'ti-tag',             label: 'Hacienda — Precios del mes' },
   ]},
   { section: 'Configuración', icon: 'ti-settings', defaultPage: 'config', items: [
     { k: 'config', icon: 'ti-adjustments', label: 'Configuración' },
@@ -700,7 +700,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
+    destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto', config: 'Configuración', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
   };
   return titles[p] || p;
 }
