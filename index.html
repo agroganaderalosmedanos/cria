@@ -457,7 +457,7 @@ const NAV = [
     { k: 'ia',          icon: 'ti-sparkles',  label: 'Análisis IA' },
   ]},
   { section: 'Acciones Comunes', icon: 'ti-folders', defaultPage: 'stock_hacienda', items: [
-    { k: 'stock_hacienda',       icon: 'ti-list',            label: 'Stock Hacienda' },
+    { k: 'stock_hacienda',       icon: 'ti-list',            label: 'Stock de Hacienda' },
     { k: 'movimientos',          icon: 'ti-transfer',        label: 'Movimientos de Hacienda' },
     { k: 'compras_hacienda',     icon: 'ti-shopping-cart',   label: 'Compras de hacienda' },
     { k: 'ventas',               icon: 'ti-cash',            label: 'Ventas de Hacienda' },
@@ -2926,25 +2926,6 @@ function buildMovimientos() {
     </div>
     <button class="btn btn-primary" id="mv-save" style="margin-top:6px">Registrar movimiento</button>
   </div>`;
-
-  const categoriasStock = [...new Set(stockList.map(s => s.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-  h += `<div class="section-label">Stock actual por rodeo</div>
-  <div class="fgrid" style="margin-bottom:10px;max-width:480px">
-    <div class="fg"><label>Filtrar por campo</label>
-      <select id="mv-stock-filtro-campo" onchange="renderStockFiltrado()">
-        <option value="">Todos los campos</option>
-        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Filtrar por categoría</label>
-      <select id="mv-stock-filtro-categoria" onchange="renderStockFiltrado()">
-        <option value="">Todas las categorías</option>
-        ${categoriasStock.map(c => `<option value="${c}">${c}</option>`).join('')}
-        <option value="engorde (Corrales)">engorde (Corrales)</option>
-      </select>
-    </div>
-  </div>
-  <div id="mv-stock-tabla">${buildStockTable_(stockList, '', '')}</div>`;
 
   h += `<div class="section-label">Historial de movimientos</div>
   <div class="fgrid" style="margin-bottom:10px;max-width:480px">
@@ -6243,16 +6224,35 @@ function attachMargenBrutoEvents() {
 function buildStockHacienda() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const hoy = today();
-  const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
-  const f30 = hace30.toISOString().slice(0,10);
+  const stockList = S.stock || [];
+  const categoriasStock = [...new Set(stockList.map(function(s){ return s.categoria; }).filter(Boolean))].sort(function(a,b){ return a.localeCompare(b,'es'); });
 
-  let h = '<div class="page-header"><div class="page-title">Stock de Hacienda</div><div class="page-sub">Reporte de existencias entre periodos por campo y categoria</div></div>';
+  let h = '<div class="page-header"><div class="page-title">Stock de Hacienda</div><div class="page-sub">Existencias actuales y reporte histórico por campo y categoría</div></div>';
 
-  h += '<div class="panel"><div class="panel-title">Configurar reporte</div><div class="fgrid">' +
+  // Stock actual
+  h += '<div class="panel"><div class="panel-title">📦 Stock actual</div>';
+  h += '<div class="fgrid" style="margin-bottom:10px;max-width:560px">' +
+    '<div class="fg"><label>Campo</label><select id="sh-stock-campo" onchange="renderStockHaciendaActual_()">' +
+    '<option value="">Todos los campos</option>' +
+    campos.map(function(c){ return '<option value="' + c.campo_id + '">' + c.nombre + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div class="fg"><label>Categoría</label><select id="sh-stock-cat" onchange="renderStockHaciendaActual_()">' +
+    '<option value="">Todas las categorías</option>' +
+    categoriasStock.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('') +
+    '</select></div>' +
+    '</div>';
+  h += '<div id="sh-stock-actual">' + buildStockTable_(stockList, '', '') + '</div>';
+  h += '</div>';
+
+  // Reporte histórico
+  h += '<div class="panel"><div class="panel-title">📅 Reporte histórico</div><div class="fgrid">' +
     '<div class="fg"><label>Fecha desde</label><input type="date" id="sh-desde" value="' + hoy.slice(0,8) + '01"></div>' +
     '<div class="fg"><label>Fecha hasta</label><input type="date" id="sh-hasta" value="' + hoy + '"></div>' +
     '<div class="fg"><label>Campo</label><select id="sh-campo"><option value="">Todos los campos</option>' +
     campos.map(function(c){ return '<option value="' + c.campo_id + '">' + c.nombre + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div class="fg"><label>Categoría</label><select id="sh-cat"><option value="">Todas las categorías</option>' +
+    categoriasStock.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('') +
     '</select></div>' +
     '<div class="fg"><label>Detalle mensual</label><select id="sh-mensual"><option value="no">No — solo el periodo</option><option value="si">Si — una columna por mes</option></select></div>' +
     '</div>' +
@@ -6262,6 +6262,18 @@ function buildStockHacienda() {
 
   h += '<div id="sh-resultado"></div>';
   return h;
+}
+
+function renderStockHaciendaActual_() {
+  const campo = document.getElementById('sh-stock-campo')?.value || '';
+  const cat = document.getElementById('sh-stock-cat')?.value || '';
+  const stockList = (S.stock || []).filter(function(s){
+    if (campo && String(s.campo_id) !== String(campo)) return false;
+    if (cat && String(s.categoria) !== String(cat)) return false;
+    return true;
+  });
+  const el = document.getElementById('sh-stock-actual');
+  if (el) el.innerHTML = buildStockTable_(stockList, campo, cat);
 }
 
 function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
