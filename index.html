@@ -3646,6 +3646,26 @@ function egSetCorralId(val) {
 function egConfig_(rodeoId) {
   try { return JSON.parse(localStorage.getItem('eg_cfg') || '{}')[rodeoId] || {}; } catch(e) { return {}; }
 }
+// Devuelve lista de { producto_id, fecha_baja } de productos inactivos para un corral
+function egProductosInactivos_(rodeoId) {
+  try { return JSON.parse(localStorage.getItem('eg_prod_inactivos') || '{}')[rodeoId] || []; } catch(e) { return []; }
+}
+// Guarda lista de inactivos para un corral
+function egSaveProductosInactivos_(rodeoId, lista) {
+  try {
+    const all = JSON.parse(localStorage.getItem('eg_prod_inactivos') || '{}');
+    all[rodeoId] = lista;
+    localStorage.setItem('eg_prod_inactivos', JSON.stringify(all));
+  } catch(e) {}
+}
+// Devuelve true si el producto está activo para ese corral en la fecha indicada
+function egEsProductoActivo_(rodeoId, productoId, fecha) {
+  const inactivos = egProductosInactivos_(rodeoId);
+  const reg = inactivos.find(x => String(x.producto_id) === String(productoId));
+  if (!reg) return true; // no está marcado como inactivo → activo
+  if (!reg.fecha_baja) return false; // inactivo sin fecha → siempre inactivo
+  return String(fecha || today()) < String(reg.fecha_baja); // activo solo antes de la fecha de baja
+}
 function egSaveConfig_(rodeoId, cfg) {
   try {
     const all = JSON.parse(localStorage.getItem('eg_cfg') || '{}');
@@ -4508,7 +4528,47 @@ function buildEngordeCostos_(rodeoId, fm) {
     h += `<tr class="total-row"><td><strong>Total</strong></td><td class="tc">—</td><td class="tc"><strong>${fm(ca)}</strong></td><td class="tc"><strong>${fm(caHP)}</strong></td><td class="tc"><strong>${kgG>0?fm(caHP/kgG):'—'}</strong></td></tr>`;
     h += '</tbody></table></div>';
   }
+
+  // ── Gestión de insumos activos/inactivos para proyección ──────────────────
+  const inactivosReg = egProductosInactivos_(rodeoId);
+  const todosProds = (S.catalogs && S.catalogs.productos) || [];
+  // Todos los productos que este corral consumió alguna vez
+  const prodHistoricos = [...new Set(consumosCrl.map(c => c.producto_id))];
+  if (prodHistoricos.length) {
+    h += `<div class="section-label" style="margin-top:20px">⚙️ Insumos para proyección de costos</div>`;
+    h += `<div style="font-size:12px;color:var(--text2);margin-bottom:10px">Marcá como inactivo el insumo que ya no se usa en este corral. La proyección dejará de incluirlo a partir de la fecha de baja.</div>`;
+    h += `<div style="display:flex;flex-direction:column;gap:8px" id="eg-prod-inact-list">`;
+    prodHistoricos.forEach(pid => {
+      const prod = todosProds.find(p => String(p.producto_id) === String(pid));
+      const reg = inactivosReg.find(x => String(x.producto_id) === String(pid));
+      const esInactivo = !!reg;
+      const fechaBaja = reg?.fecha_baja || '';
+      h += `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;border:1px solid ${esInactivo?'var(--red)':'var(--border)'}">
+        <span class="pill ${esInactivo?'pill-red':'pill-green'}" style="font-size:11px;min-width:80px;text-align:center">${esInactivo?'🔴 Inactivo':'🟢 Activo'}</span>
+        <span style="font-weight:600;flex:1">${prod?.nombre||'Producto '+pid} <span style="font-weight:400;color:var(--text2);font-size:11px">(${prod?.unidad||''})</span></span>
+        ${esInactivo ? `<div style="display:flex;align-items:center;gap:6px;font-size:12px">
+          <span style="color:var(--text2)">Inactivo desde:</span>
+          <input type="date" id="eg-pi-fecha-${pid}" value="${fechaBaja}" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg)">
+          <button class="btn btn-sm" onclick="egGuardarInactivo_('${rodeoId}','${pid}',true)" style="font-size:11px">💾</button>
+          <button class="btn btn-sm" style="border-color:var(--green);color:var(--green);font-size:11px" onclick="egGuardarInactivo_('${rodeoId}','${pid}',false)">✅ Reactivar</button>
+        </div>` : `<button class="btn btn-sm" style="border-color:var(--red);color:var(--red);font-size:11px" onclick="egGuardarInactivo_('${rodeoId}','${pid}',true)">🔴 Marcar inactivo</button>`}
+      </div>`;
+    });
+    h += `</div>`;
+  }
+
   return h;
+}
+
+function egGuardarInactivo_(rodeoId, productoId, marcarInactivo) {
+  const lista = egProductosInactivos_(rodeoId).filter(x => String(x.producto_id) !== String(productoId));
+  if (marcarInactivo) {
+    const fecha = document.getElementById('eg-pi-fecha-'+productoId)?.value || today();
+    lista.push({ producto_id: String(productoId), fecha_baja: fecha });
+  }
+  egSaveProductosInactivos_(rodeoId, lista);
+  toast(marcarInactivo ? 'Insumo marcado como inactivo' : 'Insumo reactivado', 'ok');
+  render();
 }
 
 function buildEngordeComparacion_(rodeosEng, fm) {
@@ -4789,21 +4849,27 @@ function buildEngordeCierre_(rodeoId, fm) {
         let totalAcum = 0, totalProyect = 0, totalCierre = 0;
 
         prodIds.forEach(pid => {
+          // Saltar si producto marcado como inactivo para este corral a la fecha proyectada
+          if (!egEsProductoActivo_(rid, pid, fSalida || hoy)) return;
           const prod = productos.find(p => String(p.producto_id) === String(pid));
           const costoUnit = egCostoPromProducto_(pid);
           // Acumulado
           const cantAcum = consumosTodos.filter(c => String(c.producto_id) === String(pid)).reduce((s,c) => s+(Number(c.cantidad)||0), 0);
           const costoAcum = cantAcum * costoUnit;
-          // Diario últimos 30 días
-          const cons30prod = cons30.filter(c => String(c.producto_id) === String(pid));
+          // Diario últimos 30 días — solo desde fecha de baja hacia atrás si hay fecha
+          const inactivoReg = egProductosInactivos_(rid).find(x => String(x.producto_id) === String(pid));
+          const fechaBajaRef = inactivoReg?.fecha_baja || hoy;
+          const cons30prod = cons30.filter(c => String(c.producto_id) === String(pid) && String(c.fecha) < fechaBajaRef);
           const cant30 = cons30prod.reduce((s,c) => s+(Number(c.cantidad)||0), 0);
           // Si no hay datos en 30 días, usar promedio histórico del producto
           let cantDiaria;
           if (cant30 > 0) {
             cantDiaria = cant30 / 30;
           } else if (fi) {
+            const consumosAntsBaja = consumosTodos.filter(c => String(c.producto_id) === String(pid) && String(c.fecha) < fechaBajaRef);
+            const cantAcumAnte = consumosAntsBaja.reduce((s,c) => s+(Number(c.cantidad)||0), 0);
             const diasTotales = Math.max(1, Math.round((new Date(hoy)-new Date(fi))/86400000));
-            cantDiaria = cantAcum / diasTotales;
+            cantDiaria = cantAcumAnte / diasTotales;
           } else {
             cantDiaria = 0;
           }
@@ -4893,6 +4959,8 @@ function buildEngordeCierre_(rodeoId, fm) {
       if (diasHasta2 !== null && diasHasta2 > 0) {
         const prodIds2 = [...new Set(todosC2.map(c => c.producto_id))];
         prodIds2.forEach(pid => {
+          // Saltar si inactivo para este corral a la fecha proyectada
+          if (!egEsProductoActivo_(rid, pid, fSalida2 || today())) return;
           const prod = productos.find(p => String(p.producto_id) === String(pid));
           const costoUnit = egCostoPromProducto_(pid);
           const cantAcum2 = todosC2.filter(c => String(c.producto_id) === String(pid)).reduce((s,c) => s+(Number(c.cantidad)||0), 0);
