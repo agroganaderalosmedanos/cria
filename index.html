@@ -3808,11 +3808,25 @@ function buildEngorde() {
 
   // Selector de corral (para costos)
   if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
-    h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-      <label style="font-size:13px;font-weight:600">Corral:</label>
-      <select id="eg-selector-corral" data-action="cambiar-corral" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:14px">
-        ${rodeosEng.map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(egGetCorralId())?'selected':''} >${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
-      </select>
+    const campos = (S.catalogs && S.catalogs.campos) || [];
+    h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:13px;font-weight:600;white-space:nowrap">Campo:</label>
+        <select onchange="S._engCampoFiltro=this.value;render()"
+          style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px">
+          <option value="">Todos los campos</option>
+          ${campos.map(c=>`<option value="${c.campo_id}" ${String(S._engCampoFiltro||'')===String(c.campo_id)?'selected':''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:13px;font-weight:600;white-space:nowrap">Corral:</label>
+        <select id="eg-selector-corral" data-action="cambiar-corral"
+          style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px">
+          <option value="">— Todos los corrales —</option>
+          ${rodeosEng.filter(r=>!S._engCampoFiltro||String(r.campo_id)===String(S._engCampoFiltro))
+            .map(r=>`<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(egGetCorralId())?'selected':''}>${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        </select>
+      </div>
     </div>`;
   }
 
@@ -4050,6 +4064,65 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
   </div>`;
 
+  // ── EXISTENCIA INICIAL ─────────────────────────────────────────────
+  const movs2 = S.cache.movimientos || [];
+  const saldosEngIni = movs2.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  if (saldosEngIni.length) {
+    h += `<div class="panel">
+      <div class="panel-title">📥 Existencia Inicial</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Rodeo</th><th>Campo</th><th>Categoría</th>
+        <th class="tc">Cabezas</th><th class="tr">$/cab</th><th class="tr">Valor</th>
+      </tr></thead><tbody>`;
+    let totCabIni=0, totValIni=0;
+    saldosEngIni.forEach(m => {
+      const rod = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
+      const cant = Number(m.cantidad)||0;
+      const precio = Number(m.precio_cabeza)||0;
+      const val = convertirAMoneda_(cant*precio, m.fecha, moneda);
+      totCabIni += cant; totValIni += val;
+      h += `<tr>
+        <td>${rod?.nombre||'—'}</td>
+        <td>${campoNombre(rod?.campo_id)}</td>
+        <td>${rod?.categoria||'—'}</td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tr">${precio ? fm(precio) : '—'}</td>
+        <td class="tr"><strong>${fm(val)}</strong></td>
+      </tr>`;
+    });
+    h += `<tr class="total-row"><td colspan="3"><strong>Total</strong></td>
+      <td class="tc"><strong>${fn(totCabIni)}</strong></td><td></td>
+      <td class="tr"><strong>${fm(totValIni)}</strong></td></tr>`;
+    h += '</tbody></table></div></div>';
+  }
+
+  // ── EXISTENCIA FINAL ───────────────────────────────────────────────
+  if (stockDetalleRows.length) {
+    h += `<div class="panel">
+      <div class="panel-title">📦 Existencia Final — Stock valorizado actual</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Rodeo</th><th>Campo</th><th>Categoría</th>
+        <th class="tc">Stock</th><th class="tr">Peso prom.</th>
+        <th class="tr">Método</th><th class="tr">Valor</th>
+      </tr></thead><tbody>`;
+    stockDetalleRows.forEach(row => {
+      const cat = (row.rodeo.categoria||'').toLowerCase().trim();
+      const metodo = CATS_POR_CABEZA_.includes(cat) ? 'por cabeza' : (row.pesoP ? 'por kg' : 'por cab. (sin pesada)');
+      h += `<tr>
+        <td><strong>${row.rodeo.nombre}</strong></td>
+        <td>${campoNombre(row.rodeo.campo_id)}</td>
+        <td>${row.rodeo.categoria||'—'}</td>
+        <td class="tc">${fn(row.stock)}</td>
+        <td class="tr">${row.pesoP ? fn(row.pesoP)+' kg' : '—'}</td>
+        <td class="tr" style="font-size:11px;color:var(--text3)">${metodo}</td>
+        <td class="tr"><strong>${fm(row.val)}</strong></td>
+      </tr>`;
+    });
+    h += `<tr class="total-row"><td colspan="4"><strong>Total</strong></td>
+      <td></td><td></td><td class="tr"><strong>${fm(stockValEng)}</strong></td></tr>`;
+    h += '</tbody></table></div></div>';
+  }
+
   // ── PRODUCTIVO ──────────────────────────────────────────────────────
   // KPIs productivos
   let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
@@ -4196,24 +4269,6 @@ function buildEngordeCostos_(rodeoId, fm) {
   const margenVsBE = breakEven && precVentaProm ? precVentaProm - breakEven : null;
 
   let h = '';
-  // Config del corral
-  h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
-    <span style="font-size:13px;font-weight:600">⚙ Config. ${r.nombre}</span>
-    <div style="display:flex;align-items:center;gap:6px;font-size:13px">
-      <label>Kg prom. entrada:</label>
-      <input type="number" id="eg-cfg-kg" value="${cfg.kgIngreso||''}" placeholder="Ej: 335" min="0" step="1" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
-    </div>
-    <div style="display:flex;align-items:center;gap:6px;font-size:13px">
-      <label>Precio compra $/kg:</label>
-      <input type="number" id="eg-cfg-precio" value="${cfg.precioCompra||''}" placeholder="Ej: 4500" min="0" step="1" style="width:100px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
-    </div>
-    <div style="display:flex;align-items:center;gap:6px;font-size:13px">
-      <label>Stock valorizado $/kg:</label>
-      <input type="number" id="eg-cfg-stock" value="${cfg.precioStock||''}" placeholder="Ej: 6000" min="0" step="1" style="width:100px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
-    </div>
-    <button class="btn btn-secondary" id="eg-cfg-save" data-rodeo="${rodeoId}" style="padding:4px 14px;font-size:12px">✓ Guardar</button>
-    ${ivStock>0?`<span style="font-size:13px;font-weight:700;color:var(--green-text)">Stock valorizado: ${fm(ivStock)}</span>`:''}
-  </div>`;
 
   // KPIs principales
   h += `<div class="kpi-grid" style="margin-bottom:8px">
