@@ -7684,24 +7684,121 @@ function preciosValParaPeriodo_(periodo) {
 }
 
 function buildConfig() {
-  return `
-  <div class="panel">
-    <div class="panel-title">Conexión con la planilla</div>
-    <div class="fgrid">
-      <div class="fg"><label>URL de la API</label><input type="text" id="cf-url" value="${S.apiUrl}"></div>
-      <div class="fg"><label>Token de acceso</label><input type="password" id="cf-token" value="${S.apiToken}"></div>
+  const tab = S.configTab || 'conexion';
+  const tabs = [
+    { k: 'conexion',     label: '🔌 Conexión' },
+    { k: 'campos',       label: '🏡 Campos' },
+    { k: 'rodeos',       label: '🐄 Rodeos' },
+    { k: 'compradores',  label: '🤝 Compradores' },
+  ];
+  let h = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">`;
+  tabs.forEach(t => {
+    h += `<button class="btn ${tab===t.k?'btn-primary':'btn-secondary'}" onclick="S.configTab='${t.k}';render()">${t.label}</button>`;
+  });
+  h += `</div>`;
+
+  if (tab === 'conexion') {
+    h += `<div class="panel">
+      <div class="panel-title">Conexión con la planilla</div>
+      <div class="fgrid">
+        <div class="fg"><label>URL de la API</label><input type="text" id="cf-url" value="${S.apiUrl}"></div>
+        <div class="fg"><label>Token de acceso</label><input type="password" id="cf-token" value="${S.apiToken}"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" id="cf-save">Guardar y reconectar</button>
+        <button class="btn btn-secondary" id="cf-test">Probar conexión</button>
+      </div>
+      <div id="cf-status" style="margin-top:10px;font-size:12.5px"></div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-primary" id="cf-save">Guardar y reconectar</button>
-      <button class="btn btn-secondary" id="cf-test">Probar conexión</button>
-    </div>
-    <div id="cf-status" style="margin-top:10px;font-size:12.5px"></div>
-  </div>
-  <div class="panel">
-    <div class="panel-title">Catálogos cargados</div>
-    <p class="helper-text">Rodeos: ${(S.catalogs && S.catalogs.rodeos || []).length} · Campos: ${(S.catalogs && S.catalogs.campos || []).length} · Compradores: ${(S.catalogs && S.catalogs.compradores || []).length}</p>
-  </div>
-`;
+    <div class="panel">
+      <div class="panel-title">Estado de catálogos</div>
+      <p class="helper-text">Rodeos: ${(S.catalogs && S.catalogs.rodeos || []).length} · Campos: ${(S.catalogs && S.catalogs.campos || []).length} · Compradores: ${(S.catalogs && S.catalogs.compradores || []).length}</p>
+    </div>`;
+  }
+
+  if (tab === 'campos') {
+    const campos = (S.catalogs && S.catalogs.campos) || [];
+    h += `<div class="panel">
+      <div class="panel-title">Nuevo campo</div>
+      <div class="fgrid">
+        <div class="fg"><label>Nombre</label><input type="text" id="cf-campo-nombre" placeholder="Ej: El Misterio"></div>
+        <div class="fg"><label>Tipo</label>
+          <select id="cf-campo-tipo">
+            <option value="propio">Propio</option>
+            <option value="arrendado">Arrendado</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="cf-campo-save" style="margin-top:8px">➕ Agregar campo</button>
+    </div>`;
+    h += buildEntityTable(campos, [
+      { key: 'nombre', label: 'Nombre' },
+      { key: 'tipo',   label: 'Tipo' },
+    ], 'campos', 'campo_id');
+  }
+
+  if (tab === 'rodeos') {
+    const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+    const campos  = (S.catalogs && S.catalogs.campos)  || [];
+    const cats = ['vaca','vaquillona','ternera','toro','torito','novillito','novillo','ternero','vaquilloncita','vaquillona proximo servicio'];
+    h += `<div class="panel">
+      <div class="panel-title">Nuevo rodeo / corral</div>
+      <div class="fgrid">
+        <div class="fg"><label>Nombre</label><input type="text" id="cf-rodeo-nombre" placeholder="Ej: Vacas 2026"></div>
+        <div class="fg"><label>Campo</label>
+          <select id="cf-rodeo-campo">
+            ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label>Categoría</label>
+          <select id="cf-rodeo-cat">
+            ${cats.map(c => `<option value="${c}">${c.charAt(0).toUpperCase()+c.slice(1)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label>Actividad</label>
+          <select id="cf-rodeo-act">
+            <option value="Cría">Cría</option>
+            <option value="Recría">Recría</option>
+            <option value="Engorde">Engorde</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="cf-rodeo-save" style="margin-top:8px">➕ Agregar rodeo</button>
+    </div>`;
+    h += buildEntityTable(rodeos.map(r => ({...r, campo_nombre: (campos.find(c=>String(c.campo_id)===String(r.campo_id))?.nombre||r.campo_id)})), [
+      { key: 'nombre',       label: 'Nombre' },
+      { key: 'campo_nombre', label: 'Campo' },
+      { key: 'categoria',    label: 'Categoría' },
+      { key: 'actividad',    label: 'Actividad' },
+      { key: 'activo',       label: 'Activo', render: v => String(v).toUpperCase()==='TRUE'||v===true ? '✅' : '❌' },
+    ], 'rodeos', 'rodeo_id');
+  }
+
+  if (tab === 'compradores') {
+    const compradores = (S.catalogs && S.catalogs.compradores) || [];
+    h += `<div class="panel">
+      <div class="panel-title">Nuevo comprador</div>
+      <div class="fgrid">
+        <div class="fg"><label>Nombre</label><input type="text" id="cf-comp-nombre" placeholder="Ej: Frigorífico X"></div>
+        <div class="fg"><label>Tipo</label>
+          <select id="cf-comp-tipo">
+            <option value="Frigorífico">Frigorífico</option>
+            <option value="Particular">Particular</option>
+            <option value="Consignatario">Consignatario</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="cf-comp-save" style="margin-top:8px">➕ Agregar comprador</button>
+    </div>`;
+    h += buildEntityTable(compradores, [
+      { key: 'nombre', label: 'Nombre' },
+      { key: 'tipo',   label: 'Tipo' },
+    ], 'compradores', 'comprador_id');
+  }
+
+  return h;
 }
 
 // Categorías por método de valorización
@@ -7955,25 +8052,76 @@ function attachPreciosValEvents() {
 }
 
 function attachConfigEvents() {
-  document.getElementById('cf-save').onclick = async () => {
-    S.apiUrl = document.getElementById('cf-url').value.trim();
-    S.apiToken = document.getElementById('cf-token').value.trim();
-    save();
-    const statusEl = document.getElementById('cf-status');
-    statusEl.textContent = 'Reconectando…';
-    try {
-      await loadCatalogs(); await loadDashboard();
-      S.cache = {};
-      statusEl.textContent = 'Conectado correctamente.'; statusEl.style.color = 'var(--green)';
-      render();
-    } catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
-  };
-  document.getElementById('cf-test').onclick = async () => {
-    const statusEl = document.getElementById('cf-status');
-    statusEl.textContent = 'Probando…';
-    try { await apiCall('catalog'); statusEl.textContent = 'Conexión exitosa.'; statusEl.style.color = 'var(--green)'; }
-    catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
-  };
+  const tab = S.configTab || 'conexion';
+
+  if (tab === 'conexion') {
+    document.getElementById('cf-save').onclick = async () => {
+      S.apiUrl = document.getElementById('cf-url').value.trim();
+      S.apiToken = document.getElementById('cf-token').value.trim();
+      save();
+      const statusEl = document.getElementById('cf-status');
+      statusEl.textContent = 'Reconectando…';
+      try {
+        await loadCatalogs(); await loadDashboard();
+        S.cache = {};
+        statusEl.textContent = 'Conectado correctamente.'; statusEl.style.color = 'var(--green)';
+        render();
+      } catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
+    };
+    document.getElementById('cf-test').onclick = async () => {
+      const statusEl = document.getElementById('cf-status');
+      statusEl.textContent = 'Probando…';
+      try { await apiCall('catalog'); statusEl.textContent = 'Conexión exitosa.'; statusEl.style.color = 'var(--green)'; }
+      catch (err) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.color = 'var(--red)'; }
+    };
+  }
+
+  if (tab === 'campos') {
+    document.getElementById('cf-campo-save').onclick = async () => {
+      const nombre = document.getElementById('cf-campo-nombre').value.trim();
+      const tipo   = document.getElementById('cf-campo-tipo').value;
+      if (!nombre) { toast('Ingresá el nombre del campo', 'err'); return; }
+      try {
+        await apiCall('create', { body: { entity: 'campos', data: { nombre, tipo } } });
+        await loadCatalogs();
+        toast('Campo agregado', 'ok');
+        render();
+      } catch (err) { toast(err.message, 'err'); }
+    };
+    attachTableDeleteEvents('campos', 'campo_id');
+  }
+
+  if (tab === 'rodeos') {
+    document.getElementById('cf-rodeo-save').onclick = async () => {
+      const nombre    = document.getElementById('cf-rodeo-nombre').value.trim();
+      const campo_id  = document.getElementById('cf-rodeo-campo').value;
+      const categoria = document.getElementById('cf-rodeo-cat').value;
+      const actividad = document.getElementById('cf-rodeo-act').value;
+      if (!nombre) { toast('Ingresá el nombre del rodeo', 'err'); return; }
+      try {
+        await apiCall('create', { body: { entity: 'rodeos', data: { nombre, campo_id, categoria, actividad, activo: 'TRUE' } } });
+        await loadCatalogs();
+        toast('Rodeo agregado', 'ok');
+        render();
+      } catch (err) { toast(err.message, 'err'); }
+    };
+    attachTableDeleteEvents('rodeos', 'rodeo_id');
+  }
+
+  if (tab === 'compradores') {
+    document.getElementById('cf-comp-save').onclick = async () => {
+      const nombre = document.getElementById('cf-comp-nombre').value.trim();
+      const tipo   = document.getElementById('cf-comp-tipo').value;
+      if (!nombre) { toast('Ingresá el nombre del comprador', 'err'); return; }
+      try {
+        await apiCall('create', { body: { entity: 'compradores', data: { nombre, tipo } } });
+        await loadCatalogs();
+        toast('Comprador agregado', 'ok');
+        render();
+      } catch (err) { toast(err.message, 'err'); }
+    };
+    attachTableDeleteEvents('compradores', 'comprador_id');
+  }
 }
 
 function buildEntityTable(items, cols, entity, idCol) {
