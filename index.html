@@ -1790,6 +1790,20 @@ function buildSueldoKpiPanel_(actividad) {
   </div>`;
 }
 
+// Convierte un importe en ARS a la moneda seleccionada usando cotización de esa fecha
+function convertirAMoneda_(importe, fecha, moneda) {
+  if (!importe || moneda !== 'USD') return Number(importe) || 0;
+  const tc = tipoCambioVigente_(fecha);
+  const val = tc ? Number(tc.valor || tc) : null;
+  if (!val || val <= 0) return Number(importe) || 0; // sin cotización, devuelve pesos
+  return (Number(importe) || 0) / val;
+}
+// Formatea un valor ya convertido
+function fmConv_(importe, fecha, moneda) {
+  const val = convertirAMoneda_(importe, fecha, moneda);
+  return (moneda === 'USD' ? 'U$S ' : '$ ') + fn(Math.round(val), 0);
+}
+
 function buildDashboard() {
   // Mostrar loader mientras cargan los datos
   if (!S.cache.movimientos || !S.cache.ventas) {
@@ -6793,68 +6807,184 @@ function attachSueldosEvents() {
 
 
 function buildCotizacion() {
-  // Unificar Sheets + localStorage
-  const deCatalogs = (S.catalogs && S.catalogs.tipo_cambio || []).map(t => ({ fecha: t.fecha, valor: Number(t.valor), fuente: t.fuente }));
-  const deCorral   = (S.corralesTipoCambio || []);
-  const merged = [...deCatalogs];
-  deCorral.forEach(t => { if (!merged.find(x => x.fecha === t.fecha)) merged.push(t); });
-  const lista = merged.slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
-  const ultima = lista[0] || null;
+  const lista = (S.catalogs && S.catalogs.tipo_cambio || [])
+    .slice().sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
   const tcHoy = tipoCambioVigente_(today());
 
   let h = `<div class="page-header">
-    <div class="page-title">Cotización U$S</div>
-    <div class="page-sub">Dólar BNA oficial — se actualiza automáticamente al ingresar al sistema</div>
+    <div class="page-title">💵 Cotización U$S</div>
+    <div class="page-sub">Historial de tipo de cambio — usado para convertir valores a dólares por fecha</div>
   </div>`;
 
-  // KPI cotización actual
-  h += `<div class="kpi-grid" style="margin-bottom:16px">
-    <div class="kpi">
-      <div class="kpi-icon">💵</div>
-      <div class="kpi-label">Cotización vigente</div>
-      <div class="kpi-val kpi-pos">${tcHoy ? '$ ' + fn(tcHoy.valor, 2) + ' / U$S' : '—'}</div>
-      <div class="kpi-sub">${tcHoy ? 'al ' + fd(tcHoy.fecha) : 'Sin datos — reintentá en unos segundos'}</div>
+  // KPIs
+  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+    <div style="background:var(--green-bg);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--green-text);letter-spacing:.05em">Cotización vigente</div>
+      <div style="font-size:18px;font-weight:700;color:var(--green)">${tcHoy ? '$ '+fn(tcHoy.valor)+' / U$S' : '—'}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">${tcHoy ? 'al '+fd(tcHoy.fecha) : 'sin datos'}</div>
     </div>
-    <div class="kpi">
-      <div class="kpi-icon">🔄</div>
-      <div class="kpi-label">Fuente</div>
-      <div class="kpi-val" style="font-size:13px">Banco Nación Argentina</div>
-      <div class="kpi-sub">Tipo de cambio oficial (venta)</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-icon">📅</div>
-      <div class="kpi-label">Registros históricos</div>
-      <div class="kpi-val">${lista.length}</div>
-      <div class="kpi-sub">fechas disponibles para conversión</div>
+    <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Registros históricos</div>
+      <div style="font-size:18px;font-weight:700">${lista.length}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">fechas disponibles</div>
     </div>
   </div>`;
 
-  // Botón actualizar
-  h += `<div style="margin-bottom:16px">
-    <button class="btn btn-primary" onclick="window.actualizarCotizacion_()">🔄 Actualizar cotización ahora</button>
+  // Panel carga manual
+  h += `<div class="panel">
+    <div class="panel-title">➕ Cargar cotización</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">
+      El sistema descarga automáticamente la cotización del día al iniciar. Para fechas anteriores, cargalas manualmente acá.
+    </div>
+    <div class="fgrid" style="align-items:flex-end">
+      <div class="fg">
+        <label>Fecha</label>
+        <input type="date" id="tc-fecha" value="${today()}">
+      </div>
+      <div class="fg">
+        <label>$ por U$S (venta BNA)</label>
+        <input type="number" id="tc-valor" placeholder="Ej: 1495" min="1" step="0.01">
+      </div>
+      <div class="fg">
+        <label>Fuente</label>
+        <select id="tc-fuente">
+          <option value="BNA">Banco Nación (oficial)</option>
+          <option value="Manual">Carga manual</option>
+          <option value="MEP">Dólar MEP</option>
+          <option value="CCL">Dólar CCL</option>
+        </select>
+      </div>
+      <div class="fg" style="flex:0">
+        <button class="btn btn-primary" id="tc-guardar-btn"
+          onclick="this.disabled=true;this.textContent='⏳…';window.cotizGuardar_()">
+          💾 Guardar
+        </button>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text2)">Carga múltiple (pegar desde Excel/planilla)</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Una cotización por línea en formato: <code>YYYY-MM-DD TAB valor</code> — podés copiar y pegar desde una hoja de cálculo.</div>
+      <textarea id="tc-bulk" rows="5" placeholder="2026-01-15&#9;1200&#10;2026-02-01&#9;1320&#10;2026-03-15&#9;1410"
+        style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);resize:vertical"></textarea>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-secondary" id="tc-bulk-btn"
+          onclick="this.disabled=true;this.textContent='⏳ Guardando…';window.cotizBulkGuardar_()">
+          📥 Importar cotizaciones
+        </button>
+        <button class="btn btn-secondary" onclick="window.actualizarCotizacion_()">🔄 Descargar cotización de hoy</button>
+        <span id="tc-msg" style="font-size:13px;color:var(--green)"></span>
+      </div>
+    </div>
   </div>`;
 
   // Historial
+  h += `<div class="panel">
+    <div class="panel-title">📋 Historial de cotizaciones</div>`;
   if (!lista.length) {
-    h += '<div class="empty-state"><span class="ico">💵</span><div class="msg">Sin cotizaciones cargadas aún. Ingresá al sistema con conexión a internet para traer la cotización automáticamente.</div></div>';
+    h += '<div class="empty-state"><span class="ico">💵</span><div class="msg">Sin cotizaciones. Cargalas manualmente o descargá la de hoy.</div></div>';
   } else {
-    h += `<div class="section-label">Historial de cotizaciones</div>
-    <div class="tw"><table class="dt"><thead><tr>
-      <th>Fecha</th><th class="tc">$ / U$S (venta BNA)</th>
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Fecha</th><th class="tr">$ / U$S</th><th>Fuente</th><th></th>
     </tr></thead><tbody>`;
     lista.forEach(t => {
-      h += `<tr>
-        <td>${fd(t.fecha)}</td>
-        <td class="tc"><strong>$ ${fn(t.valor, 2)}</strong></td>
+      const esHoy = String(t.fecha).slice(0,10) === today();
+      h += `<tr ${esHoy?'style="background:var(--green-bg)"':''}>
+        <td>${fd(t.fecha)}${esHoy?' <span style="font-size:10px;background:var(--green);color:#fff;padding:1px 6px;border-radius:20px">HOY</span>':''}</td>
+        <td class="tr"><strong>$ ${fn(t.valor)}</strong></td>
+        <td style="font-size:12px;color:var(--text3)">${t.fuente||'BNA'}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="window.cotizEliminar_('${t.tc_id}')">🗑</button></td>
       </tr>`;
     });
     h += '</tbody></table></div>';
   }
-
+  h += '</div>';
   return h;
 }
 
 function attachCotizacionEvents() {
+
+  // Guardar una cotización individual
+  window.cotizGuardar_ = async function() {
+    const fecha  = document.getElementById('tc-fecha')?.value || '';
+    const valor  = Number(document.getElementById('tc-valor')?.value) || 0;
+    const fuente = document.getElementById('tc-fuente')?.value || 'Manual';
+    const btn    = document.getElementById('tc-guardar-btn');
+    const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent='💾 Guardar'; } };
+    if (!fecha) { resetBtn(); toast('Ingresá la fecha', 'err'); return; }
+    if (!valor) { resetBtn(); toast('Ingresá el valor', 'err'); return; }
+    try {
+      const lista = S.catalogs && S.catalogs.tipo_cambio || [];
+      const existing = lista.find(t => String(t.fecha).slice(0,10) === fecha);
+      if (existing) {
+        await apiCall('update', { body: { entity: 'tipo_cambio', id: existing.tc_id, data: { ...existing, fecha, valor, fuente } } });
+      } else {
+        await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha, valor, fuente } } });
+      }
+      await loadCatalogs();
+      S.corralesTipoCambio = (S.catalogs.tipo_cambio||[]).map(t=>({fecha:t.fecha,valor:Number(t.valor)}));
+      toast('Cotización guardada: ' + fd(fecha) + ' → $ ' + fn(valor), 'ok');
+      resetBtn();
+      render();
+    } catch(err) { resetBtn(); toast('Error: ' + err.message, 'err'); }
+  };
+
+  // Importar múltiples cotizaciones pegadas desde Excel
+  window.cotizBulkGuardar_ = async function() {
+    const raw  = document.getElementById('tc-bulk')?.value || '';
+    const btn  = document.getElementById('tc-bulk-btn');
+    const msg  = document.getElementById('tc-msg');
+    const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent='📥 Importar cotizaciones'; } };
+    const lineas = raw.split('
+').map(l=>l.trim()).filter(Boolean);
+    if (!lineas.length) { resetBtn(); toast('Pegá al menos una línea', 'err'); return; }
+    const registros = [];
+    const errores = [];
+    lineas.forEach((l, i) => {
+      const partes = l.split(/	|;|,/).map(p=>p.trim());
+      const fecha = partes[0];
+      const valor = Number(partes[1]?.replace(',','.'));
+      if (!fecha || !valor || isNaN(valor)) { errores.push('Línea '+(i+1)+': formato inválido'); return; }
+      // Validar formato fecha
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { errores.push('Línea '+(i+1)+': fecha debe ser YYYY-MM-DD'); return; }
+      registros.push({ fecha, valor });
+    });
+    if (errores.length) { resetBtn(); toast(errores[0], 'err'); return; }
+    try {
+      const lista = S.catalogs && S.catalogs.tipo_cambio || [];
+      let guardados = 0;
+      for (const r of registros) {
+        const existing = lista.find(t => String(t.fecha).slice(0,10) === r.fecha);
+        if (existing) {
+          await apiCall('update', { body: { entity: 'tipo_cambio', id: existing.tc_id, data: { ...existing, fecha: r.fecha, valor: r.valor, fuente: 'Manual' } } });
+        } else {
+          await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha: r.fecha, valor: r.valor, fuente: 'Manual' } } });
+        }
+        guardados++;
+        if (msg) msg.textContent = '⏳ Guardando ' + guardados + '/' + registros.length + '…';
+      }
+      await loadCatalogs();
+      S.corralesTipoCambio = (S.catalogs.tipo_cambio||[]).map(t=>({fecha:t.fecha,valor:Number(t.valor)}));
+      toast(guardados + ' cotizaciones guardadas', 'ok');
+      if (document.getElementById('tc-bulk')) document.getElementById('tc-bulk').value = '';
+      resetBtn();
+      render();
+    } catch(err) { resetBtn(); toast('Error: ' + err.message, 'err'); }
+  };
+
+  // Eliminar cotización
+  window.cotizEliminar_ = async function(tc_id) {
+    if (!confirm('¿Eliminar esta cotización?')) return;
+    try {
+      await apiCall('delete', { body: { entity: 'tipo_cambio', id: tc_id } });
+      await loadCatalogs();
+      S.corralesTipoCambio = (S.catalogs.tipo_cambio||[]).map(t=>({fecha:t.fecha,valor:Number(t.valor)}));
+      toast('Cotización eliminada', 'ok');
+      render();
+    } catch(err) { toast('Error: ' + err.message, 'err'); }
+  };
+
+  // Descargar cotización de hoy automáticamente
   window.actualizarCotizacion_ = async function() {
     try {
       const res = await fetch('https://dolarapi.com/v1/dolares/oficial', { cache: 'no-store' });
@@ -6863,20 +6993,19 @@ function attachCotizacionEvents() {
       const valor = data.venta || data.promedio || null;
       if (!valor) throw new Error('Sin valor en la respuesta');
       const hoy = today();
-      // Guardar en Sheets
-      const existing = (S.catalogs && S.catalogs.tipo_cambio || []).find(t => t.fecha === hoy);
+      const lista = S.catalogs && S.catalogs.tipo_cambio || [];
+      const existing = lista.find(t => String(t.fecha).slice(0,10) === hoy);
       if (existing) {
         await apiCall('update', { body: { entity: 'tipo_cambio', id: existing.tc_id, data: { ...existing, valor: Number(valor), fuente: 'BNA' } } });
       } else {
         await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha: hoy, valor: Number(valor), fuente: 'BNA' } } });
       }
       await loadCatalogs();
-      // Sync corralesTipoCambio desde catalogs para compatibilidad
-      S.corralesTipoCambio = (S.catalogs && S.catalogs.tipo_cambio || []).map(t => ({ fecha: t.fecha, valor: Number(t.valor) }));
-      toast('Cotización actualizada: $ ' + fn(valor, 2) + ' / U$S — guardada en Sheets', 'ok');
+      S.corralesTipoCambio = (S.catalogs.tipo_cambio||[]).map(t=>({fecha:t.fecha,valor:Number(t.valor)}));
+      toast('Cotización BNA: $ ' + fn(valor) + ' / U$S — guardada', 'ok');
       render();
     } catch (err) {
-      toast('No se pudo actualizar: ' + err.message, 'err');
+      toast('No se pudo descargar: ' + err.message, 'err');
     }
   };
 }
