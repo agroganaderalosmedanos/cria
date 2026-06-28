@@ -4834,27 +4834,29 @@ function buildEngordeCierre_(rodeoId, fm) {
     } else {
       costoDiario = 0;
     }
-    // costoProyect calculado desde productos (misma lógica que la tabla → siempre coinciden)
+    // costoProyect y caAcumActivos calculados desde productos activos (misma lógica que la tabla → siempre coinciden)
     let costoProyect = null;
-    if (diasHastaSalida !== null && diasHastaSalida > 0) {
-      const productos_ = (S.catalogs && S.catalogs.productos) || [];
+    let caAcumActivos = 0; // acumulado solo de productos activos (para que el KPI coincida con la tabla)
+    if (diasHastaSalida !== null) {
       const prodIdsCalc = [...new Set(todosConsumos.map(c => c.producto_id))];
       let costoProyectSum = 0;
       prodIdsCalc.forEach(pid => {
         if (!egEsProductoActivo_(rid, pid, fSalida || hoy)) return;
         const costoUnit = egCostoPromProducto_(pid);
         const cantAcumP = todosConsumos.filter(c => String(c.producto_id)===String(pid)).reduce((s,c)=>s+(Number(c.cantidad)||0),0);
+        caAcumActivos += cantAcumP * costoUnit;
         const inactivoReg = egRodeoProductosTodos_().find(x => String(x.rodeo_id)===String(rid) && String(x.producto_id)===String(pid));
         const fechaBajaRef = inactivoReg?.fecha_baja || hoy;
         const cons30p = cons30.filter(c => String(c.producto_id)===String(pid) && String(c.fecha)<fechaBajaRef);
         const cant30p = cons30p.reduce((s,c)=>s+(Number(c.cantidad)||0),0);
         let cantDiaria = cant30p > 0 ? cant30p/30 : (fi ? cantAcumP/Math.max(1,Math.round((new Date(hoy)-new Date(fi))/86400000)) : 0);
-        costoProyectSum += Math.round(cantDiaria * diasHastaSalida) * costoUnit;
+        if (diasHastaSalida > 0) costoProyectSum += Math.round(cantDiaria * diasHastaSalida) * costoUnit;
       });
       costoProyect = Math.round(costoProyectSum);
     }
-    const costoTotalCierre = costoProyect !== null ? caAcum + costoProyect : null;
+    const costoTotalCierre = costoProyect !== null ? caAcumActivos + costoProyect : null;
     const costoFinal = costoTotalCierre !== null ? cc + costoTotalCierre : null;
+    // caAcum sigue disponible para cálculos históricos completos si se necesita
     const stkP = Number(cfg.precioStock||0);
     const ivProyect = stkP>0 ? stk*pesoObj*stkP : null;
     const ivVentas = egIngVentas_(rid);
@@ -4869,7 +4871,7 @@ function buildEngordeCierre_(rodeoId, fm) {
       h += '<div class="empty-state">Sin proyección disponible. Necesitás pesadas registradas.</div>';
     } else {
       h += `<div class="kpi-grid" style="margin-bottom:8px">
-        <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Alim. acumulada (ya gastado)</div><div class="kpi-val">${fm(caAcum)}</div><div class="kpi-sub">hasta hoy</div></div>
+        <div class="kpi"><div class="kpi-icon">🌿</div><div class="kpi-label">Alim. acumulada (ya gastado)</div><div class="kpi-val">${fm(caAcumActivos)}</div><div class="kpi-sub">hasta hoy</div></div>
         <div class="kpi"><div class="kpi-icon">📅</div><div class="kpi-label">Costo diario (últ. 30 días)</div><div class="kpi-val">${fm(costoDiario)}</div><div class="kpi-sub">${fm(costo30)} en 30 días</div></div>
         <div class="kpi"><div class="kpi-icon">🔮</div><div class="kpi-label">Alim. proyectada (resta)</div><div class="kpi-val">${fm(costoProyect)}</div><div class="kpi-sub">${diasHastaSalida} días × ${fm(costoDiario)}/día</div></div>
         <div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Total alim. al cierre</div><div class="kpi-val">${fm(costoTotalCierre)}</div><div class="kpi-sub">acumulado + proyectado</div></div>
