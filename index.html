@@ -4235,8 +4235,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 function buildEngordeCostos_(rodeoId, fm) {
   if (!rodeoId) {
     // Mostrar resumen de todos los corrales
-    const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
-    if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
+    const rodeosEngAll = rodeosTodos().filter(r => r.actividad === 'Engorde');
+    const campFiltro = S._engCampoFiltro || '';
+    const rodeosEng = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
+    if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
     let totalAlim=0,totalVeter=0;
     rodeosEng.forEach(r => {
       const cVet = egCostoAlim_(r.rodeo_id, null, 'Veterinaria');
