@@ -3734,9 +3734,25 @@ function egKgIngresados_(rodeoId) {
   return egCantIngresada_(rodeoId) * egKgIngreso_(rodeoId);
 }
 function egCostoCompra_(rodeoId) {
-  const cfg = egConfig_(rodeoId);
-  if (!cfg.precioCompra) return 0;
-  return egKgIngresados_(rodeoId) * Number(cfg.precioCompra);
+  const movs = S.cache.movimientos || [];
+  const moneda = S.engordeMoneda || 'ARS';
+  const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
+
+  // Saldo inicial × precio/cabeza
+  const saldos = movs.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
+  const costoSaldo = saldos.reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),m.fecha,moneda),0);
+
+  // Cesiones recibidas valorizadas al precio de origen
+  const cesiones = movs.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_destino_id)===String(rodeoId));
+  const costoCesion = cesiones.reduce((s,m)=>{
+    const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
+    const cant = Number(m.cantidad)||0;
+    const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
+    return s+convertirAMoneda_(valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO),m.fecha,moneda);
+  },0);
+
+  return costoSaldo + costoCesion;
 }
 function egKgStockEstimado_(rodeoId) {
   const stk = egStock_(rodeoId);
