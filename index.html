@@ -4233,9 +4233,67 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 }
 
 function buildEngordeCostos_(rodeoId, fm) {
-  // DEBUG TEMPORAL
-  localStorage.setItem('eg_debug_rodeoId', rodeoId);
-  if (!rodeoId) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Seleccioná un corral.</div></div>';
+  if (!rodeoId) {
+    // Mostrar resumen de todos los corrales
+    const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+    if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
+    const comprasInsumos = S.cache.compras_insumos || [];
+    const productosAll = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+    const prodPorId = Object.fromEntries(productosAll.map(p=>[String(p.producto_id),p]));
+    const costoProm = {};
+    comprasInsumos.forEach(c => {
+      const pid=String(c.producto_id);
+      if(!costoProm[pid]) costoProm[pid]={cant:0,costo:0};
+      costoProm[pid].cant  += Number(c.cantidad)||0;
+      costoProm[pid].costo += Number(c.costo_total)||0;
+    });
+    const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEng.some(r=>String(r.rodeo_id)===String(c.rodeo_id)));
+    let totalAlim=0,totalVeter=0;
+    consumos.forEach(c=>{
+      const pid=String(c.producto_id);
+      const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
+      const imp=(Number(c.cantidad)||0)*precioU;
+      const cat=(prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+      if(cat.includes('veterin')||cat.includes('sanid')) totalVeter+=imp;
+      else totalAlim+=imp;
+    });
+    let h = '<div class="section-label">Resumen de todos los corrales</div>';
+    h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      <div style="background:var(--clay-bg);border-radius:8px;padding:10px 16px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text)">Alimentación total</div>
+        <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
+      </div>
+      <div style="background:var(--blue-bg);border-radius:8px;padding:10px 16px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--blue-text)">Veterinaria total</div>
+        <div style="font-size:18px;font-weight:700;color:var(--blue)">${fm(totalVeter)}</div>
+      </div>
+    </div>`;
+    h += '<div class="section-label">Detalle por corral — seleccioná uno para ver el análisis completo</div>';
+    h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th>Campo</th><th class="tc">Stock</th><th class="tr">Alim.</th><th class="tr">Vet.</th><th class="tr">Total costos</th></tr></thead><tbody>';
+    rodeosEng.forEach(r => {
+      const rid = r.rodeo_id;
+      const stk = egStock_(rid);
+      let cAlim=0,cVet=0;
+      consumos.filter(c=>String(c.rodeo_id)===String(rid)).forEach(c=>{
+        const pid=String(c.producto_id);
+        const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
+        const imp=(Number(c.cantidad)||0)*precioU;
+        const cat=(prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+        if(cat.includes('veterin')||cat.includes('sanid')) cVet+=imp;
+        else cAlim+=imp;
+      });
+      h += `<tr>
+        <td><strong>${r.nombre}</strong></td>
+        <td>${campoNombre(r.campo_id)}</td>
+        <td class="tc">${fn(stk)}</td>
+        <td class="tr">${fm(cAlim)}</td>
+        <td class="tr">${fm(cVet)}</td>
+        <td class="tr"><strong>${fm(cAlim+cVet)}</strong></td>
+      </tr>`;
+    });
+    h += '</tbody></table></div>';
+    return h;
+  }
   const r = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
   if (!r) return '';
   const cfg = egConfig_(rodeoId);
@@ -4253,8 +4311,11 @@ function buildEngordeCostos_(rodeoId, fm) {
   const kgV = egKgVend_(rodeoId);
   const kgG = egKgGanadosHastaPesada_(rodeoId);
   const kgStk = egKgStockEstimado_(rodeoId);
-  const stkPrecio = Number(cfg.precioStock || 0);
-  const ivStock = stkPrecio > 0 && ultima ? stk * Number(ultima.peso_prom_kg) * stkPrecio : 0;
+  // Stock valorizado usando precios de valorización (no precio manual)
+  const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+  const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
+  const ivStock = convertirAMoneda_(ivStockARS, today(), S.engordeMoneda||'ARS');
+  const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo
   const ivTotal = iv + ivStock;
   const costoTotal = cc + ca;
   const util = ivTotal - costoTotal;
@@ -4279,7 +4340,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   </div>
   <div class="kpi-grid" style="margin-bottom:8px">
     <div class="kpi"><div class="kpi-icon">💵</div><div class="kpi-label">Ingreso ventas</div><div class="kpi-val">${fm(iv)}</div><div class="kpi-sub">${fn(kgV,0)} kg vendidos</div></div>
-    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val">${stkPrecio>0?fm(ivStock):'—'}</div><div class="kpi-sub">${fn(stk,0)} anim.${stkPrecio>0?' · '+fm(stkPrecio)+'/kg':' · ingresá precio arriba'}</div></div>
+    <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Stock valorizado</div><div class="kpi-val">${ivStock>0?fm(ivStock):'—'}</div><div class="kpi-sub">${fn(stk,0)} anim.${pesoUltima?' · '+fn(pesoUltima,0)+' kg prom.':' · sin pesada'}</div></div>
     <div class="kpi"><div class="kpi-icon">💰</div><div class="kpi-label">Ingresos totales</div><div class="kpi-val kpi-pos">${fm(ivTotal)}</div><div class="kpi-sub">ventas + stock valorizado</div></div>
     <div class="kpi"><div class="kpi-icon">${util>=0?'📈':'📉'}</div><div class="kpi-label">Utilidad</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${fm(util)}</div><div class="kpi-sub">${util>=0?'✓ Ganancia':'⚠ Pérdida'}</div></div>
     <div class="kpi"><div class="kpi-icon">🔢</div><div class="kpi-label">% Margen</div><div class="kpi-val ${util>=0?'kpi-pos':'kpi-neg'}">${ivTotal>0?egPct_(util,ivTotal):'—'}</div></div>
