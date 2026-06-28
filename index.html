@@ -4244,16 +4244,63 @@ function buildEngordeCostos_(rodeoId, fm) {
       totalVeter += cVet;
       totalAlim  += cTot - cVet;
     });
-    let h = '<div class="section-label">Resumen de todos los corrales</div>';
-    h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-      <div style="background:var(--clay-bg);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--clay-text)">Alimentación total</div>
-        <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
+    // Calcular ingresos consolidados
+    let totalVentas=0, totalStock=0;
+    rodeosEng.forEach(r => {
+      totalVentas += egIngVentas_(r.rodeo_id);
+      const pes = egPesadas_(r.rodeo_id);
+      const ultima = pes.length ? pes[pes.length-1] : null;
+      const pesoP = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+      totalStock += valorizarRodeo_(r, egStock_(r.rodeo_id), pesoP);
+    });
+    const totalIngresos = totalVentas + totalStock;
+    const totalEgresos  = totalAlim + totalVeter;
+    const margen = totalIngresos - totalEgresos;
+    const mc = margen>=0?'var(--green)':'var(--red)';
+    const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
+
+    let h = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="panel" style="margin-bottom:0">
+        <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — todos los corrales</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="font-weight:600">💰 Ventas de hacienda</div>
+            <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totalVentas)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+            <div style="font-weight:600">📦 Stock valorizado actual</div>
+            <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totalStock)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
+            <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
+            <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
+          </div>
+        </div>
       </div>
-      <div style="background:var(--blue-bg);border-radius:8px;padding:10px 16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--blue-text)">Veterinaria total</div>
-        <div style="font-size:18px;font-weight:700;color:var(--blue)">${fm(totalVeter)}</div>
+      <div class="panel" style="margin-bottom:0">
+        <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — todos los corrales</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="font-weight:600">🌾 Alimentación</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+            <div style="font-weight:600">💉 Veterinaria</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalVeter)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
+            <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
+            <div style="font-size:22px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
+          </div>
+        </div>
       </div>
+    </div>
+    <div style="background:${mb};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div>
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen Bruto — Terminación</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos</div>
+      </div>
+      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
     </div>`;
     h += '<div class="section-label">Detalle por corral — seleccioná uno para ver el análisis completo</div>';
     h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th>Campo</th><th class="tc">Stock</th><th class="tr">Alim.</th><th class="tr">Vet.</th><th class="tr">Total costos</th></tr></thead><tbody>';
@@ -4287,9 +4334,8 @@ function buildEngordeCostos_(rodeoId, fm) {
   const kgI = egKgIngresados_(rodeoId);
   const ca = egCostoAlim_(rodeoId);
   const caHP = egCostoAlim_(rodeoId, ultima?.fecha);
-  const caVet = egCostoAlim_(rodeoId, null, 'Veterinaria');
-  const caVetHP = egCostoAlim_(rodeoId, ultima?.fecha, 'Veterinaria');
-  const caAlimHP = caHP - caVetHP;
+  const caVet  = egCostoAlim_(rodeoId, null, 'Veterinaria');
+  const caAlim = ca - caVet; // costo alimentación total (sin veterinaria)
   const cc = egCostoCompra_(rodeoId);
   const iv = egIngVentas_(rodeoId);
   const kgV = egKgVend_(rodeoId);
@@ -4305,7 +4351,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const util = ivTotal - costoTotal;
   const dias = fi && ultima ? Math.round((new Date(ultima.fecha) - new Date(fi)) / 86400000) : null;
   const ganDiaria = dias && dias > 0 && kgIngProm > 0 ? (Number(ultima?.peso_prom_kg||0) - kgIngProm) / dias : null;
-  const caXkg = kgG > 0 ? caHP / kgG : null;
+  const caXkg = kgG > 0 ? caAlim / kgG : null;
   const ccXkg = kgG > 0 ? cc / kgG : null;
   const precVentaProm = kgV > 0 ? iv / kgV : null;
   const totalAnim = (cantIng - stk) + stk;
@@ -4325,7 +4371,7 @@ function buildEngordeCostos_(rodeoId, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(iv)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
-          <div><div style="font-weight:600">📦 Stock valorizado</div><div style="font-size:11px;color:var(--text3)">${fn(stk,0)} anim. · ${pesoUltima?fn(pesoUltima,0)+' kg prom.':'sin pesada'}</div></div>
+          <div><div style="font-weight:600">📦 Stock valorizado</div><div style="font-size:11px;color:var(--text3)">${fn(stk,0)} anim. · ${pesoUltima?fn(pesoUltima,0)+' kg prom. (última pesada)':'sin pesada — precio/cab'}</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--green)">${ivStock>0?fm(ivStock):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
@@ -4342,12 +4388,12 @@ function buildEngordeCostos_(rodeoId, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${cc>0?fm(cc):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${ultima?'hasta '+fd(ultima.fecha):'acumulado'}</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caAlimHP)}</div>
+          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">costo total acumulado</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caAlim)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">💉 Veterinaria</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caVetHP)}</div>
+          <div><div style="font-weight:600">💉 Veterinaria</div><div style="font-size:11px;color:var(--text3)">costo total acumulado</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caVet)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
