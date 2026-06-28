@@ -7727,6 +7727,7 @@ function buildABM() {
         <div class="fg"><label>Nombre</label><input type="text" id="cf-campo-nombre" placeholder="Ej: El Misterio"></div>
         <div class="fg"><label>Tipo</label>
           <select id="cf-campo-tipo">
+            <option value="ganadero">Ganadero</option>
             <option value="propio">Propio</option>
             <option value="arrendado">Arrendado</option>
             <option value="otro">Otro</option>
@@ -8192,6 +8193,7 @@ function attachTableDeleteEvents(entity, idCol) {
         if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
         if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
         if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
+        if (entity === 'campos' || entity === 'rodeos' || entity === 'compradores') { await loadCatalogs(); }
         render();
       } catch (err) { toast(err.message, 'err'); }
     };
@@ -8295,6 +8297,7 @@ function openEditModal(entity, idCol, id) {
       if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
       if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
       if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
+      if (entity === 'campos' || entity === 'rodeos' || entity === 'compradores') { await loadCatalogs(); }
       closeModal();
       render();
     } catch (err) { toast(err.message, 'err'); saveBtn.disabled = false; }
