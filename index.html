@@ -8216,7 +8216,9 @@ function fieldInputType_(key, value) {
   return 'text';
 }
 function openEditModal(entity, idCol, id) {
-  const items = S.cache[entity] || [];
+  // Buscar en cache o en catalogs (para campos, rodeos, compradores)
+  const catalogMap = { campos: 'campos', rodeos: 'rodeos', compradores: 'compradores' };
+  const items = S.cache[entity] || (S.catalogs && catalogMap[entity] ? S.catalogs[catalogMap[entity]] : []) || [];
   const item = items.find(i => String(i[idCol]) === String(id));
   if (!item) { toast('No se encontró el registro.', 'err'); return; }
   // Para Saldo inicial: asegurarse que precio_cabeza siempre esté disponible para editar
