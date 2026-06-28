@@ -4237,25 +4237,12 @@ function buildEngordeCostos_(rodeoId, fm) {
     // Mostrar resumen de todos los corrales
     const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
     if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
-    const comprasInsumos = S.cache.compras_insumos || [];
-    const productosAll = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
-    const prodPorId = Object.fromEntries(productosAll.map(p=>[String(p.producto_id),p]));
-    const costoProm = {};
-    comprasInsumos.forEach(c => {
-      const pid=String(c.producto_id);
-      if(!costoProm[pid]) costoProm[pid]={cant:0,costo:0};
-      costoProm[pid].cant  += Number(c.cantidad)||0;
-      costoProm[pid].costo += Number(c.costo_total)||0;
-    });
-    const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEng.some(r=>String(r.rodeo_id)===String(c.rodeo_id)));
     let totalAlim=0,totalVeter=0;
-    consumos.forEach(c=>{
-      const pid=String(c.producto_id);
-      const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
-      const imp=(Number(c.cantidad)||0)*precioU;
-      const cat=(prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-      if(cat.includes('veterin')||cat.includes('sanid')) totalVeter+=imp;
-      else totalAlim+=imp;
+    rodeosEng.forEach(r => {
+      const cVet = egCostoAlim_(r.rodeo_id, null, 'Veterinaria');
+      const cTot = egCostoAlim_(r.rodeo_id);
+      totalVeter += cVet;
+      totalAlim  += cTot - cVet;
     });
     let h = '<div class="section-label">Resumen de todos los corrales</div>';
     h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
@@ -4273,22 +4260,16 @@ function buildEngordeCostos_(rodeoId, fm) {
     rodeosEng.forEach(r => {
       const rid = r.rodeo_id;
       const stk = egStock_(rid);
-      let cAlim=0,cVet=0;
-      consumos.filter(c=>String(c.rodeo_id)===String(rid)).forEach(c=>{
-        const pid=String(c.producto_id);
-        const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
-        const imp=(Number(c.cantidad)||0)*precioU;
-        const cat=(prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-        if(cat.includes('veterin')||cat.includes('sanid')) cVet+=imp;
-        else cAlim+=imp;
-      });
+      const cVet  = egCostoAlim_(rid, null, 'Veterinaria');
+      const cTot  = egCostoAlim_(rid);
+      const cAlim = cTot - cVet;
       h += `<tr>
         <td><strong>${r.nombre}</strong></td>
         <td>${campoNombre(r.campo_id)}</td>
         <td class="tc">${fn(stk)}</td>
         <td class="tr">${fm(cAlim)}</td>
         <td class="tr">${fm(cVet)}</td>
-        <td class="tr"><strong>${fm(cAlim+cVet)}</strong></td>
+        <td class="tr"><strong>${fm(cTot)}</strong></td>
       </tr>`;
     });
     h += '</tbody></table></div>';
