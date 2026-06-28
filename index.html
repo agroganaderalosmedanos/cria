@@ -6893,7 +6893,10 @@ function buildCotizacion() {
         <td>${fd(t.fecha)}${esHoy?' <span style="font-size:10px;background:var(--green);color:#fff;padding:1px 6px;border-radius:20px">HOY</span>':''}</td>
         <td class="tr"><strong>$ ${fn(t.valor)}</strong></td>
         <td style="font-size:12px;color:var(--text3)">${t.fuente||'BNA'}</td>
-        <td><button class="btn btn-danger btn-sm" onclick="window.cotizEliminar_('${t.tc_id}')">🗑</button></td>
+        <td style="display:flex;gap:4px">
+          <button class="btn btn-secondary btn-sm" onclick="window.cotizEditar_('${t.tc_id}')" title="Editar">✎</button>
+          <button class="btn btn-danger btn-sm" onclick="window.cotizEliminar_('${t.tc_id}')" title="Eliminar">🗑</button>
+        </td>
       </tr>`;
     });
     h += '</tbody></table></div>';
@@ -6969,6 +6972,24 @@ function attachCotizacionEvents() {
       resetBtn();
       render();
     } catch(err) { resetBtn(); toast('Error: ' + err.message, 'err'); }
+  };
+
+  // Editar cotización — carga valores en el formulario
+  window.cotizEditar_ = function(tc_id) {
+    const lista = S.catalogs && S.catalogs.tipo_cambio || [];
+    const t = lista.find(x => String(x.tc_id) === String(tc_id));
+    if (!t) return;
+    const fechaEl  = document.getElementById('tc-fecha');
+    const valorEl  = document.getElementById('tc-valor');
+    const fuenteEl = document.getElementById('tc-fuente');
+    const btn      = document.getElementById('tc-guardar-btn');
+    if (fechaEl)  fechaEl.value  = String(t.fecha).slice(0,10);
+    if (valorEl)  valorEl.value  = t.valor;
+    if (fuenteEl) fuenteEl.value = t.fuente || 'BNA';
+    if (btn)      btn.textContent = '✏️ Actualizar';
+    const panel = document.getElementById('tc-guardar-btn')?.closest('.panel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (valorEl) valorEl.focus();
   };
 
   // Eliminar cotización
