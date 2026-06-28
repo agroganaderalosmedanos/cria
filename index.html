@@ -4567,7 +4567,10 @@ async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo, btn) {
     btn.textContent = '⏳';
     await new Promise(r => setTimeout(r, 0)); // forzar repintado
   }
-  const todos = S.cache.rodeo_productos || (S.catalogs && S.catalogs.rodeo_productos) || [];
+  // Siempre recargar desde Sheets para tener el rp_id actualizado
+  await loadEntity('rodeo_productos', true);
+  if (S.catalogs) S.catalogs.rodeo_productos = S.cache.rodeo_productos;
+  const todos = S.cache.rodeo_productos || [];
   const reg = todos.find(x => String(x.rodeo_id) === String(rodeoId) && String(x.producto_id) === String(productoId));
   const fecha = document.getElementById('eg-pi-fecha-'+productoId)?.value || today();
   try {
