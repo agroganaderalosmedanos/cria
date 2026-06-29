@@ -4544,12 +4544,21 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // Stock inicial / Cesiones recibidas de Recría
   const movs = S.cache.movimientos || [];
   const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
-  const cesionesRec = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  // Cesiones desde Recría — leer de egresos_recria con precio_kg_cesion
+  const egresosRecRaw = S.cache.egresos_recria || [];
+  const cesionesRec = egresosRecRaw.filter(e => e.destino === 'Engorde' && rodeosEngIds.has(String(e.rodeo_destino_id||'')));
+  // También incluir traslados directos a corrales de engorde (legacy)
+  const cesionesRecTrasla = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)));
   const totalSaldoIni = saldosIni.reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
-  // Cesiones: valorizar al precio vigente del momento
-  const totalCesiones = cesionesRec.reduce((s,m)=>{
+  // Cesiones desde egresos_recria con precio_kg_cesion
+  const totalCesiones = cesionesRec.reduce((s,e)=>{
+    return s + (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+  },0) + cesionesRecTrasla.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
+    const precioKg = Number(m.precio_cabeza)||0;
+    const peso = Number(m.peso_prom_kg)||0;
+    if (precioKg && peso) return s + cant*peso*precioKg;
     const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
     return s + valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesoO);
@@ -4622,7 +4631,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSaldoIni)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cesionesRec.length} traslados valorizados</div></div>
+          <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cesionesRec.length + cesionesRecTrasla.length} cesiones desde Recría</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesiones)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
