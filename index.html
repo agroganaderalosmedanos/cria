@@ -434,6 +434,7 @@ async function init() {
 const NAV = [
   { section: 'Cría', icon: 'ti-cow', defaultPage: 'dashboard', items: [
     { k: 'dashboard',            icon: 'ti-chart-bar',   label: 'Dashboard' },
+    { k: 'cesiones_cria',        icon: 'ti-arrow-right', label: 'Cesiones' },
     { k: 'indices_reproduccion', icon: 'ti-activity',    label: 'Índices de reproducción' },
     { k: 'servicios',            icon: 'ti-heart',       label: 'Servicios' },
     { k: 'tactos',               icon: 'ti-stethoscope', label: 'Tactos' },
@@ -443,7 +444,7 @@ const NAV = [
   ]},
   { section: 'Recría', icon: 'ti-arrow-up-circle', defaultPage: 'recria_dashboard', items: [
     { k: 'recria_dashboard', icon: 'ti-chart-bar',  label: 'Dashboard' },
-    { k: 'recria',           icon: 'ti-list-check', label: 'Operaciones' },
+    { k: 'cesiones_recria',  icon: 'ti-arrow-right', label: 'Cesiones' },
   ]},
   { section: 'Terminación', icon: 'ti-meat', defaultPage: 'engorde', items: [
     { k: 'engorde',              icon: 'ti-chart-bar',      label: 'Dashboard' },
@@ -574,7 +575,13 @@ async function goto(page) {
       if (rEng.length) egSetCorralId(String(rEng[0].rodeo_id));
     }
   }
-  if (page === 'recria' || page === 'recria_dashboard') {
+  if (page === 'cesiones_cria' || page === 'cesiones_recria') {
+    if (!S.cache.movimientos)     { try { await loadEntity('movimientos'); } catch(e){} }
+    if (!S.cache.egresos_recria)  { try { await loadEntity('egresos_recria'); } catch(e){} }
+    if (!S.cache.pesadas)         { try { await loadEntity('pesadas'); } catch(e){} }
+    if (!S.resumenRecria)         { try { S.resumenRecria = await apiCall('resumenRecria'); } catch(e){} }
+  }
+  if (page === 'recria_dashboard') {
     if (!S.resumenRecria) {
       try { S.resumenRecria = await apiCall('resumenRecria'); } catch (err) { toast(err.message, 'err'); }
     }
@@ -718,7 +725,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    recria_dashboard: 'Dashboard Recría', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
+    recria_dashboard: 'Dashboard Recría', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
   };
   return titles[p] || p;
 }
@@ -754,8 +761,9 @@ function buildPage(page) {
     case 'ventas':      return buildVentas();
     case 'insumos':     return buildInsumos();
     case 'margenbruto': return buildMargenBruto();
-    case 'recria_dashboard': return buildRecriaDashboard();
-    case 'recria':           return buildRecria();
+    case 'recria_dashboard':  return buildRecriaDashboard();
+    case 'cesiones_cria':     return buildCesionesCria();
+    case 'cesiones_recria':   return buildCesionesRecria();
     case 'engorde':
     case 'engorde_costos':
     case 'engorde_comparacion':
@@ -845,7 +853,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria: attachRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -3527,6 +3535,258 @@ function buildRecriaDashboard() {
 
 function attachRecriaDashboardEvents() {
   // Filtros usan onchange inline
+}
+
+function buildCesionesCria() {
+  const rodeos    = (S.catalogs && S.catalogs.rodeos) || [];
+  const campos    = (S.catalogs && S.catalogs.campos) || [];
+  const movs      = S.cache.movimientos || [];
+  const pesadas   = S.cache.pesadas || [];
+  const rodeosPorId = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
+
+  // Rodeos de Cría como origen
+  const rodeosCria = rodeos.filter(r=>r.actividad==='Cría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  // Rodeos de Recría como destino
+  const rodeosRec  = rodeos.filter(r=>r.actividad==='Recría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+
+  // Cesiones existentes — traslados de Cría a Recría con precio cargado
+  const cesiones = movs.filter(m=>{
+    if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosPorId[String(m.rodeo_origen_id)];
+    const de = rodeosPorId[String(m.rodeo_destino_id)];
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&(de.actividad==='Recría');
+  }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+
+  let h = `<div class="page-header">
+    <div class="page-title">Cesiones — Cría a Recría</div>
+    <div class="page-sub">Registrá el traspaso de animales de Cría a Recría con precio de cesión $/kg</div>
+  </div>`;
+
+  h += `<div class="panel">
+    <div class="panel-title">➕ Nueva cesión</div>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="ces-c-fecha" value="${today()}"></div>
+      <div class="fg"><label>Rodeo origen (Cría)</label>
+        <select id="ces-c-origen">
+          <option value="">— Seleccioná —</option>
+          ${rodeosCria.map(r=>`<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Rodeo destino (Recría)</label>
+        <select id="ces-c-destino">
+          <option value="">— Seleccioná —</option>
+          ${rodeosRec.map(r=>`<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Categoría</label>
+        <select id="ces-c-cat">
+          <option value="ternero">Ternero</option>
+          <option value="ternera">Ternera</option>
+          <option value="vaquillona">Vaquillona</option>
+          <option value="novillito">Novillito</option>
+        </select>
+      </div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="ces-c-cant" min="1" placeholder="Ej: 150"></div>
+      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="ces-c-peso" min="0" step="0.1" placeholder="Ej: 180"></div>
+      <div class="fg"><label>Precio cesión ($/kg)</label><input type="number" id="ces-c-precio" min="0" step="1" placeholder="Ej: 2500" oninput="cesCriaCalcTotal_()"></div>
+      <div class="fg"><label>Total estimado</label><div id="ces-c-total" style="font-size:15px;font-weight:700;color:var(--green);padding:9px 0">—</div></div>
+      <div class="fg" style="min-width:200px"><label>Observaciones</label><input type="text" id="ces-c-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="ces-c-save" style="margin-top:8px">💾 Registrar cesión</button>
+  </div>`;
+
+  // Historial
+  h += `<div class="section-label">Historial de cesiones Cría → Recría</div>`;
+  if (!cesiones.length) {
+    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin cesiones registradas aún.</div></div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Fecha</th><th>Origen</th><th>Destino</th>
+      <th class="tc">Cant.</th><th class="tc">Peso prom.</th>
+      <th class="tc">Precio $/kg</th><th class="tc">Total</th>
+    </tr></thead><tbody>`;
+    cesiones.forEach(m=>{
+      const or = rodeosPorId[String(m.rodeo_origen_id)];
+      const de = rodeosPorId[String(m.rodeo_destino_id)];
+      const cant = Number(m.cantidad)||0;
+      // Buscar peso de última pesada del rodeo origen
+      const pesR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const peso = Number(m.peso_prom_kg)||Number(pesR[0]?.peso_prom_kg)||0;
+      const precioKg = Number(m.precio_cabeza)||0; // precio/cabeza se usa como precio/kg en cesiones
+      const total = cant * peso * precioKg;
+      h += `<tr>
+        <td>${fd(m.fecha)}</td>
+        <td>${or?.nombre||'—'}</td>
+        <td>${de?.nombre||'—'}</td>
+        <td class="tc"><strong>${fn(cant)}</strong></td>
+        <td class="tc">${peso?fn(peso)+' kg':'—'}</td>
+        <td class="tc">${precioKg?'$ '+fn(precioKg)+'/kg':'<span class="pill pill-clay">sin precio</span>'}</td>
+        <td class="tc"><strong>${total?'$ '+fn(Math.round(total)):'—'}</strong></td>
+      </tr>`;
+    });
+    h += `</tbody></table></div>`;
+  }
+  return h;
+}
+
+function cesCriaCalcTotal_() {
+  const cant  = Number(document.getElementById('ces-c-cant')?.value)||0;
+  const peso  = Number(document.getElementById('ces-c-peso')?.value)||0;
+  const precio= Number(document.getElementById('ces-c-precio')?.value)||0;
+  const el = document.getElementById('ces-c-total');
+  if (el) el.textContent = (cant&&peso&&precio) ? '$ '+fn(Math.round(cant*peso*precio)) : '—';
+}
+
+function attachCesionesCriaEvents() {
+  document.getElementById('ces-c-cant')?.addEventListener('input', cesCriaCalcTotal_);
+  document.getElementById('ces-c-peso')?.addEventListener('input', cesCriaCalcTotal_);
+  const btn = document.getElementById('ces-c-save');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const fecha   = document.getElementById('ces-c-fecha').value;
+    const origen  = document.getElementById('ces-c-origen').value;
+    const destino = document.getElementById('ces-c-destino').value;
+    const cant    = Number(document.getElementById('ces-c-cant').value)||0;
+    const peso    = Number(document.getElementById('ces-c-peso').value)||0;
+    const precio  = Number(document.getElementById('ces-c-precio').value)||0;
+    const obs     = document.getElementById('ces-c-obs').value.trim();
+    if (!fecha||!origen||!destino||!cant) { toast('Completá fecha, rodeos y cantidad.', 'err'); return; }
+    if (!precio) { toast('Ingresá el precio de cesión ($/kg).', 'err'); return; }
+    btn.disabled = true; btn.textContent = '⏳ Guardando...';
+    try {
+      await apiCall('create', { body: { entity: 'movimientos', data: {
+        tipo: 'Traslado en bloque',
+        fecha,
+        rodeo_origen_id: origen,
+        rodeo_destino_id: destino,
+        campo_origen_id: (S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(origen))?.campo_id||'',
+        campo_destino_id: (S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(destino))?.campo_id||'',
+        cantidad: cant,
+        peso_prom_kg: peso,
+        precio_cabeza: precio, // guardamos precio/kg en precio_cabeza para cesiones
+        observaciones: obs || 'Cesión Cría → Recría',
+      }}});
+      invalidateCache('movimientos');
+      await loadEntity('movimientos', true);
+      toast('Cesión registrada — '+fn(cant)+' animales · $ '+fn(precio)+'/kg', 'ok');
+      render();
+    } catch(err) { toast(err.message, 'err'); }
+    finally { btn.disabled=false; btn.textContent='💾 Registrar cesión'; }
+  };
+}
+
+function buildCesionesRecria() {
+  const rodeos    = (S.catalogs && S.catalogs.rodeos) || [];
+  const campos    = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosRec = rodeos.filter(r=>r.actividad==='Recría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const rodeosEng = rodeos.filter(r=>r.actividad==='Engorde'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const egresos   = (S.cache.egresos_recria||[])
+    .filter(e=>e.destino==='Engorde')
+    .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const rodeosRecIds = new Set(rodeosRec.map(r=>String(r.rodeo_id)));
+  const rodeosPorId  = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
+
+  let h = `<div class="page-header">
+    <div class="page-title">Cesiones — Recría a Terminación</div>
+    <div class="page-sub">Registrá el traspaso de animales de Recría a Terminación con precio de cesión $/kg</div>
+  </div>`;
+
+  h += `<div class="panel">
+    <div class="panel-title">➕ Nueva cesión</div>
+    <div class="fgrid">
+      <div class="fg"><label>Fecha</label><input type="date" id="ces-r-fecha" value="${today()}"></div>
+      <div class="fg"><label>Rodeo origen (Recría)</label>
+        <select id="ces-r-origen">
+          <option value="">— Seleccioná —</option>
+          ${rodeosRec.map(r=>`<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Rodeo destino (Terminación)</label>
+        <select id="ces-r-destino">
+          <option value="">— Seleccioná —</option>
+          ${rodeosEng.map(r=>`<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="ces-r-cant" min="1" placeholder="Ej: 120" oninput="cesRecriaCalcTotal_()"></div>
+      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="ces-r-peso" min="0" step="0.1" placeholder="Ej: 250" oninput="cesRecriaCalcTotal_()"></div>
+      <div class="fg"><label>Precio cesión ($/kg)</label><input type="number" id="ces-r-precio" min="0" step="1" placeholder="Ej: 3500" oninput="cesRecriaCalcTotal_()"></div>
+      <div class="fg"><label>Total estimado</label><div id="ces-r-total" style="font-size:15px;font-weight:700;color:var(--green);padding:9px 0">—</div></div>
+      <div class="fg" style="min-width:200px"><label>Observaciones</label><input type="text" id="ces-r-obs" placeholder="Opcional"></div>
+    </div>
+    <button class="btn btn-primary" id="ces-r-save" style="margin-top:8px">💾 Registrar cesión</button>
+  </div>`;
+
+  h += `<div class="section-label">Historial de cesiones Recría → Terminación</div>`;
+  if (!egresos.length) {
+    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin cesiones registradas aún.</div></div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Fecha</th><th>Rodeo origen</th><th>Cant.</th>
+      <th class="tc">Peso prom.</th><th class="tc">Precio $/kg</th><th class="tc">Total</th>
+    </tr></thead><tbody>`;
+    egresos.forEach(e=>{
+      const cant    = Number(e.cant_animales)||0;
+      const peso    = Number(e.peso_prom_kg)||0;
+      const precio  = Number(e.precio_kg_cesion)||0;
+      const total   = cant*peso*precio;
+      const or      = rodeosPorId[String(e.rodeo_id)];
+      h += `<tr>
+        <td>${fd(e.fecha)}</td>
+        <td>${or?.nombre||'—'}</td>
+        <td class="tc"><strong>${fn(cant)}</strong></td>
+        <td class="tc">${peso?fn(peso)+' kg':'—'}</td>
+        <td class="tc">${precio?'$ '+fn(precio)+'/kg':'<span class="pill pill-clay">sin precio</span>'}</td>
+        <td class="tc"><strong>${total?'$ '+fn(Math.round(total)):'—'}</strong></td>
+      </tr>`;
+    });
+    h += `</tbody></table></div>`;
+  }
+  return h;
+}
+
+function cesRecriaCalcTotal_() {
+  const cant  = Number(document.getElementById('ces-r-cant')?.value)||0;
+  const peso  = Number(document.getElementById('ces-r-peso')?.value)||0;
+  const precio= Number(document.getElementById('ces-r-precio')?.value)||0;
+  const el = document.getElementById('ces-r-total');
+  if (el) el.textContent = (cant&&peso&&precio) ? '$ '+fn(Math.round(cant*peso*precio)) : '—';
+}
+
+function attachCesionesRecriaEvents() {
+  const btn = document.getElementById('ces-r-save');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const fecha   = document.getElementById('ces-r-fecha').value;
+    const origen  = document.getElementById('ces-r-origen').value;
+    const destino = document.getElementById('ces-r-destino').value;
+    const cant    = Number(document.getElementById('ces-r-cant').value)||0;
+    const peso    = Number(document.getElementById('ces-r-peso').value)||0;
+    const precio  = Number(document.getElementById('ces-r-precio').value)||0;
+    const obs     = document.getElementById('ces-r-obs').value.trim();
+    if (!fecha||!origen||!cant) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    if (!precio) { toast('Ingresá el precio de cesión ($/kg).', 'err'); return; }
+    const rodeo = (S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(origen));
+    btn.disabled=true; btn.textContent='⏳ Guardando...';
+    try {
+      await apiCall('create', { body: { entity: 'egresos_recria', data: {
+        fecha,
+        rodeo_id: origen,
+        campo_id: rodeo?.campo_id||'',
+        destino: 'Engorde',
+        rodeo_destino_id: destino,
+        cant_animales: cant,
+        peso_prom_kg: peso,
+        precio_kg_cesion: precio,
+        observaciones: obs||'Cesión Recría → Terminación',
+      }}}); 
+      invalidateCache('egresos_recria'); S.resumenRecria = null;
+      await loadEntity('egresos_recria', true);
+      S.resumenRecria = await apiCall('resumenRecria');
+      toast('Cesión registrada — '+fn(cant)+' animales · $ '+fn(precio)+'/kg', 'ok');
+      render();
+    } catch(err) { toast(err.message, 'err'); }
+    finally { btn.disabled=false; btn.textContent='💾 Registrar cesión'; }
+  };
 }
 
 function buildRecria() {
