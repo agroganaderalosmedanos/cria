@@ -420,13 +420,37 @@ async function autofetchCotizacion_() {
 
 async function init() {
   if (!apiConfigured()) { S.page = 'setup'; render(); return; }
+  S._loading = true; S._loadingMsg = 'Conectando con la planilla…';
   render();
   try {
+    S._loadingMsg = 'Cargando catálogos…';
+    render();
     await loadCatalogs();
-    render(); // app navegable de inmediato; el Resumen calcula sus índices solo al visitarlo
-    autofetchCotizacion_(); // buscar cotización del día automáticamente
-    // No precargamos dashboard al inicio — se carga solo cuando el usuario navega a esas páginas
+    S._loading = false;
+    render(); // app navegable de inmediato
+    autofetchCotizacion_();
+    // Precargar datos en paralelo sin bloquear la UI
+    Promise.all([
+      loadDashboard().catch(()=>{}),
+      loadStock().catch(()=>{}),
+      loadEntity('movimientos').catch(()=>{}),
+      loadEntity('ventas').catch(()=>{}),
+      loadEntity('consumos_insumos').catch(()=>{}),
+      loadEntity('compras_insumos').catch(()=>{}),
+      loadEntity('pesadas').catch(()=>{}),
+      loadEntity('sueldos').catch(()=>{}),
+      loadEntity('mortandad').catch(()=>{}),
+      loadEntity('destetes').catch(()=>{}),
+      loadEntity('pariciones').catch(()=>{}),
+      loadEntity('egresos_recria').catch(()=>{}),
+      loadEntity('precios_internos').catch(()=>{}),
+      loadEntity('campanas').catch(()=>{}),
+      loadEntity('rodeo_productos').catch(()=>{}),
+      apiCall('resumenRecria').then(d=>{ S.resumenRecria=d; }).catch(()=>{}),
+      loadCorralesStock().catch(()=>{}),
+    ]).then(()=>{ render(); });
   } catch (err) {
+    S._loading = false;
     toast('Error al conectar: ' + err.message, 'err');
   }
 }
@@ -623,6 +647,28 @@ async function goto(page) {
 
 function render() {
   const root = document.getElementById('root');
+
+  if (S._loading) {
+    root.innerHTML = `
+    <div style="min-height:100vh;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px">
+      <img src="https://agroganaderalosmedanos.github.io/isologo.png" style="width:90px;animation:lm-pulse 1.5s ease-in-out infinite">
+      <div style="text-align:center">
+        <div style="font-family:var(--serif);font-size:26px;font-weight:700;color:var(--text);margin-bottom:6px">Agroganadera Los Médanos</div>
+        <div style="font-size:14px;color:var(--text2)">${S._loadingMsg||'Cargando…'}</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--green);animation:lm-bounce 1.2s ease-in-out infinite 0s"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--green);animation:lm-bounce 1.2s ease-in-out infinite .2s"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--green);animation:lm-bounce 1.2s ease-in-out infinite .4s"></div>
+      </div>
+    </div>
+    <style>
+      @keyframes lm-pulse{0%,100%{opacity:.7}50%{opacity:1}}
+      @keyframes lm-bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+    </style>`;
+    return;
+  }
+
   if (S.page === 'setup') {
     root.innerHTML = buildSetup();
     attachSetupEvents();
