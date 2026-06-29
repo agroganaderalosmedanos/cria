@@ -609,6 +609,7 @@ async function goto(page) {
     if (!S.cache.mortandad)          { try { await loadEntity('mortandad'); } catch (err) { /* silencioso */ } }
     if (!S.cache.pesadas)            { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
     if (!S.stock)                    { try { await loadStock(); } catch (err) { /* silencioso */ } }
+    if (!S.dashboard)                { try { await loadDashboard(); } catch (err) { /* silencioso */ } }
     if (S.corralesTipoCambio === undefined) {
       try { await loadCorralesStock(); } catch (err) { /* silencioso */ }
     }
