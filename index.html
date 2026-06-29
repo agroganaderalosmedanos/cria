@@ -7549,8 +7549,8 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
   rodeos.forEach(function(r) {
     if (catFiltro && r.categoria !== catFiltro) return;
     var stock = 0;
-    // Saldos iniciales
-    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id); })
+    // Saldos iniciales — solo cuentan si su fecha es <= fecha de corte
+    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id) && (m.fecha || '') <= fechaCorte; })
       .forEach(function(m){ stock += Number(m.cantidad) || 0; });
     // Movimientos hasta la fecha de corte
     movs.filter(function(m){ return m.tipo !== 'Saldo inicial' && m.fecha <= fechaCorte; }).forEach(function(m) {
