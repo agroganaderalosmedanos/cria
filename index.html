@@ -9316,7 +9316,7 @@ function loginGetSession() {
   try { return JSON.parse(localStorage.getItem('lm_session') || 'null'); } catch(e) { return null; }
 }
 function loginSetSession(data) { localStorage.setItem('lm_session', JSON.stringify(data)); }
-function loginClear() { localStorage.removeItem('lm_session'); location.reload(); }
+function loginClear() { localStorage.removeItem('lm_session'); window.location.replace('https://agroganaderalosmedanos.github.io/'); }
 
 function loginRequired(onSuccess) {
   const session = loginGetSession();
