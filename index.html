@@ -600,6 +600,7 @@ async function goto(page) {
   }
   if (page === 'margenbruto') {
     if (!S.cache.precios_internos)   { try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.campanas)           { try { await loadEntity('campanas'); } catch (err) { /* silencioso */ } }
     if (!S.resumenRecria)            { try { S.resumenRecria = await apiCall('resumenRecria'); } catch (err) { /* silencioso */ } }
     if (!S.cache.ventas)             { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
     if (!S.cache.egresos_recria)     { try { await loadEntity('egresos_recria'); } catch (err) { /* silencioso */ } }
