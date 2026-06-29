@@ -583,20 +583,18 @@ async function goto(page) {
     if (!S.resumenRecria)         { try { S.resumenRecria = await apiCall('resumenRecria'); } catch(e){} }
   }
   if (page === 'recria_dashboard') {
-    if (!S.resumenRecria) {
-      try { S.resumenRecria = await apiCall('resumenRecria'); } catch (err) { toast(err.message, 'err'); }
-    }
-    if (!S.cache.pesadas)         { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.ventas)          { try { await loadEntity('ventas'); } catch (err) { /* silencioso */ } }
-    if (!S.cache.egresos_recria)  { try { await loadEntity('egresos_recria'); } catch (err) { /* silencioso */ } }
-    if (page === 'recria_dashboard') {
-      if (!S.cache.consumos_insumos) { try { await loadEntity('consumos_insumos'); } catch (err) { /* silencioso */ } }
-      if (!S.cache.destetes)         { try { await loadEntity('destetes'); } catch (err) { /* silencioso */ } }
-      if (!S.cache.movimientos)      { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
-      if (!S.cache.mortandad)        { try { await loadEntity('mortandad'); } catch (err) { /* silencioso */ } }
-      if (!S.cache.sueldos)          { try { await loadEntity('sueldos'); } catch (err) { /* silencioso */ } }
-      if (!S.cache.precios_internos) { try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ } }
-    }
+    const recLoads = [];
+    if (!S.resumenRecria)           recLoads.push(apiCall('resumenRecria').then(d=>{ S.resumenRecria=d; }).catch(()=>{}));
+    if (!S.cache.pesadas)           recLoads.push(loadEntity('pesadas').catch(()=>{}));
+    if (!S.cache.ventas)            recLoads.push(loadEntity('ventas').catch(()=>{}));
+    if (!S.cache.egresos_recria)    recLoads.push(loadEntity('egresos_recria').catch(()=>{}));
+    if (!S.cache.consumos_insumos)  recLoads.push(loadEntity('consumos_insumos').catch(()=>{}));
+    if (!S.cache.destetes)          recLoads.push(loadEntity('destetes').catch(()=>{}));
+    if (!S.cache.movimientos)       recLoads.push(loadEntity('movimientos').catch(()=>{}));
+    if (!S.cache.mortandad)         recLoads.push(loadEntity('mortandad').catch(()=>{}));
+    if (!S.cache.sueldos)           recLoads.push(loadEntity('sueldos').catch(()=>{}));
+    if (!S.cache.precios_internos)  recLoads.push(loadEntity('precios_internos').catch(()=>{}));
+    if (recLoads.length) await Promise.all(recLoads);
   }
   if (page === 'margenbruto') {
     if (!S.cache.precios_internos)   { try { await loadEntity('precios_internos'); } catch (err) { /* silencioso */ } }
@@ -1983,7 +1981,7 @@ function buildDashboard() {
     : rodeosCria;
   // 1. Ventas de la campaña (rodeos de Cría)
   const rodeosCriaIds = new Set(rodeosCriaFilt.map(r=>String(r.rodeo_id)));
-  const ventasCria = ventas.filter(v => v.campana === campSelec && rodeosCriaIds.has(String(v.rodeo_id)));
+  const ventasCria = ventas.filter(v => rodeosCriaIds.has(String(v.rodeo_id)));
   const totalVentas = ventasCria.reduce((s,v) => s + (Number(v.importe_liq)||0), 0);
 
   // 2. Cesiones a Recría/Engorde (movimientos de traslado desde rodeos Cría a Recría/Engorde)
@@ -4528,7 +4526,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const rodeosEngIds = new Set(rodeosEngFilt.map(r=>String(r.rodeo_id)));
 
   // Ventas engorde campaña
-  const ventasEng = (S.cache.ventas||[]).filter(v => v.campana===campSelec && rodeosEngIds.has(String(v.rodeo_id)));
+  const ventasEng = (S.cache.ventas||[]).filter(v => rodeosEngIds.has(String(v.rodeo_id)));
   const totalVentas = ventasEng.reduce((s,v)=>s+(Number(v.importe_liq)||0),0);
 
   // Stock valorizado actual
