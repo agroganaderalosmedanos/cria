@@ -6519,17 +6519,193 @@ function vistaUsdMargenBruto_(mb) {
   };
 }
 
+function calcMargenCria_(campana, desde, hasta) {
+  const movs      = S.cache.movimientos || [];
+  const ventas    = S.cache.ventas || [];
+  const consumos  = S.cache.consumos_insumos || [];
+  const comprasH  = comprasHacGetAll_();
+  const productos = (S.catalogs && S.catalogs.productos) || [];
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const rodeosCria = rodeosAll.filter(r => r.actividad === 'Cría');
+  const rodeosIds  = new Set(rodeosCria.map(r => String(r.rodeo_id)));
+  const prodPorId  = Object.fromEntries(productos.map(p => [String(p.producto_id), p]));
+
+  // Ventas del período
+  const ventasFilt = ventas.filter(v =>
+    rodeosIds.has(String(v.rodeo_id)) &&
+    (!desde || String(v.fecha_salida) >= desde) &&
+    (!hasta || String(v.fecha_salida) <= hasta)
+  );
+  const ingVentas = ventasFilt.reduce((s,v) =>
+    s + (Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0), 0);
+
+  // Cesiones a Recría (traslados de Cría a Recría con precio/kg)
+  const rodeosPorId = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
+  const cesiones = movs.filter(m => {
+    if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosPorId[String(m.rodeo_origen_id)];
+    const de = rodeosPorId[String(m.rodeo_destino_id)];
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría' &&
+      (!desde||String(m.fecha)>=desde) && (!hasta||String(m.fecha)<=hasta);
+  });
+  const pesadas = S.cache.pesadas||[];
+  let ingCesiones = 0;
+  cesiones.forEach(m => {
+    const cant = Number(m.cantidad)||0;
+    const precioKg = Number(m.precio_cabeza)||0;
+    const pesoR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const peso = Number(m.peso_prom_kg)||Number(pesoR[0]?.peso_prom_kg)||0;
+    ingCesiones += cant * peso * precioKg;
+  });
+
+  // EF — stock valorizado actual
+  const stockTodos = S.stock || [];
+  let ef = 0;
+  rodeosCria.forEach(r => {
+    const stk = stockTodos.find(s => String(s.rodeo_id) === String(r.rodeo_id));
+    if (stk && stk.stock > 0) ef += valorizarRodeo_(r, stk.stock, 0);
+  });
+
+  const ing = ingVentas + ingCesiones + ef;
+
+  // EI — saldos iniciales
+  const ei = movs
+    .filter(m => m.tipo==='Saldo inicial' && rodeosIds.has(String(m.rodeo_destino_id)))
+    .reduce((s,m) => s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+
+  // Compras campaña
+  const compras = comprasH
+    .filter(c => (!campana||c.campana===campana) &&
+      (!desde||String(c.fecha)>=desde) && (!hasta||String(c.fecha)<=hasta))
+    .reduce((s,c) => s+(Number(c.importe_total)||0), 0);
+
+  // Consumos campaña
+  const consumosFilt = consumos.filter(c =>
+    rodeosIds.has(String(c.rodeo_id)) && (!campana||c.campana===campana)
+  );
+  let egAlim=0, egVet=0;
+  consumosFilt.forEach(c => {
+    const prod = prodPorId[String(c.producto_id)];
+    const costo = (Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id);
+    if (prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo;
+  });
+
+  const egSueldos = sueldoTotalActividad_('cria');
+  const eg = ei + compras + egAlim + egVet + egSueldos;
+  const margen = ing - eg;
+
+  return { ing, eg, margen, detalle: { ingVentas, ingCesiones, ef, ei, compras, egAlim, egVet, egSueldos, cantVentas: ventasFilt.length } };
+}
+
+function calcMargenRecria_(campana, desde, hasta) {
+  const rodeosAll  = (S.catalogs&&S.catalogs.rodeos)||[];
+  const rodeosRec  = (S.resumenRecria&&S.resumenRecria.rodeos)||[];
+  const rodeosIds  = new Set(rodeosRec.map(r=>String(r.rodeo_id)));
+  const productos  = (S.catalogs&&S.catalogs.productos)||[];
+  const movs       = S.cache.movimientos||[];
+  const ventas     = (S.cache.ventas||[]).filter(v=>rodeosIds.has(String(v.rodeo_id))&&(!desde||String(v.fecha_salida)>=desde)&&(!hasta||String(v.fecha_salida)<=hasta));
+  const egresos    = (S.cache.egresos_recria||[]).filter(e=>rodeosIds.has(String(e.rodeo_id))&&e.destino==='Engorde'&&(!desde||String(e.fecha)>=desde)&&(!hasta||String(e.fecha)<=hasta));
+  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIds.has(String(c.rodeo_id))&&(!campana||c.campana===campana));
+
+  let ingVentas=0;
+  ventas.forEach(v=>{ ingVentas+=Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0; });
+
+  // Cesiones a Terminación con precio $/kg
+  let ingCesEng=0;
+  egresos.forEach(e=>{
+    const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precio=Number(e.precio_kg_cesion)||0;
+    ingCesEng += cant*peso*precio;
+  });
+
+  // EF valorizado
+  let ef=0;
+  rodeosRec.forEach(r=>{ const stk=Math.max(0,r.stock||0); if(!stk)return; const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:0; ef+=valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{},stk,pp); });
+
+  const ing = ingVentas + ingCesEng + ef;
+
+  // EI — saldos iniciales de recría
+  const ei = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id))).reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
+
+  // Cesión recibida desde Cría (traslados con precio/kg)
+  const rodeosPorId = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
+  const pesadas = S.cache.pesadas||[];
+  let egCesionCria=0;
+  movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or=rodeosPorId[String(m.rodeo_origen_id)];
+    const de=rodeosPorId[String(m.rodeo_destino_id)];
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&
+      (!desde||String(m.fecha)>=desde)&&(!hasta||String(m.fecha)<=hasta);
+  }).forEach(m=>{
+    const cant=Number(m.cantidad)||0, precioKg=Number(m.precio_cabeza)||0;
+    const pesoR=pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const peso=Number(m.peso_prom_kg)||Number(pesoR[0]?.peso_prom_kg)||0;
+    egCesionCria+=cant*peso*precioKg;
+  });
+
+  let egCompraExt=0;
+  movs.filter(m=>rodeosIds.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual'&&(!desde||String(m.fecha)>=desde)&&(!hasta||String(m.fecha)<=hasta))
+    .forEach(m=>{ egCompraExt+=(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0); });
+
+  let egAlim=0, egVet=0;
+  consumos.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id); if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo; });
+
+  const egSueldos=sueldoTotalActividad_('recria');
+  const eg=ei+egCesionCria+egCompraExt+egAlim+egVet+egSueldos;
+  return { ing, eg, margen: ing-eg, detalle: { ingVentas, ingCesEng, ef, ei, egCesionCria, egCompraExt, egAlim, egVet, egSueldos } };
+}
+
+function calcMargenTerminacion_(campana, desde, hasta) {
+  const rodeosEng = ((S.catalogs&&S.catalogs.rodeos)||[]).filter(r=>r.actividad==='Engorde'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const rodeosIds = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
+  const movs      = S.cache.movimientos||[];
+  const consumos  = (S.cache.consumos_insumos||[]).filter(c=>rodeosIds.has(String(c.rodeo_id))&&(!campana||c.campana===campana));
+  const productos = (S.catalogs&&S.catalogs.productos)||[];
+  const stockList = S.stock||[];
+
+  let ingVentas=0;
+  rodeosEng.forEach(r=>{ ingVentas+=egIngVentas_(r.rodeo_id); });
+
+  let ef=0;
+  rodeosEng.forEach(r=>{ const stk=stockList.find(s=>String(s.rodeo_id)===String(r.rodeo_id)); if(stk&&stk.stock>0) ef+=valorizarRodeo_(r,stk.stock,0); });
+
+  const ing=ingVentas+ef;
+
+  const ei=movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id))).reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
+
+  // Cesión recibida desde Recría (egresos_recria con destino Engorde)
+  let egCesionRec=0;
+  (S.cache.egresos_recria||[]).filter(e=>e.destino==='Engorde'&&(!desde||String(e.fecha)>=desde)&&(!hasta||String(e.fecha)<=hasta)).forEach(e=>{
+    egCesionRec+=(Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+  });
+
+  let egCompra=0;
+  rodeosEng.forEach(r=>{ egCompra+=egCostoCompra_(r.rodeo_id); });
+
+  let egAlim=0, egVet=0;
+  consumos.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id); if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo; });
+
+  const egSueldos=sueldoTotalActividad_('engorde');
+  const eg=ei+egCesionRec+egCompra+egAlim+egVet+egSueldos;
+  return { ing, eg, margen: ing-eg, detalle: { ingVentas, ef, ei, egCesionRec, egCompra, egAlim, egVet, egSueldos } };
+}
+
 function buildMargenBruto() {
-  const tabMB = S.mbTab || 'resultado';
-  S.margenBrutoMoneda = S.margenBrutoMoneda || 'ARS';
-  const moneda = S.margenBrutoMoneda;
-  const simb = moneda === 'USD' ? 'U$D ' : '$ ';
-  const dec  = moneda === 'USD' ? 2 : 0;
-  const mb   = S.margenBruto; // Cría (viene del GS)
+  const tabMB   = S.mbTab || 'resultado';
+  const moneda  = S.margenBrutoMoneda || 'ARS';
+  const campanas = [...new Set([
+    ...(S.cache.ventas||[]).map(v=>v.campana),
+    ...(S.cache.consumos_insumos||[]).map(c=>c.campana),
+    ...(comprasHacGetAll_()).map(c=>c.campana),
+  ].filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+
+  const campSelec = S.mbCampana !== undefined ? S.mbCampana : (campanas[0]||'');
+  const desde     = S.mbDesde || today().slice(0,4)+'-01-01';
+  const hasta     = S.mbHasta || today();
 
   function fmMB(v) {
-    if (moneda === 'USD' && S.corralesTipoCambio) return 'U$D ' + fn(convertirAMoneda_(v, today(), 'USD'), 2);
-    return '$ ' + fn(Math.round(v||0));
+    if (moneda==='USD'&&S.corralesTipoCambio) return 'U$D '+fn(convertirAMoneda_(v,today(),'USD'),2);
+    return '$ '+fn(Math.round(v||0));
   }
 
   let h = `<div class="page-header">
@@ -6537,336 +6713,224 @@ function buildMargenBruto() {
     <div class="page-sub">Resultado económico consolidado de las tres actividades</div>
   </div>`;
 
-  // Pestañas
-  const tabs = [
-    { k: 'resultado',    label: '💰 Resultado económico' },
-    { k: 'productivo',   label: '📋 Resultados productivos' },
-  ];
+  const tabs = [{ k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
-  tabs.forEach(t => {
-    h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`;
-  });
-  h += `<div style="margin-left:auto;display:flex;gap:8px">
-    <div class="radio-group" id="mb-moneda-group">
-      <div class="radio-pill ${moneda==='ARS'?'selected':''}" data-moneda="ARS">$ ARS</div>
-      <div class="radio-pill ${moneda==='USD'?'selected':''}" data-moneda="USD">U$D</div>
-    </div>
-  </div></div>`;
+  tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
+  h += `<div style="margin-left:auto"><div class="radio-group" id="mb-moneda-group">
+    <div class="radio-pill ${moneda==='ARS'?'selected':''}" data-moneda="ARS">$ ARS</div>
+    <div class="radio-pill ${moneda==='USD'?'selected':''}" data-moneda="USD">U$D</div>
+  </div></div></div>`;
 
-  // Selector de período
-  h += `<div class="panel" style="padding:12px 16px;margin-bottom:16px">
+  // Filtros
+  h += `<div class="panel" style="padding:14px 16px;margin-bottom:16px">
     <div class="fgrid" style="margin:0;align-items:flex-end">
-      <div class="fg"><label>Período</label>
-        <select id="mb-preset">
-          <option value="anio">Este año</option>
-          <option value="mes">Este mes</option>
-          <option value="anio_pasado">Año pasado</option>
-          <option value="custom">Personalizado</option>
+      <div class="fg">
+        <label>Campaña <span style="font-size:11px;color:var(--text3)">(filtra consumos de insumos)</span></label>
+        <select id="mb-campana" onchange="S.mbCampana=this.value;render()">
+          <option value="">Todas las campañas</option>
+          ${campanas.map(c=>`<option value="${c}" ${c===campSelec?'selected':''}>${c}</option>`).join('')}
         </select>
       </div>
-      <div class="fg" id="mb-desde-wrap" style="display:none"><label>Desde</label><input type="date" id="mb-desde" value="${S.margenBrutoPeriodo?S.margenBrutoPeriodo.desde:''}"></div>
-      <div class="fg" id="mb-hasta-wrap" style="display:none"><label>Hasta</label><input type="date" id="mb-hasta" value="${S.margenBrutoPeriodo?S.margenBrutoPeriodo.hasta:''}"></div>
-      <div class="fg" style="flex:0"><button class="btn btn-primary" id="mb-calcular">Calcular</button></div>
+      <div class="fg">
+        <label>Período desde <span style="font-size:11px;color:var(--text3)">(ventas, compras, EI/EF)</span></label>
+        <input type="date" id="mb-desde" value="${desde}" onchange="S.mbDesde=this.value;render()">
+      </div>
+      <div class="fg"><label>Hasta</label>
+        <input type="date" id="mb-hasta" value="${hasta}" onchange="S.mbHasta=this.value;render()">
+      </div>
     </div>
   </div>`;
 
-  if (!mb) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Elegí un período y calculá.</div></div>';
+  if (!S.cache.movimientos||!S.cache.ventas) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Cargando datos…</div></div>';
     return h;
   }
 
-  if (moneda === 'USD' && !S.corralesTipoCambio) {
-    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">No se pudo traer la cotización del dólar. Cargá el tipo de cambio en Corrales primero.</div></div>';
-    return h;
-  }
+  const rCria = calcMargenCria_(campSelec, desde, hasta);
+  const rRec  = calcMargenRecria_(campSelec, desde, hasta);
+  const rEng  = calcMargenTerminacion_(campSelec, desde, hasta);
 
-  // ── Datos por actividad ───────────────────────────────────────────────
-  // CRÍA — viene del GS via S.margenBruto + stock valorizado actual
-  const rodeosCria = ((S.catalogs&&S.catalogs.rodeos)||[]).filter(r=>r.actividad==='Cría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
-  const stockTodosC = S.stock || [];
-  let stockValCria = 0;
-  rodeosCria.forEach(r=>{
-    const stk = stockTodosC.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
-    if (stk && stk.stock > 0) stockValCria += valorizarRodeo_(r, stk.stock, 0);
-  });
-  const ingCria  = (mb.ingresos.total || 0) + stockValCria;
-  const egCria   = mb.egresos.insumos || 0;
-  const marCria  = ingCria - egCria;
-
-  // RECRÍA — calculado en frontend igual que buildRecriaDashboard
-  const rodeosRecria = ((S.resumenRecria && S.resumenRecria.rodeos) || []);
-  const rodeosIdRec  = new Set(rodeosRecria.map(r=>String(r.rodeo_id)));
-  const preciosInt   = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
-  function precioIntEn(f) { const v=preciosInt.filter(p=>p.fecha_desde<=f); return v.length?v[0]:null; }
-  const ventasRec   = (S.cache.ventas||[]).filter(v=>rodeosIdRec.has(String(v.rodeo_id)));
-  const consumosRec = (S.cache.consumos_insumos||[]).filter(c=>rodeosIdRec.has(String(c.rodeo_id)));
-  const egresosRec  = (S.cache.egresos_recria||[]).filter(e=>rodeosIdRec.has(String(e.rodeo_id)));
-  const destetes    = (S.cache.destetes||[]);
-  const productos   = (S.catalogs&&S.catalogs.productos)||[];
-  let ingVentasRec=0, ingCesEng=0, egCesionCria=0, egAlimRec=0, egVetRec=0, egSueldosRec=0, egCompExtRec=0;
-  ventasRec.forEach(v=>{ ingVentasRec+=Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0; });
-  egresosRec.filter(e=>e.destino==='Engorde').forEach(e=>{ const p=precioIntEn(e.fecha); const kg=(Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0); ingCesEng+=kg*(p?Number(p.precio_ars_kg)||0:0); });
-  destetes.forEach(d=>{ if(!rodeosIdRec.has(String(d.rodeo_id)))return; const p=precioIntEn(d.fecha); const kg=(Number(d.total)||0)*(Number(d.peso_prom_kg)||0); egCesionCria+=kg*(p?Number(p.precio_ars_kg)||0:0); });
-  (S.cache.movimientos||[]).filter(m=>rodeosIdRec.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual').forEach(m=>{ egCompExtRec+=(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0); });
-  consumosRec.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id); if(prod&&prod.categoria==='Veterinaria') egVetRec+=costo; else egAlimRec+=costo; });
-  (S.cache.sueldos||[]).forEach(s=>{ egSueldosRec+=(Number(s.monto)||0)*(Number(s.dist_recria)||0)/100; });
-  let stockValRec=0;
-  rodeosRecria.forEach(r=>{ const stk=Math.max(0,r.stock||0); if(!stk)return; const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:0; stockValRec+=valorizarRodeo_((S.catalogs&&S.catalogs.rodeos||[]).find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{},stk,pp); });
-  const ingRec  = ingVentasRec + ingCesEng + stockValRec;
-  const egRec   = egCesionCria + egCompExtRec + egAlimRec + egVetRec + egSueldosRec;
-  const marRec  = ingRec - egRec;
-
-  // TERMINACIÓN — usa funciones egIngVentas_, egCostoCompra_, egCostoAlim_
-  const rodeosEng = ((S.catalogs&&S.catalogs.rodeos)||[]).filter(r=>r.actividad==='Engorde'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
-  let ingVentasEng=0, egCompraEng=0, egAlimEng=0, egVetEng=0, egSueldosEng=0, stockValEng=0;
-  rodeosEng.forEach(r=>{ ingVentasEng+=egIngVentas_(r.rodeo_id); egCompraEng+=egCostoCompra_(r.rodeo_id); egAlimEng+=egCostoAlim_(r.rodeo_id,null,'Alimentación'); egVetEng+=egCostoAlim_(r.rodeo_id,null,'Veterinaria'); });
-  (S.cache.sueldos||[]).forEach(s=>{ egSueldosEng+=(Number(s.monto)||0)*(Number(s.dist_engorde)||0)/100; });
-  const stockEngList = S.stock||[];
-  rodeosEng.forEach(r=>{ const stk=stockEngList.find(s=>String(s.rodeo_id)===String(r.rodeo_id)); if(stk&&stk.stock>0) stockValEng+=valorizarRodeo_(r,stk.stock,0); });
-  const ingEng  = ingVentasEng + stockValEng;
-  const egEng   = egCompraEng + egAlimEng + egVetEng + egSueldosEng;
-  const marEng  = ingEng - egEng;
-
-  // TOTALES
-  const ingTotal = ingCria + ingRec + ingEng;
-  const egTotal  = egCria  + egRec  + egEng;
-  const marTotal = marCria + marRec + marEng;
-  const mc = marTotal>=0?'var(--green)':'var(--red)';
+  const ingTotal = rCria.ing+rRec.ing+rEng.ing;
+  const egTotal  = rCria.eg+rRec.eg+rEng.eg;
+  const marTotal = rCria.margen+rRec.margen+rEng.margen;
+  const mc  = marTotal>=0?'var(--green)':'var(--red)';
   const mb2 = marTotal>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
-  // Mortandad
-  const mortandad   = (S.cache.mortandad||[]);
-  const mortCria    = mortandad.filter(m=>{const r=(S.catalogs&&S.catalogs.rodeos||[]).find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&r.actividad==='Cría';}).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-  const mortRec     = mortandad.filter(m=>rodeosIdRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-  const mortEng     = mortandad.filter(m=>{const r=rodeosEng.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return !!r;}).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-  const mortTotal2  = mortCria + mortRec + mortEng;
+  const mortandad = S.cache.mortandad||[];
+  const rodeosAll = (S.catalogs&&S.catalogs.rodeos)||[];
+  const rodeosRec = new Set(((S.resumenRecria&&S.resumenRecria.rodeos)||[]).map(r=>String(r.rodeo_id)));
+  const rodeosEng = new Set(rodeosAll.filter(r=>r.actividad==='Engorde').map(r=>String(r.rodeo_id)));
+  const mortCria  = mortandad.filter(m=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&r.actividad==='Cría'; }).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortRec   = mortandad.filter(m=>rodeosRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortEng   = mortandad.filter(m=>rodeosEng.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortTot   = mortCria+mortRec+mortEng;
 
   if (tabMB === 'resultado') {
-    // ── DOS COLUMNAS INGRESOS / EGRESOS ─────────────────────────────────
     h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
-
-      <!-- INGRESOS -->
       <div class="panel" style="margin-bottom:0">
         <div class="panel-title" style="color:var(--green-text)">📈 Ingresos totales</div>
         <table class="dt"><tbody>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🐄 Cría</td></tr>
-          <tr><td style="padding-left:20px">Ventas reales</td><td class="tr">${fmMB(mb.ingresos.ventas)}</td></tr>
-          <tr><td style="padding-left:20px">Cesión por destete</td><td class="tr">${fmMB(mb.ingresos.cesion_destete_ars)}</td></tr>
-          <tr><td style="padding-left:20px">Stock valorizado actual</td><td class="tr">${fmMB(stockValCria)}</td></tr>
-          <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(ingCria)}</strong></td></tr>
-
+          <tr><td style="padding-left:16px">Ventas (${rCria.detalle.cantVentas})</td><td class="tr">${fmMB(rCria.detalle.ingVentas)}</td></tr>
+          <tr><td style="padding-left:16px">Cesiones a Recría</td><td class="tr">${fmMB(rCria.detalle.ingCesiones)}</td></tr>
+          <tr><td style="padding-left:16px">Stock valorizado (EF)</td><td class="tr">${fmMB(rCria.detalle.ef)}</td></tr>
+          <tr style="background:var(--green-bg)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(rCria.ing)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
-          <tr><td style="padding-left:20px">Ventas directas</td><td class="tr">${fmMB(ingVentasRec)}</td></tr>
-          <tr><td style="padding-left:20px">Cesión a Terminación</td><td class="tr">${fmMB(ingCesEng)}</td></tr>
-          <tr><td style="padding-left:20px">Stock valorizado</td><td class="tr">${fmMB(stockValRec)}</td></tr>
-          <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(ingRec)}</strong></td></tr>
-
+          <tr><td style="padding-left:16px">Ventas</td><td class="tr">${fmMB(rRec.detalle.ingVentas)}</td></tr>
+          <tr><td style="padding-left:16px">Cesiones a Terminación</td><td class="tr">${fmMB(rRec.detalle.ingCesEng)}</td></tr>
+          <tr><td style="padding-left:16px">Stock valorizado (EF)</td><td class="tr">${fmMB(rRec.detalle.ef)}</td></tr>
+          <tr style="background:var(--green-bg)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(rRec.ing)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
-          <tr><td style="padding-left:20px">Ventas</td><td class="tr">${fmMB(ingVentasEng)}</td></tr>
-          <tr><td style="padding-left:20px">Stock valorizado</td><td class="tr">${fmMB(stockValEng)}</td></tr>
-          <tr style="background:var(--green-bg)"><td style="padding-left:20px"><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(ingEng)}</strong></td></tr>
-
-          <tr style="background:var(--green-bg);font-size:15px"><td><strong>TOTAL INGRESOS</strong></td><td class="tr" style="color:var(--green)"><strong>${fmMB(ingTotal)}</strong></td></tr>
+          <tr><td style="padding-left:16px">Ventas</td><td class="tr">${fmMB(rEng.detalle.ingVentas)}</td></tr>
+          <tr><td style="padding-left:16px">Stock valorizado (EF)</td><td class="tr">${fmMB(rEng.detalle.ef)}</td></tr>
+          <tr style="background:var(--green-bg)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(rEng.ing)}</strong></td></tr>
+          <tr style="font-size:15px;background:var(--green-bg)"><td><strong>TOTAL INGRESOS</strong></td><td class="tr" style="color:var(--green)"><strong>${fmMB(ingTotal)}</strong></td></tr>
         </tbody></table>
       </div>
-
-      <!-- EGRESOS -->
       <div class="panel" style="margin-bottom:0">
         <div class="panel-title" style="color:var(--red)">📉 Egresos totales</div>
         <table class="dt"><tbody>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🐄 Cría</td></tr>
-          <tr><td style="padding-left:20px">Insumos y veterinaria</td><td class="tr">${fmMB(egCria)}</td></tr>
-          <tr style="background:rgba(220,50,50,0.06)"><td style="padding-left:20px"><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(egCria)}</strong></td></tr>
-
+          <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rCria.detalle.ei)}</td></tr>
+          <tr><td style="padding-left:16px">Compras hacienda</td><td class="tr">${fmMB(rCria.detalle.compras)}</td></tr>
+          <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rCria.detalle.egAlim)}</td></tr>
+          <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rCria.detalle.egVet)}</td></tr>
+          <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rCria.detalle.egSueldos)}</td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(rCria.eg)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
-          <tr><td style="padding-left:20px">Cesión desde Cría</td><td class="tr">${fmMB(egCesionCria)}</td></tr>
-          ${egCompExtRec>0?`<tr><td style="padding-left:20px">Compra externa</td><td class="tr">${fmMB(egCompExtRec)}</td></tr>`:''}
-          <tr><td style="padding-left:20px">Alimentación</td><td class="tr">${fmMB(egAlimRec)}</td></tr>
-          <tr><td style="padding-left:20px">Veterinaria</td><td class="tr">${fmMB(egVetRec)}</td></tr>
-          <tr><td style="padding-left:20px">Sueldos</td><td class="tr">${fmMB(egSueldosRec)}</td></tr>
-          <tr style="background:rgba(220,50,50,0.06)"><td style="padding-left:20px"><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(egRec)}</strong></td></tr>
-
+          <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rRec.detalle.ei)}</td></tr>
+          <tr><td style="padding-left:16px">Cesión recibida de Cría</td><td class="tr">${fmMB(rRec.detalle.egCesionCria)}</td></tr>
+          ${rRec.detalle.egCompraExt>0?`<tr><td style="padding-left:16px">Compra externa</td><td class="tr">${fmMB(rRec.detalle.egCompraExt)}</td></tr>`:''}
+          <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rRec.detalle.egAlim)}</td></tr>
+          <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rRec.detalle.egVet)}</td></tr>
+          <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rRec.detalle.egSueldos)}</td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(rRec.eg)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
-          <tr><td style="padding-left:20px">Costo de compra</td><td class="tr">${fmMB(egCompraEng)}</td></tr>
-          <tr><td style="padding-left:20px">Alimentación</td><td class="tr">${fmMB(egAlimEng)}</td></tr>
-          <tr><td style="padding-left:20px">Veterinaria</td><td class="tr">${fmMB(egVetEng)}</td></tr>
-          <tr><td style="padding-left:20px">Sueldos</td><td class="tr">${fmMB(egSueldosEng)}</td></tr>
-          <tr style="background:rgba(220,50,50,0.06)"><td style="padding-left:20px"><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(egEng)}</strong></td></tr>
-
-          <tr style="background:rgba(220,50,50,0.1);font-size:15px"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMB(egTotal)}</strong></td></tr>
+          <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rEng.detalle.ei)}</td></tr>
+          <tr><td style="padding-left:16px">Cesión recibida de Recría</td><td class="tr">${fmMB(rEng.detalle.egCesionRec)}</td></tr>
+          <tr><td style="padding-left:16px">Compra de hacienda</td><td class="tr">${fmMB(rEng.detalle.egCompra)}</td></tr>
+          <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rEng.detalle.egAlim)}</td></tr>
+          <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rEng.detalle.egVet)}</td></tr>
+          <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rEng.detalle.egSueldos)}</td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(rEng.eg)}</strong></td></tr>
+          <tr style="font-size:15px;background:rgba(220,50,50,0.1)"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMB(egTotal)}</strong></td></tr>
         </tbody></table>
       </div>
     </div>`;
 
-    // Margen total
     h += `<div class="panel" style="background:${mb2};border:2px solid ${mc};margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto ganadero total</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto ganadero total</div>
+          <div style="font-size:12px;color:${mc};margin-top:2px">Campaña: ${campSelec||'todas'} · ${fd(desde)} al ${fd(hasta)}</div>
+        </div>
         <div style="font-size:36px;font-weight:800;color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</div>
       </div>
     </div>`;
 
-    // Comparativo por actividad
+    // Verificación
+    h += `<div class="panel" style="padding:14px 16px">
+      <div class="panel-title" style="font-size:12px">🔍 Verificación — suma de los 3 márgenes individuales</div>
+      <div class="tw"><table class="dt"><tbody>
+        <tr><td>🐄 Cría</td><td class="tr" style="color:${rCria.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rCria.margen>=0?'':'-'}${fmMB(Math.abs(rCria.margen))}</td></tr>
+        <tr><td>🌱 Recría</td><td class="tr" style="color:${rRec.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rRec.margen>=0?'':'-'}${fmMB(Math.abs(rRec.margen))}</td></tr>
+        <tr><td>🏭 Terminación</td><td class="tr" style="color:${rEng.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rEng.margen>=0?'':'-'}${fmMB(Math.abs(rEng.margen))}</td></tr>
+        <tr style="background:${mb2}"><td><strong>Suma de los 3</strong></td><td class="tr" style="color:${mc};font-weight:800">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</td></tr>
+      </tbody></table></div>
+    </div>`;
+
+    // Ranking
     const acts = [
-      { nombre: '🐄 Cría',         ing: ingCria, eg: egCria, mar: marCria },
-      { nombre: '🌱 Recría',       ing: ingRec,  eg: egRec,  mar: marRec  },
-      { nombre: '🏭 Terminación',  ing: ingEng,  eg: egEng,  mar: marEng  },
+      { n:'🐄 Cría', ing:rCria.ing, eg:rCria.eg, mar:rCria.margen },
+      { n:'🌱 Recría', ing:rRec.ing, eg:rRec.eg, mar:rRec.margen },
+      { n:'🏭 Terminación', ing:rEng.ing, eg:rEng.eg, mar:rEng.margen },
     ].sort((a,b)=>b.mar-a.mar);
 
-    h += `<div class="panel">
-      <div class="panel-title">📊 Resultado por actividad</div>
+    h += `<div class="panel"><div class="panel-title">📊 Resultado por actividad</div>
       <div class="tw"><table class="dt"><thead><tr>
-        <th>Actividad</th>
-        <th class="tc">Ingresos</th>
-        <th class="tc">Egresos</th>
-        <th class="tc">Margen</th>
-        <th class="tc">% del total</th>
+        <th>Actividad</th><th class="tc">Ingresos</th><th class="tc">Egresos</th><th class="tc">Margen</th><th class="tc">% del total</th>
       </tr></thead><tbody>`;
-    acts.forEach(a=>{
-      const pct = marTotal !== 0 ? Math.round(a.mar/Math.abs(marTotal)*100) : 0;
+    acts.forEach((a,i)=>{
+      const pct = marTotal!==0?(a.mar/Math.abs(marTotal)*100).toFixed(1):'—';
       const cm  = a.mar>=0?'var(--green)':'var(--red)';
-      h += `<tr>
-        <td><strong>${a.nombre}</strong></td>
-        <td class="tc">${fmMB(a.ing)}</td>
-        <td class="tc">${fmMB(a.eg)}</td>
+      h += `<tr><td><strong>${['🥇','🥈','🥉'][i]||''} ${a.n}</strong></td>
+        <td class="tc">${fmMB(a.ing)}</td><td class="tc">${fmMB(a.eg)}</td>
         <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMB(Math.abs(a.mar))}</td>
         <td class="tc"><span class="pill ${a.mar>=0?'pill-green':'pill-red'}">${pct}%</span></td>
       </tr>`;
     });
-    h += `</tbody></table></div></div>`;
+    h += '</tbody></table></div></div>';
 
-    // Mortandad resumen
-    if (mortTotal2 > 0) {
+    if (mortTot>0) {
       h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.05)">
         <div class="panel-title" style="color:var(--red)">💀 Mortandad por actividad</div>
-        <div class="tw"><table class="dt"><thead><tr>
-          <th>Actividad</th><th class="tc">Bajas</th>
-        </tr></thead><tbody>
+        <div class="tw"><table class="dt"><tbody>
           ${mortCria>0?`<tr><td>🐄 Cría</td><td class="tc" style="color:var(--red);font-weight:700">${mortCria} animales</td></tr>`:''}
           ${mortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--red);font-weight:700">${mortRec} animales</td></tr>`:''}
           ${mortEng>0?`<tr><td>🏭 Terminación</td><td class="tc" style="color:var(--red);font-weight:700">${mortEng} animales</td></tr>`:''}
-          <tr style="background:rgba(200,50,50,0.1)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:16px">${mortTotal2} animales</td></tr>
+          <tr style="background:rgba(200,50,50,0.1)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:16px">${mortTot}</td></tr>
         </tbody></table></div>
-        <div style="font-size:12px;color:var(--red);margin-top:8px">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock valorizado.</div>
+        <div style="font-size:12px;color:var(--red);margin-top:8px">⚠ La mortandad no se contabiliza como egreso — su impacto está en el menor stock valorizado.</div>
       </div>`;
-    }
-
-    // Detalle Cría (costos diferidos)
-    if (mb.egresos.diferidos_proxima_campana && mb.egresos.diferidos_proxima_campana.length) {
-      h += `<div class="panel">
-        <div class="panel-title">📌 Costos diferidos Cría — próxima campaña</div>
-        <p class="helper-text" style="margin-bottom:12px">Gastos etiquetados con campaña futura — no entran en este margen.</p>`;
-      mb.egresos.diferidos_proxima_campana.forEach(d=>{
-        h += `<div style="margin-bottom:12px">
-          <div style="font-weight:700">${d.campana} <span class="pill pill-gold">${d.cant_items} ítem${d.cant_items===1?'':'s'}</span></div>
-          <div style="font-size:16px;font-weight:600">$ ${fn(d.total)}</div>
-        </div>`;
-      });
-      h += `</div>`;
     }
   }
 
   if (tabMB === 'productivo') {
-    // ── RESULTADOS PRODUCTIVOS ───────────────────────────────────────────
-    // Existencia inicial y final (stock actual simplificado)
-    const stockTodos = S.stock || [];
-    const rodeosAll  = (S.catalogs&&S.catalogs.rodeos)||[];
-
-    // Agrupar stock por actividad y categoría
-    function stockPorActividad(actividad) {
-      const rodAct = rodeosAll.filter(r=>r.actividad===actividad);
+    const stockTodos = S.stock||[];
+    function stockPorAct(actividad) {
+      const rods = rodeosAll.filter(r=>r.actividad===actividad);
       const cats = {};
-      rodAct.forEach(r=>{
-        const stk = stockTodos.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
-        const cant = stk ? (stk.stock||0) : 0;
-        if (!cats[r.categoria]) cats[r.categoria]=0;
-        cats[r.categoria] += cant;
-      });
+      rods.forEach(r=>{ const stk=stockTodos.find(s=>String(s.rodeo_id)===String(r.rodeo_id)); const cant=stk?stk.stock||0:0; if(cant===0)return; cats[r.categoria]=(cats[r.categoria]||0)+cant; });
       return cats;
     }
-
-    const stockCria = stockPorActividad('Cría');
-    const stockRec  = stockPorActividad('Recría');
-    const stockEng  = stockPorActividad('Engorde');
-
-    h += `<div class="panel">
-      <div class="panel-title">📦 Stock actual por actividad y categoría</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">`;
-
-    function buildStockActBloque(titulo, cats) {
-      const total = Object.values(cats).reduce((s,v)=>s+v,0);
-      let b = `<div>
-        <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--text2);text-transform:uppercase">${titulo}</div>`;
-      Object.entries(cats).filter(([,v])=>v>0).forEach(([cat,cant])=>{
-        b += `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
-          <span style="color:var(--text2);font-size:13px">${cat}</span>
-          <strong>${fn(cant)}</strong>
-        </div>`;
-      });
-      b += `<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:4px">
-        <span style="font-weight:700">Total</span>
-        <strong style="font-size:16px;color:var(--gold-text)">${fn(total)}</strong>
-      </div></div>`;
+    function bloqueStock(titulo, cats) {
+      const tot=Object.values(cats).reduce((s,v)=>s+v,0);
+      let b=`<div><div style="font-weight:700;font-size:12px;text-transform:uppercase;color:var(--text2);margin-bottom:8px">${titulo}</div>`;
+      Object.entries(cats).forEach(([cat,cant])=>{ b+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text2);font-size:13px">${cat}</span><strong>${fn(cant)}</strong></div>`; });
+      b+=`<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:4px"><span style="font-weight:700">Total</span><strong style="font-size:16px;color:var(--gold-text)">${fn(tot)}</strong></div></div>`;
       return b;
     }
 
-    h += buildStockActBloque('🐄 Cría', stockCria);
-    h += buildStockActBloque('🌱 Recría', stockRec);
-    h += buildStockActBloque('🏭 Terminación', stockEng);
-    h += `</div></div>`;
+    h += `<div class="panel"><div class="panel-title">📦 Stock actual por actividad y categoría</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+        ${bloqueStock('🐄 Cría', stockPorAct('Cría'))}
+        ${bloqueStock('🌱 Recría', stockPorAct('Recría'))}
+        ${bloqueStock('🏭 Terminación', stockPorAct('Engorde'))}
+      </div></div>`;
 
-    // Ranking de rentabilidad
     const rents = [
-      { nombre: '🐄 Cría',        mar: marCria, eg: egCria,  stock: Object.values(stockCria).reduce((s,v)=>s+v,0) },
-      { nombre: '🌱 Recría',      mar: marRec,  eg: egRec,   stock: Object.values(stockRec).reduce((s,v)=>s+v,0)  },
-      { nombre: '🏭 Terminación', mar: marEng,  eg: egEng,   stock: Object.values(stockEng).reduce((s,v)=>s+v,0)  },
+      { n:'🐄 Cría', mar:rCria.margen, eg:rCria.eg, stock:Object.values(stockPorAct('Cría')).reduce((s,v)=>s+v,0) },
+      { n:'🌱 Recría', mar:rRec.margen, eg:rRec.eg, stock:Object.values(stockPorAct('Recría')).reduce((s,v)=>s+v,0) },
+      { n:'🏭 Terminación', mar:rEng.margen, eg:rEng.eg, stock:Object.values(stockPorAct('Engorde')).reduce((s,v)=>s+v,0) },
     ].sort((a,b)=>b.mar-a.mar);
 
-    h += `<div class="panel">
-      <div class="panel-title">🏆 Ranking de actividades</div>
+    h += `<div class="panel"><div class="panel-title">🏆 Ranking de rentabilidad</div>
       <div class="tw"><table class="dt"><thead><tr>
-        <th>#</th><th>Actividad</th>
-        <th class="tc">Margen total</th>
-        <th class="tc">Margen/cabeza</th>
-        <th class="tc">ROI (mar/egreso)</th>
+        <th>#</th><th>Actividad</th><th class="tc">Margen total</th><th class="tc">Margen/cabeza</th><th class="tc">ROI</th>
       </tr></thead><tbody>`;
     rents.forEach((a,i)=>{
-      const marCab = a.stock>0 ? a.mar/a.stock : null;
-      const roi    = a.eg>0 ? (a.mar/a.eg*100) : null;
-      const cm     = a.mar>=0?'var(--green)':'var(--red)';
-      const medal  = ['🥇','🥈','🥉'][i]||'';
-      h += `<tr>
-        <td style="font-size:20px">${medal}</td>
-        <td><strong>${a.nombre}</strong></td>
+      const marCab=a.stock>0?a.mar/a.stock:null, roi=a.eg>0?(a.mar/a.eg*100):null, cm=a.mar>=0?'var(--green)':'var(--red)';
+      h+=`<tr><td style="font-size:20px">${['🥇','🥈','🥉'][i]}</td><td><strong>${a.n}</strong></td>
         <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMB(Math.abs(a.mar))}</td>
-        <td class="tc">${marCab!==null?`<span style="color:${cm};font-weight:600">${a.mar>=0?'':'-'}${fmMB(Math.abs(marCab))}/cab`:'—'}</td>
-        <td class="tc">${roi!==null?`<span class="pill ${roi>=0?'pill-green':'pill-red'}">${roi.toFixed(1)}%</span>`:'—'}</td>
-      </tr>`;
+        <td class="tc">${marCab!==null?`<span style="color:${cm};font-weight:600">${a.mar>=0?'':'-'}${fmMB(Math.abs(marCab))}/cab</span>`:'—'}</td>
+        <td class="tc">${roi!==null?`<span class="pill ${roi>=0?'pill-green':'pill-red'}">${roi.toFixed(1)}%</span>`:'—'}</td></tr>`;
     });
-    h += `</tbody></table></div>`;
-
-    // Análisis narrativo
-    const mejor = rents[0];
-    const peor  = rents[rents.length-1];
-    h += `<div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:13px;line-height:1.6">
-      <strong>Análisis:</strong> La actividad que más aportó al resultado fue <strong>${mejor.nombre}</strong> con ${fmMB(mejor.mar)}.
-      ${peor.mar < 0 ? `<strong>${peor.nombre}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.` : `Las tres actividades tuvieron resultado positivo.`}
-      ${marTotal >= 0 ? `El margen ganadero total fue positivo: <strong>${fmMB(marTotal)}</strong>.` : `El margen ganadero total fue negativo: <strong>-${fmMB(Math.abs(marTotal))}</strong>.`}
+    const mejor=rents[0], peor=rents[rents.length-1];
+    h+=`</tbody></table><div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:13px;line-height:1.6">
+      <strong>Análisis:</strong> La actividad más rentable fue <strong>${mejor.n}</strong> con ${fmMB(mejor.mar)}.
+      ${peor.mar<0?`<strong>${peor.n}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.`:'Las tres actividades tuvieron resultado positivo.'}
+      ${marTotal>=0?`Margen ganadero total positivo: <strong>${fmMB(marTotal)}</strong>.`:`Margen ganadero total negativo: <strong>-${fmMB(Math.abs(marTotal))}</strong>.`}
     </div></div>`;
 
-    // Mortandad detallada
-    if (mortTotal2 > 0) {
-      h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.05)">
+    if (mortTot>0) {
+      h+=`<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.05)">
         <div class="panel-title" style="color:var(--red)">💀 Resumen de mortandad</div>
-        <div class="tw"><table class="dt"><thead><tr>
-          <th>Actividad</th><th class="tc">Bajas (cabezas)</th>
-        </tr></thead><tbody>
-          ${mortCria>0?`<tr><td>🐄 Cría</td><td class="tc" style="color:var(--red);font-weight:700">${mortCria}</td></tr>`:''}
-          ${mortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--red);font-weight:700">${mortRec}</td></tr>`:''}
-          ${mortEng>0?`<tr><td>🏭 Terminación</td><td class="tc" style="color:var(--red);font-weight:700">${mortEng}</td></tr>`:''}
-          <tr style="background:rgba(200,50,50,0.12)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:18px">${mortTotal2}</td></tr>
+        <div class="tw"><table class="dt"><tbody>
+          ${mortCria>0?`<tr><td>🐄 Cría</td><td class="tc" style="color:var(--red);font-weight:700">${mortCria} cabezas</td></tr>`:''}
+          ${mortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--red);font-weight:700">${mortRec} cabezas</td></tr>`:''}
+          ${mortEng>0?`<tr><td>🏭 Terminación</td><td class="tc" style="color:var(--red);font-weight:700">${mortEng} cabezas</td></tr>`:''}
+          <tr style="background:rgba(200,50,50,0.12)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:18px">${mortTot} cabezas</td></tr>
         </tbody></table></div>
-        <div style="font-size:12px;color:var(--red);margin-top:8px">⚠ Impacto reflejado en menor stock valorizado, no como egreso explícito.</div>
       </div>`;
     }
   }
