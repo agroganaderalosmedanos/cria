@@ -2610,15 +2610,27 @@ function attachParicionesEvents() {
       observacion: document.getElementById('pa-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
-    save.disabled = true;
+    save.disabled = true; save.textContent = '⏳ Guardando...';
     try {
-      await apiCall('create', { body: { entity: 'pariciones', data } });
+      const result = await apiCall('registrarParicion', { body: { data } });
       invalidateCache('pariciones');
-      toast('Parición registrada', 'ok');
+      invalidateCache('movimientos');
       await loadEntity('pariciones', true);
+      await loadEntity('movimientos', true);
+      await loadCatalogs(); // recargar rodeos por si se creó uno nuevo
       S.dashboard = null;
+      const vivos = data.nacidos_vivos;
+      if (result && result.rodeo_terneros) {
+        const msg = result.rodeo_terneros.creado
+          ? `Parición registrada — ${vivos} terneros creados en rodeo "${result.rodeo_terneros.nombre}" (nuevo)`
+          : `Parición registrada — ${vivos} terneros agregados a "${result.rodeo_terneros.nombre}"`;
+        toast(msg, 'ok');
+      } else {
+        toast('Parición registrada — sin nacidos vivos', 'ok');
+      }
       render();
-    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+    } catch (err) { toast(err.message, 'err'); }
+    finally { save.disabled = false; save.textContent = 'Registrar parición'; }
   };
   attachTableDeleteEvents('pariciones', 'paricion_id');
 }
