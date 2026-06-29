@@ -1994,15 +1994,22 @@ function buildDashboard() {
     return origen && (origen.actividad==='Cría'||origen.actividad==='Cria') &&
            destino && (destino.actividad==='Recría'||destino.actividad==='Engorde');
   });
-  // Valorizar cesiones con precio vigente
+  // Valorizar cesiones con precio de cesión acordado (precio_cabeza = $/kg en cesiones)
   const totalCesiones = cesiones.reduce((s,m) => {
-    const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
-    const cat = (rodeo?.categoria||'').toLowerCase().trim();
-    const cant = Number(m.cantidad)||0;
-    // Peso: última pesada del rodeo origen
-    const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pesoP = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
-    return s + valorizarRodeo_(rodeo||{categoria:cat}, cant, pesoP);
+    const cant     = Number(m.cantidad)||0;
+    const precioKg = Number(m.precio_cabeza)||0;
+    const peso     = Number(m.peso_prom_kg)||0;
+    if (precioKg && peso) {
+      // Precio de cesión cargado manualmente
+      return s + cant * peso * precioKg;
+    } else {
+      // Fallback: valorizar con precios de stock si no tiene precio de cesión
+      const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+      const cat = (rodeo?.categoria||'').toLowerCase().trim();
+      const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoP = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
+      return s + valorizarRodeo_(rodeo||{categoria:cat}, cant, pesoP);
+    }
   }, 0);
 
   // 3. Stock valorizado actual (rodeos Cría)
