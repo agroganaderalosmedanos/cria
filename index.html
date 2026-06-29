@@ -3803,9 +3803,8 @@ function attachCesionesRecriaEvents() {
         precio_kg_cesion: precio,
         observaciones: obs||'Cesión Recría → Terminación',
       }}}); 
-      invalidateCache('egresos_recria'); S.resumenRecria = null;
+      invalidateCache('egresos_recria');
       await loadEntity('egresos_recria', true);
-      S.resumenRecria = await apiCall('resumenRecria');
       toast('Cesión registrada — '+fn(cant)+' animales · $ '+fn(precio)+'/kg', 'ok');
       render();
     } catch(err) { toast(err.message, 'err'); }
