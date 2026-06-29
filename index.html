@@ -3047,22 +3047,56 @@ function buildMovimientos() {
     <button class="btn btn-primary" id="mv-save" style="margin-top:6px">Registrar movimiento</button>
   </div>`;
 
-  h += `<div class="section-label">Historial de movimientos</div>
-  <div class="fgrid" style="margin-bottom:10px;max-width:480px">
-    <div class="fg"><label>Filtrar por campo</label>
-      <select id="mv-hist-filtro-campo" onchange="document.getElementById('mv-hist-filtro-rodeo').innerHTML = '<option value=\\'\\'>Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConActividadPorCampo_(this.value)); renderHistorialFiltrado()">
-        <option value="">Todos los campos</option>
-        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Filtrar por rodeo</label>
-      <select id="mv-hist-filtro-rodeo" onchange="renderHistorialFiltrado()">
-        <option value="">Todos los rodeos</option>
-        ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
-      </select>
-    </div>
+  // Tabs: Historial | Libro de Movimientos
+  h += `<div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:16px;margin-top:8px">
+    <button class="mv-tab-btn active" data-tab="historial" onclick="mvSwitchTab_('historial')" style="padding:9px 22px;border:none;background:none;font-weight:700;font-size:13.5px;color:var(--green);border-bottom:2.5px solid var(--green);margin-bottom:-2px;cursor:pointer">Historial</button>
+    <button class="mv-tab-btn" data-tab="libro" onclick="mvSwitchTab_('libro')" style="padding:9px 22px;border:none;background:none;font-weight:600;font-size:13.5px;color:var(--text2);border-bottom:2.5px solid transparent;margin-bottom:-2px;cursor:pointer">📖 Libro de Movimientos</button>
   </div>
-  <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], S.corralesVentas || [], '', '')}</div>`;
+
+  <div id="mv-tab-historial">
+    <div class="fgrid" style="margin-bottom:10px;max-width:480px">
+      <div class="fg"><label>Filtrar por campo</label>
+        <select id="mv-hist-filtro-campo" onchange="document.getElementById('mv-hist-filtro-rodeo').innerHTML = '<option value=\\'\\'>Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConActividadPorCampo_(this.value)); renderHistorialFiltrado()">
+          <option value="">Todos los campos</option>
+          ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Filtrar por rodeo</label>
+        <select id="mv-hist-filtro-rodeo" onchange="renderHistorialFiltrado()">
+          <option value="">Todos los rodeos</option>
+          ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], S.corralesVentas || [], '', '')}</div>
+  </div>
+
+  <div id="mv-tab-libro" style="display:none">
+    <div class="panel" style="margin-bottom:14px;background:var(--bg2);border:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px">Filtros del Libro</div>
+      <div class="fgrid" style="max-width:680px">
+        <div class="fg"><label>Rodeo</label>
+          <select id="mv-libro-rodeo" onchange="renderLibroMovimientos_()">
+            <option value="">Todos los rodeos</option>
+            ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label>Campo</label>
+          <select id="mv-libro-campo" onchange="mvLibroFiltrarCampo_(); renderLibroMovimientos_()">
+            <option value="">Todos los campos</option>
+            ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label>Fecha desde</label>
+          <input type="date" id="mv-libro-desde" onchange="renderLibroMovimientos_()">
+        </div>
+        <div class="fg"><label>Fecha hasta</label>
+          <input type="date" id="mv-libro-hasta" value="${today()}" onchange="renderLibroMovimientos_()">
+        </div>
+      </div>
+    </div>
+    <div id="mv-libro-tabla"></div>
+  </div>`;
 
   return h;
 }
@@ -3192,6 +3226,225 @@ window.renderHistorialFiltrado = function() {
     attachTableDeleteEvents('ventas', 'venta_id');
   }
 };
+// ─── TABS MOVIMIENTOS ───────────────────────────────────────
+window.mvSwitchTab_ = function(tab) {
+  document.getElementById('mv-tab-historial').style.display = tab === 'historial' ? '' : 'none';
+  document.getElementById('mv-tab-libro').style.display    = tab === 'libro'     ? '' : 'none';
+  document.querySelectorAll('.mv-tab-btn').forEach(function(b) {
+    const active = b.dataset.tab === tab;
+    b.style.fontWeight  = active ? '700' : '600';
+    b.style.color       = active ? 'var(--green)' : 'var(--text2)';
+    b.style.borderBottom= active ? '2.5px solid var(--green)' : '2.5px solid transparent';
+  });
+  if (tab === 'libro') renderLibroMovimientos_();
+};
+
+window.mvLibroFiltrarCampo_ = function() {
+  const campoId = document.getElementById('mv-libro-campo')?.value || '';
+  const sel = document.getElementById('mv-libro-rodeo');
+  if (!sel) return;
+  const lista = campoId ? rodeosConActividadPorCampo_(campoId) : rodeosTodosConActividad_();
+  const campos_ = (S.catalogs && S.catalogs.campos) || [];
+  sel.innerHTML = '<option value="">Todos los rodeos</option>' +
+    lista.map(function(r){ return '<option value="'+r.rodeo_id+'">'+r.nombre+' ('+campoNombre(r.campo_id)+')</option>'; }).join('');
+};
+
+window.renderLibroMovimientos_ = function() {
+  const rodeoId = document.getElementById('mv-libro-rodeo')?.value || '';
+  const campoId = document.getElementById('mv-libro-campo')?.value || '';
+  const desde   = document.getElementById('mv-libro-desde')?.value || '';
+  const hasta   = document.getElementById('mv-libro-hasta')?.value || '';
+  const el = document.getElementById('mv-libro-tabla');
+  if (el) el.innerHTML = buildLibroMovimientos_(rodeoId, campoId, desde, hasta);
+};
+
+function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
+  const movs   = S.cache.movimientos || [];
+  const ventas = S.cache.ventas      || [];
+  const pariciones = S.cache.pariciones || [];
+  const mortandad  = S.cache.mortandad  || [];
+  const destetes   = S.cache.destetes   || [];
+
+  // Construir líneas unificadas
+  var lineas = [];
+
+  // Saldos iniciales → siempre son ENTRADA al rodeo destino
+  movs.forEach(function(m) {
+    if (m.tipo === 'Saldo inicial') {
+      lineas.push({
+        fecha: m.fecha || '',
+        tipo: 'Saldo inicial',
+        pill: 'pill-gold',
+        desc: 'Saldo inicial',
+        rodeo: m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
+        campo: m.campo_destino_id ? campoNombre(m.campo_destino_id) : '—',
+        rodeo_id: m.rodeo_destino_id,
+        campo_id: m.campo_destino_id,
+        entrada: Number(m.cantidad) || 0,
+        salida: 0,
+        obs: m.observaciones || '',
+      });
+    } else if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') {
+      // Genera una línea de SALIDA para el origen y una de ENTRADA para el destino
+      lineas.push({
+        fecha: m.fecha || '',
+        tipo: m.tipo,
+        pill: 'pill-clay',
+        desc: 'Traslado → ' + (m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—'),
+        rodeo: m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
+        campo: m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—',
+        rodeo_id: m.rodeo_origen_id,
+        campo_id: m.campo_origen_id,
+        entrada: 0,
+        salida: Number(m.cantidad) || 0,
+        obs: m.observaciones || '',
+      });
+      lineas.push({
+        fecha: m.fecha || '',
+        tipo: m.tipo,
+        pill: 'pill-green',
+        desc: 'Traslado ← ' + (m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—'),
+        rodeo: m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
+        campo: m.campo_destino_id ? campoNombre(m.campo_destino_id) : '—',
+        rodeo_id: m.rodeo_destino_id,
+        campo_id: m.campo_destino_id,
+        entrada: Number(m.cantidad) || 0,
+        salida: 0,
+        obs: m.observaciones || '',
+      });
+    }
+  });
+
+  ventas.forEach(function(v) {
+    lineas.push({
+      fecha: v.fecha_salida || '',
+      tipo: 'Venta',
+      pill: 'pill-red',
+      desc: v.comprador ? 'Venta a ' + v.comprador : 'Venta',
+      rodeo: v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—',
+      campo: v.campo_id ? campoNombre(v.campo_id) : '—',
+      rodeo_id: v.rodeo_id,
+      campo_id: v.campo_id,
+      entrada: 0,
+      salida: Number(v.cant_animales) || 0,
+      obs: v.observaciones || '',
+    });
+  });
+
+  pariciones.forEach(function(p) {
+    if (!p.nacidos_vivos) return;
+    lineas.push({
+      fecha: p.fecha || '',
+      tipo: 'Parición',
+      pill: 'pill-green',
+      desc: 'Nacimientos',
+      rodeo: p.rodeo_id ? rodeoNombre(p.rodeo_id) : '—',
+      campo: '—',
+      rodeo_id: p.rodeo_id,
+      campo_id: null,
+      entrada: Number(p.nacidos_vivos) || 0,
+      salida: 0,
+      obs: '',
+    });
+  });
+
+  mortandad.forEach(function(m) {
+    lineas.push({
+      fecha: m.fecha || '',
+      tipo: 'Mortandad',
+      pill: 'pill-clay',
+      desc: 'Mortandad',
+      rodeo: m.rodeo_id ? rodeoNombre(m.rodeo_id) : '—',
+      campo: '—',
+      rodeo_id: m.rodeo_id,
+      campo_id: null,
+      entrada: 0,
+      salida: Number(m.cantidad) || 0,
+      obs: m.observaciones || '',
+    });
+  });
+
+  destetes.forEach(function(d) {
+    lineas.push({
+      fecha: d.fecha || '',
+      tipo: 'Destete',
+      pill: 'pill-clay',
+      desc: 'Destete',
+      rodeo: d.rodeo_id ? rodeoNombre(d.rodeo_id) : '—',
+      campo: '—',
+      rodeo_id: d.rodeo_id,
+      campo_id: null,
+      entrada: 0,
+      salida: Number(d.cantidad) || 0,
+      obs: '',
+    });
+  });
+
+  // Filtrar
+  if (rodeoId) lineas = lineas.filter(function(l){ return String(l.rodeo_id) === String(rodeoId); });
+  else if (campoId) lineas = lineas.filter(function(l){ return String(l.campo_id) === String(campoId); });
+  if (desde) lineas = lineas.filter(function(l){ return l.fecha >= desde; });
+  if (hasta) lineas = lineas.filter(function(l){ return l.fecha <= hasta; });
+
+  // Ordenar cronológico
+  lineas.sort(function(a,b){ return a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0; });
+
+  if (!lineas.length) {
+    return '<div class="empty-state"><span class="ico">📖</span><div class="msg">Sin movimientos para los filtros seleccionados.</div></div>';
+  }
+
+  // Calcular saldo acumulado
+  var saldo = 0;
+  var totEntradas = 0, totSalidas = 0;
+  var filas = lineas.map(function(l) {
+    saldo += l.entrada - l.salida;
+    totEntradas += l.entrada;
+    totSalidas  += l.salida;
+    return Object.assign({}, l, { saldo: saldo });
+  });
+
+  var rodeoLabel = rodeoId ? rodeoNombre(rodeoId) : (campoId ? campoNombre(campoId) : 'Todos los rodeos');
+  var resumen = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+    <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 16px;font-size:14px;font-weight:700">
+      Entradas: ${fn(totEntradas)}
+    </div>
+    <div style="background:var(--red-bg);color:var(--red-text);border-radius:9px;padding:8px 16px;font-size:14px;font-weight:700">
+      Salidas: ${fn(totSalidas)}
+    </div>
+    <div style="background:var(--gold-bg);color:var(--gold-text);border-radius:9px;padding:8px 16px;font-size:14px;font-weight:700">
+      Saldo final: ${fn(saldo)}
+    </div>
+  </div>`;
+
+  var h = `<div class="section-label">📖 Libro — ${rodeoLabel} <span class="count-badge" style="margin-left:6px">${filas.length}</span></div>
+  ${resumen}
+  <div class="tw"><table class="dt"><thead><tr>
+    <th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Rodeo</th><th>Campo</th>
+    <th class="tc" style="color:var(--green-text)">Entradas</th>
+    <th class="tc" style="color:var(--red-text)">Salidas</th>
+    <th class="tc" style="font-weight:700">Saldo</th>
+    <th>Obs.</th>
+  </tr></thead><tbody>`;
+
+  filas.forEach(function(f) {
+    var saldoColor = f.saldo < 0 ? 'var(--red-text)' : f.saldo === 0 ? 'var(--text3)' : 'var(--green-text)';
+    h += `<tr>
+      <td>${fd(f.fecha)}</td>
+      <td><span class="pill ${f.pill}">${f.tipo}</span></td>
+      <td>${f.desc}</td>
+      <td><strong>${f.rodeo}</strong></td>
+      <td style="color:var(--text2)">${f.campo}</td>
+      <td class="tc" style="color:var(--green-text)">${f.entrada ? '<strong>+'+fn(f.entrada)+'</strong>' : ''}</td>
+      <td class="tc" style="color:var(--red-text)">${f.salida ? '<strong>−'+fn(f.salida)+'</strong>' : ''}</td>
+      <td class="tc" style="font-weight:700;color:${saldoColor}">${fn(f.saldo)}</td>
+      <td style="color:var(--text2);font-size:12px">${f.obs || ''}</td>
+    </tr>`;
+  });
+
+  h += '</tbody></table></div>';
+  return h;
+}
+
 async function loadStock() {
   S.stock = await apiCall('stock');
 }
@@ -3267,6 +3520,12 @@ window.mostrarNuevoRodeoDestino_ = function() {
 };
 
 function attachMovimientosEvents() {
+  // Pre-cargar entidades para el Libro de Movimientos
+  const entidadesLibro = ['pariciones', 'mortandad', 'destetes', 'ventas'];
+  entidadesLibro.forEach(function(e) {
+    if (!S.cache[e] || !S.cache[e].length) loadEntity(e, true).catch(function(){});
+  });
+
   function applyTipoUI(tipo) {
     const esSaldoInicial = tipo === 'Saldo inicial';
     const esIndividual = tipo === 'Traslado individual';
@@ -7178,9 +7437,13 @@ function buildStockHacienda() {
 
   let h = '<div class="page-header"><div class="page-title">Stock de Hacienda</div><div class="page-sub">Existencias actuales y reporte histórico por campo y categoría</div></div>';
 
-  // Stock actual
-  h += '<div class="panel"><div class="panel-title">📦 Stock actual</div>';
-  h += '<div class="fgrid" style="margin-bottom:10px;max-width:560px">' +
+  // Stock actual (con selector de fecha)
+  h += '<div class="panel"><div class="panel-title">📦 Stock a una fecha</div>';
+  h += '<div class="fgrid" style="margin-bottom:10px;max-width:720px">' +
+    '<div class="fg"><label>📅 Fecha de corte</label>' +
+    '<input type="date" id="sh-stock-fecha" value="' + hoy + '" onchange="renderStockHaciendaActual_()" style="font-weight:600">' +
+    '<div style="font-size:11.5px;color:var(--text2);margin-top:3px">Calculado a partir de los movimientos históricos. Hoy = stock actual.</div>' +
+    '</div>' +
     '<div class="fg"><label>Campo</label><select id="sh-stock-campo" onchange="renderStockHaciendaActual_()">' +
     '<option value="">Todos los campos</option>' +
     campos.map(function(c){ return '<option value="' + c.campo_id + '">' + c.nombre + '</option>'; }).join('') +
@@ -7227,14 +7490,123 @@ function actualizarCatsHistorico_() {
 
 function renderStockHaciendaActual_() {
   const campo = document.getElementById('sh-stock-campo')?.value || '';
-  const cat = document.getElementById('sh-stock-cat')?.value || '';
-  const stockList = (S.stock || []).filter(function(s){
-    if (campo && String(s.campo_id) !== String(campo)) return false;
-    if (cat && String(s.categoria) !== String(cat)) return false;
-    return true;
+  const cat   = document.getElementById('sh-stock-cat')?.value  || '';
+  const fecha = document.getElementById('sh-stock-fecha')?.value || today();
+  const el    = document.getElementById('sh-stock-actual');
+  if (!el) return;
+
+  if (fecha >= today()) {
+    // Fecha actual o futura → usar stock en vivo (S.stock)
+    const stockList = (S.stock || []).filter(function(s) {
+      if (campo && String(s.campo_id) !== String(campo)) return false;
+      if (cat && String(s.categoria) !== String(cat)) return false;
+      return true;
+    });
+    el.innerHTML = buildStockTable_(stockList, campo, cat);
+    return;
+  }
+
+  // Fecha histórica → calcular stock a esa fecha
+  // Necesitamos pariciones/mortandad/destetes — si no están los cargamos
+  const entidades = ['movimientos', 'ventas', 'pariciones', 'mortandad', 'destetes'];
+  const faltantes = entidades.filter(function(e){ return !S.cache[e] || !S.cache[e].length; });
+  if (faltantes.length) {
+    el.innerHTML = '<div class="empty-state"><span class="ico" style="font-size:22px">⏳</span><div class="msg">Cargando datos históricos…</div></div>';
+    Promise.all(faltantes.map(function(e){ return loadEntity(e, true); })).then(function(){
+      renderStockHaciendaActual_();
+    }).catch(function(){
+      el.innerHTML = '<div class="empty-state"><div class="msg">Error al cargar datos.</div></div>';
+    });
+    return;
+  }
+
+  // Calcular stock por rodeo a la fecha de corte
+  const stockData = calcStockAFecha_(fecha, campo, cat);
+  el.innerHTML = buildStockAFechaTable_(stockData, fecha);
+}
+
+function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
+  const rodeos = rodeosTodos().filter(function(r){
+    return campoFiltro ? String(r.campo_id) === String(campoFiltro) : true;
   });
-  const el = document.getElementById('sh-stock-actual');
-  if (el) el.innerHTML = buildStockTable_(stockList, campo, cat);
+  const movs       = S.cache.movimientos || [];
+  const ventas     = S.cache.ventas      || [];
+  const pariciones = S.cache.pariciones  || [];
+  const mortandad  = S.cache.mortandad   || [];
+  const destetes   = S.cache.destetes    || [];
+
+  var resultado = [];
+  rodeos.forEach(function(r) {
+    if (catFiltro && r.categoria !== catFiltro) return;
+    var stock = 0;
+    // Saldos iniciales
+    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id); })
+      .forEach(function(m){ stock += Number(m.cantidad) || 0; });
+    // Movimientos hasta la fecha de corte
+    movs.filter(function(m){ return m.tipo !== 'Saldo inicial' && m.fecha <= fechaCorte; }).forEach(function(m) {
+      if (String(m.rodeo_destino_id) === String(r.rodeo_id)) stock += Number(m.cantidad) || 0;
+      if (String(m.rodeo_origen_id)  === String(r.rodeo_id)) stock -= Number(m.cantidad) || 0;
+    });
+    ventas.filter(function(v){ return v.fecha_salida <= fechaCorte && String(v.rodeo_id) === String(r.rodeo_id); })
+      .forEach(function(v){ stock -= Number(v.cant_animales) || 0; });
+    pariciones.filter(function(p){ return p.fecha <= fechaCorte && String(p.rodeo_id) === String(r.rodeo_id); })
+      .forEach(function(p){ stock += Number(p.nacidos_vivos) || 0; });
+    mortandad.filter(function(m){ return m.fecha <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id); })
+      .forEach(function(m){ stock -= Number(m.cantidad) || 0; });
+    destetes.filter(function(d){ return d.fecha <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
+      .forEach(function(d){ stock -= Number(d.cantidad) || 0; });
+    resultado.push({
+      rodeo_id: r.rodeo_id,
+      nombre: r.nombre,
+      campo_id: r.campo_id,
+      campo: campoNombre(r.campo_id),
+      categoria: r.categoria || '—',
+      stock: Math.max(0, stock),
+    });
+  });
+  return resultado;
+}
+
+function buildStockAFechaTable_(data, fechaCorte) {
+  const conStock = data.filter(function(r){ return r.stock > 0; });
+  if (!data.length) return '<div class="empty-state"><div class="msg">Sin rodeos para ese filtro.</div></div>';
+
+  const total = data.reduce(function(s, r){ return s + r.stock; }, 0);
+  const porCategoria = {};
+  data.forEach(function(r){ porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.stock; });
+  const porCampo = {};
+  data.forEach(function(r){ porCampo[r.campo] = (porCampo[r.campo] || 0) + r.stock; });
+
+  var h = `<div style="background:var(--gold-bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--gold-text);font-weight:600">
+    📅 Stock calculado al ${fd(fechaCorte)} — basado en movimientos históricos
+  </div>`;
+  h += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+    <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 16px;font-size:14.5px;font-weight:700">⛭ Total: ${fn(total)}</div>
+    ${Object.entries(porCategoria).filter(function([,v]){ return v; }).map(function([cat,tot]){
+      return `<div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600">${cat}: <strong style="color:var(--text)">${fn(tot)}</strong></div>`;
+    }).join('')}
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+    ${Object.entries(porCampo).filter(function([,v]){ return v; }).map(function([campo,tot]){
+      return `<div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600">📍 ${campo}: <strong style="color:var(--text)">${fn(tot)}</strong></div>`;
+    }).join('')}
+  </div>`;
+
+  if (!conStock.length) return h + '<div class="empty-state"><div class="msg">Sin stock a esa fecha.</div></div>';
+
+  h += `<div class="tw"><table class="dt"><thead><tr>
+    <th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock al ${fd(fechaCorte)}</th>
+  </tr></thead><tbody>`;
+  conStock.sort(function(a,b){ return b.stock - a.stock; }).forEach(function(r){
+    h += `<tr>
+      <td><strong>${r.nombre}</strong></td>
+      <td style="color:var(--text2)">${r.campo}</td>
+      <td><span class="pill pill-gray">${r.categoria}</span></td>
+      <td class="tc"><strong>${fn(r.stock)}</strong></td>
+    </tr>`;
+  });
+  h += '</tbody></table></div>';
+  return h;
 }
 
 function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
