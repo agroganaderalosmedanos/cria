@@ -758,8 +758,8 @@ function buildShell() {
         <div style="display:flex;align-items:center;gap:10px">
           <button class="mobile-menu-btn" id="btn-menu">☰</button>
           <div>
-            ${pageTitle(S.page) ? `<h1>${pageTitle(S.page)}</h1>` : ''}
-            <div class="topbar-sub">${pageSubtitle(S.page)}</div>
+            ${S.page !== 'home' && pageTitle(S.page) ? `<h1>${pageTitle(S.page)}</h1>` : ''}
+            ${S.page !== 'home' ? `<div class="topbar-sub">${pageSubtitle(S.page)}</div>` : ''}
           </div>
         </div>
       </div>
