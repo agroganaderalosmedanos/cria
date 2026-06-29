@@ -2949,6 +2949,8 @@ function buildStockTable_(stockList, campoFiltro, categoriaFiltro) {
     ...filtrado.filter(s => (Number(s.stock) || 0) !== 0).map(s => ({ nombre: s.nombre, campo: campoNombre(s.campo_id), categoria: s.categoria, stock: Number(s.stock) || 0, esCorral: false })),
     ...corralesFilas.filter(c => (Number(c.stock) || 0) !== 0).map(c => ({ nombre: c.nombre, campo: c.campo, categoria: c.categoria, stock: Number(c.stock) || 0, esCorral: true })),
   ];
+  const filasStockCero = filtrado.filter(s => (Number(s.stock) || 0) === 0).map(s => ({ nombre: s.nombre, campo: campoNombre(s.campo_id), categoria: s.categoria, stock: 0, esCorral: false }));
+
   if (!S.sort) S.sort = {};
   const sortStateStock = S.sort.stockRodeos || { key: 'stock', dir: 'desc' };
   filasStock = [...filasStock].sort((a, b) => {
@@ -2970,8 +2972,18 @@ function buildStockTable_(stockList, campoFiltro, categoriaFiltro) {
   filasStock.forEach(s => {
     h += `<tr><td><strong>${s.nombre}</strong></td><td style="color:var(--text2)">${s.campo}</td>
       <td><span class="pill ${s.esCorral ? 'pill-gold' : 'pill-gray'}">${s.categoria}</span></td>
-      <td class="tc"><strong>${fn(s.stock)}</strong></td></tr>`;
+      <td class="tc"><strong style="color:var(--green-text)">${fn(s.stock)}</strong></td></tr>`;
   });
+  if (filasStockCero.length) {
+    h += `<tr><td colspan="4" style="padding:8px 12px;background:var(--bg2);font-size:12px;color:var(--text3);font-weight:600;border-top:1px solid var(--border)">
+      Rodeos sin stock actual (${filasStockCero.length})
+    </td></tr>`;
+    filasStockCero.sort((a,b) => a.categoria.localeCompare(b.categoria,'es')).forEach(s => {
+      h += `<tr style="opacity:.5"><td>${s.nombre}</td><td style="color:var(--text2)">${s.campo}</td>
+        <td><span class="pill pill-gray">${s.categoria}</span></td>
+        <td class="tc" style="color:var(--text3)">0</td></tr>`;
+    });
+  }
   h += `</tbody></table></div>`;
   return h;
 }
@@ -7507,15 +7519,13 @@ function renderStockHaciendaActual_() {
   }
 
   // Fecha histórica → calcular stock a esa fecha
-  // Necesitamos pariciones/mortandad/destetes — si no están los cargamos
+  // Verificar que las entidades necesarias estén cargadas (null = no cargada; [] vacío es válido)
   const entidades = ['movimientos', 'ventas', 'pariciones', 'mortandad', 'destetes'];
-  const faltantes = entidades.filter(function(e){ return !S.cache[e] || !S.cache[e].length; });
+  const faltantes = entidades.filter(function(e){ return S.cache[e] == null; });
   if (faltantes.length) {
     el.innerHTML = '<div class="empty-state"><span class="ico" style="font-size:22px">⏳</span><div class="msg">Cargando datos históricos…</div></div>';
-    Promise.all(faltantes.map(function(e){ return loadEntity(e, true); })).then(function(){
+    Promise.all(faltantes.map(function(e){ return loadEntity(e, true).catch(function(){ S.cache[e] = []; }); })).then(function(){
       renderStockHaciendaActual_();
-    }).catch(function(){
-      el.innerHTML = '<div class="empty-state"><div class="msg">Error al cargar datos.</div></div>';
     });
     return;
   }
@@ -7568,43 +7578,71 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
 }
 
 function buildStockAFechaTable_(data, fechaCorte) {
-  const conStock = data.filter(function(r){ return r.stock > 0; });
   if (!data.length) return '<div class="empty-state"><div class="msg">Sin rodeos para ese filtro.</div></div>';
 
-  const total = data.reduce(function(s, r){ return s + r.stock; }, 0);
+  const conStock = data.filter(function(r){ return r.stock > 0; });
+  const total    = data.reduce(function(s, r){ return s + r.stock; }, 0);
+
+  // Agrupar por categoría para los pills de resumen
   const porCategoria = {};
   data.forEach(function(r){ porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.stock; });
   const porCampo = {};
   data.forEach(function(r){ porCampo[r.campo] = (porCampo[r.campo] || 0) + r.stock; });
 
-  var h = `<div style="background:var(--gold-bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--gold-text);font-weight:600">
+  var h = `<div style="background:var(--gold-bg);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--gold-text);font-weight:600">
     📅 Stock calculado al ${fd(fechaCorte)} — basado en movimientos históricos
   </div>`;
+
+  // Pills de resumen
   h += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
     <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:8px 16px;font-size:14.5px;font-weight:700">⛭ Total: ${fn(total)}</div>
-    ${Object.entries(porCategoria).filter(function([,v]){ return v; }).map(function([cat,tot]){
+    ${Object.entries(porCategoria).filter(function([,v]){ return v>0; }).map(function([cat,tot]){
       return `<div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600">${cat}: <strong style="color:var(--text)">${fn(tot)}</strong></div>`;
     }).join('')}
   </div>
-  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
-    ${Object.entries(porCampo).filter(function([,v]){ return v; }).map(function([campo,tot]){
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+    ${Object.entries(porCampo).filter(function([,v]){ return v>0; }).map(function([campo,tot]){
       return `<div style="background:var(--bg2);color:var(--text2);border-radius:9px;padding:8px 15px;font-size:14.5px;font-weight:600">📍 ${campo}: <strong style="color:var(--text)">${fn(tot)}</strong></div>`;
     }).join('')}
   </div>`;
 
   if (!conStock.length) return h + '<div class="empty-state"><div class="msg">Sin stock a esa fecha.</div></div>';
 
+  // Tabla con TODOS los rodeos (con y sin stock) para poder auditar
+  const ceroStock = data.filter(function(r){ return r.stock === 0; });
+
   h += `<div class="tw"><table class="dt"><thead><tr>
     <th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock al ${fd(fechaCorte)}</th>
   </tr></thead><tbody>`;
-  conStock.sort(function(a,b){ return b.stock - a.stock; }).forEach(function(r){
+
+  conStock.sort(function(a,b){
+    if (a.categoria < b.categoria) return -1;
+    if (a.categoria > b.categoria) return 1;
+    return b.stock - a.stock;
+  }).forEach(function(r){
     h += `<tr>
       <td><strong>${r.nombre}</strong></td>
       <td style="color:var(--text2)">${r.campo}</td>
       <td><span class="pill pill-gray">${r.categoria}</span></td>
-      <td class="tc"><strong>${fn(r.stock)}</strong></td>
+      <td class="tc"><strong style="color:var(--green-text)">${fn(r.stock)}</strong></td>
     </tr>`;
   });
+
+  // Rodeos con stock 0 en gris
+  if (ceroStock.length) {
+    h += `<tr><td colspan="4" style="padding:8px 12px;background:var(--bg2);font-size:12px;color:var(--text3);font-weight:600;border-top:1px solid var(--border)">
+      Rodeos sin stock a esa fecha (${ceroStock.length})
+    </td></tr>`;
+    ceroStock.forEach(function(r){
+      h += `<tr style="opacity:.55">
+        <td>${r.nombre}</td>
+        <td style="color:var(--text2)">${r.campo}</td>
+        <td><span class="pill pill-gray">${r.categoria}</span></td>
+        <td class="tc" style="color:var(--text3)">0</td>
+      </tr>`;
+    });
+  }
+
   h += '</tbody></table></div>';
   return h;
 }
