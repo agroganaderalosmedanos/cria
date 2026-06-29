@@ -427,6 +427,7 @@ async function init() {
     render();
     await loadCatalogs();
     S._loading = false;
+    if (!S.page || S.page === 'setup') S.page = 'home';
     render(); // app navegable de inmediato
     autofetchCotizacion_();
     // Precargar datos en paralelo sin bloquear la UI
@@ -797,6 +798,7 @@ function pageSubtitle(p) {
 function buildPage(page) {
   if (S.loading) return '<div class="loader"><div class="spinner"></div>Cargando datos…</div>';
   switch (page) {
+    case 'home':       return buildHome();
     case 'dashboard':  return buildDashboard();
     case 'servicios':  return buildServicios();
     case 'tactos':     return buildTactos();
@@ -1925,6 +1927,16 @@ function convertirAMoneda_(importe, fecha, moneda) {
 function fmConv_(importe, fecha, moneda) {
   const val = convertirAMoneda_(importe, fecha, moneda);
   return (moneda === 'USD' ? 'U$S ' : '$ ') + fn(Math.round(val), 0);
+}
+
+function buildHome() {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:calc(100vh - 120px);gap:20px;text-align:center">' +
+    '<img src="https://agroganaderalosmedanos.github.io/isologo.png" style="width:100px;opacity:0.85">' +
+    '<div>' +
+    '<div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px">Agroganadera</div>' +
+    '<div style="font-family:var(--serif);font-size:30px;font-weight:700;color:var(--text);line-height:1.1">Los Médanos</div>' +
+    '<div style="font-size:14px;color:var(--text2);margin-top:8px">Sistema de gestión del ciclo ganadero completo</div>' +
+    '</div></div>';
 }
 
 function buildDashboard() {
