@@ -6991,6 +6991,38 @@ function buildMargenBruto() {
         </tbody></table></div>
       </div>`;
     }
+
+    // Índices reproductivos — de S.dashboard (datos del GS)
+    const kpi = S.dashboard && S.dashboard.general;
+    if (kpi) {
+      function pctMB(v) { return v!==null&&v!==undefined ? `<strong>${v}%</strong>` : '<span style="color:var(--muted)">—</span>'; }
+      h += `<div class="panel">
+        <div class="panel-title">🐄 Índices reproductivos</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Índice</th><th class="tc">Valor</th>
+        </tr></thead><tbody>
+          <tr><td>Preñez general</td><td class="tc">${pctMB(kpi.servicio?.indice_prenez)}</td></tr>
+          <tr><td>Preñez IATF</td><td class="tc">${pctMB(kpi.servicio?.indice_prenez_iatf)}</td></tr>
+          <tr><td>Preñez toro</td><td class="tc">${pctMB(kpi.servicio?.indice_prenez_toro)}</td></tr>
+          <tr><td>Parición</td><td class="tc">${pctMB(kpi.paricion?.indice_paricion)}</td></tr>
+          <tr><td>Destete</td><td class="tc">${pctMB(kpi.destete?.indice_destete)}</td></tr>
+        </tbody></table></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Nacidos vivos</div>
+            <div style="font-size:20px;font-weight:800">${fn(kpi.paricion?.nacidos_vivos||0)}</div>
+          </div>
+          <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Destetados</div>
+            <div style="font-size:20px;font-weight:800">${fn(kpi.destete?.total_destetados||0)}</div>
+          </div>
+          <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Mort. terneros</div>
+            <div style="font-size:20px;font-weight:800;color:${(kpi.destete?.mortandad_terneros||0)>0?'var(--red)':'inherit'}">${fn(kpi.destete?.mortandad_terneros||0)}</div>
+          </div>
+        </div>
+      </div>`;
+    }
   }
 
   return h;
