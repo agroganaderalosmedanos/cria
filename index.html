@@ -3379,15 +3379,15 @@ function buildRecriaDashboard() {
     detalleVentas.push({ fecha: v.fecha_salida, rodeo: rodeoNombre(v.rodeo_id), cant: Number(v.cant_animales)||0, importe: imp });
   });
 
-  // 2. Cesiones a Terminación (egresos con destino Engorde, valoradas a precio interno)
+  // 2. Cesiones a Terminación (egresos con destino Engorde, con precio_kg_cesion)
   let ingCesionEng = 0;
   const detalleCesEng = [];
   egresos.filter(e=>e.destino==='Engorde').forEach(e=>{
-    const p = precioInternoEn(e.fecha);
-    const kgTot = (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0);
-    const imp = kgTot*(p?Number(p.precio_ars_kg)||0:0);
+    const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
+    const kgTot = cant*peso;
+    const imp = kgTot*precioKg;
     ingCesionEng += imp;
-    detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant: Number(e.cant_animales)||0, kg: kgTot, importe: imp, sinPrecio: !p });
+    detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant, kg: kgTot, importe: imp, sinPrecio: !precioKg });
   });
 
   // 3. Stock valorizado actual
@@ -3403,16 +3403,20 @@ function buildRecriaDashboard() {
   const totalIngresos = ingVentas + ingCesionEng + stockValRecria;
 
   // EGRESOS
-  // 1. Cesión desde Cría (destetes que entraron a rodeos de recría, valorados a precio interno)
+  // 1. Cesión desde Cría — traslados de Cría a rodeos de Recría con precio/kg
   let egCesionCria = 0;
   const detalleCesCria = [];
-  destetes.forEach(d=>{
-    if (!rodeosIdsFilt.has(String(d.rodeo_id))) return;
-    const p = precioInternoEn(d.fecha);
-    const kgTot = (Number(d.total)||0)*(Number(d.peso_prom_kg)||0);
-    const imp = kgTot*(p?Number(p.precio_ars_kg)||0:0);
+  const rodeosAllMap = Object.fromEntries((S.catalogs&&S.catalogs.rodeos||[]).map(r=>[String(r.rodeo_id),r]));
+  movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap[String(m.rodeo_destino_id)];
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&rodeosIdsFilt.has(String(m.rodeo_destino_id));
+  }).forEach(m=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_cabeza)||0;
+    const imp = cant*peso*precioKg;
     egCesionCria += imp;
-    detalleCesCria.push({ fecha: d.fecha, rodeo: rodeoNombre(d.rodeo_id), total: Number(d.total)||0, kg: kgTot, importe: imp });
+    detalleCesCria.push({ fecha: m.fecha, rodeo: rodeoNombre(m.rodeo_destino_id), total: cant, kg: cant*peso, importe: imp });
   });
 
   // 2. Compra externa (movimientos hacia rodeos de recría con precio)
