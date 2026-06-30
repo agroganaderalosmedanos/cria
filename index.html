@@ -383,7 +383,12 @@ function rodeoTieneActividad_(rodeoId) {
   if (stockRow && Number(stockRow.stock) !== 0) return true;
   const tieneMov = (S.cache.movimientos || []).some(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
   if (tieneMov) return true;
-  return (S.cache.ventas || []).some(v => String(v.rodeo_id) === String(rodeoId));
+  if ((S.cache.ventas || []).some(v => String(v.rodeo_id) === String(rodeoId))) return true;
+  // Pesadas también cuentan como actividad: un corral puede tener pesadas cargadas
+  // (ej: migradas desde otro sistema) sin tener todavía un movimiento de entrada.
+  // Mostrarlo en los selectores ayuda a detectar ese hueco — sin esto, el corral
+  // desaparece silenciosamente y parece que "no existe" en vez de "le falta el movimiento".
+  return (S.cache.pesadas || []).some(p => String(p.rodeo_id) === String(rodeoId));
 }
 function rodeosTodosConActividad_() {
   return rodeosTodos().filter(r => rodeoTieneActividad_(r.rodeo_id));
@@ -5471,7 +5476,8 @@ function buildEngordeCostos_(rodeoId, fm) {
     },0);
 
     const totalIngresos = totalVentas + totalStock;
-    const totalEgresos  = totalSaldoIni + totalCesiones2 + totalAlim + totalVeter;
+    const totalSueldosEngCostos = sueldoTotalActividad_('engorde', campFiltro ? s=>String(s.campo_id)===String(campFiltro) : null);
+    const totalEgresos  = totalSaldoIni + totalCesiones2 + totalAlim + totalVeter + totalSueldosEngCostos;
     const margen = totalIngresos - totalEgresos;
     const mc = margen>=0?'var(--green)':'var(--red)';
     const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
@@ -5509,9 +5515,13 @@ function buildEngordeCostos_(rodeoId, fm) {
             <div style="font-weight:600">🌾 Alimentación</div>
             <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div style="font-weight:600">💉 Veterinaria</div>
             <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalVeter)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+            <div style="font-weight:600">👤 Sueldos Engorde</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSueldosEngCostos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
             <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
@@ -5596,7 +5606,15 @@ function buildEngordeCostos_(rodeoId, fm) {
   const ivStock = convertirAMoneda_(ivStockARS, today(), S.engordeMoneda||'ARS');
   const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo
   const ivTotal = iv + ivStock;
-  const costoTotal = cc + ca;
+  // Sueldos: se cargan por campo completo, no por corral individual. Para mostrar un
+  // costo de sueldos en la ficha de ESTE corral, se prorratea el sueldo de Engorde
+  // del campo según la proporción de animales ingresados de este corral sobre el total
+  // de animales ingresados a Engorde en ese mismo campo (mismo criterio para todos los corrales).
+  const sueldoEngordeCampo = sueldoTotalActividad_('engorde', s => String(s.campo_id) === String(r.campo_id));
+  const corralesDelMismoCampo = rodeosEngordeValidos_().filter(rr => String(rr.campo_id) === String(r.campo_id));
+  const totalAnimEngCampo = corralesDelMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
+  const sueldoProrrateado = totalAnimEngCampo > 0 ? sueldoEngordeCampo * (cantIng / totalAnimEngCampo) : 0;
+  const costoTotal = cc + ca + sueldoProrrateado;
   const util = ivTotal - costoTotal;
   const dias = fi && ultima ? Math.round((new Date(ultima.fecha) - new Date(fi)) / 86400000) : null;
   const ganDiaria = dias && dias > 0 && kgIngProm > 0 ? (Number(ultima?.peso_prom_kg||0) - kgIngProm) / dias : null;
@@ -5643,6 +5661,10 @@ function buildEngordeCostos_(rodeoId, fm) {
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">💉 Veterinaria</div><div style="font-size:11px;color:var(--text3)">costo total acumulado</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caVet)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+          <div><div style="font-weight:600">👤 Sueldos (prorrateado)</div><div style="font-size:11px;color:var(--text3)">${totalAnimEngCampo>0?fn(cantIng,0)+' de '+fn(totalAnimEngCampo,0)+' anim. del campo':'sin animales en el campo'}</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${sueldoProrrateado>0?fm(sueldoProrrateado):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
