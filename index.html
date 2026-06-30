@@ -461,6 +461,7 @@ async function init() {
       loadEntity('precios_internos').catch(()=>{}),
       loadEntity('campanas').catch(()=>{}),
       loadEntity('rodeo_productos').catch(()=>{}),
+      loadEntity('config_corral').catch(()=>{}).then(migrarConfigCorralLegacy_),
       apiCall('resumenRecria').then(d=>{ S.resumenRecria=d; }).catch(()=>{}),
       loadCorralesStock().catch(()=>{}),
     ]).then(()=>{ render(); });
@@ -4599,13 +4600,15 @@ function attachEngordeEvents() {
   }
   // Config corral (Costos)
   const cfgSave = document.getElementById('eg-cfg-save');
-  if (cfgSave) cfgSave.onclick = () => {
+  if (cfgSave) cfgSave.onclick = async () => {
     const rid = cfgSave.dataset.rodeo;
-    egSaveConfig_(rid, {
+    cfgSave.disabled = true;
+    await egSaveConfig_(rid, {
       kgIngreso: document.getElementById('eg-cfg-kg')?.value||'',
       precioCompra: document.getElementById('eg-cfg-precio')?.value||'',
       precioStock: document.getElementById('eg-cfg-stock')?.value||'',
     });
+    cfgSave.disabled = false;
     toast('Configuración guardada','ok'); render();
   };
 
@@ -4628,12 +4631,14 @@ function attachEngordeEvents() {
 
   // Proyección — guardar peso objetivo y precio
   document.querySelectorAll('[id^="eg-proj-save-"]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const rid = btn.dataset.rodeo;
-      egSaveConfig_(rid, {
+      btn.disabled = true;
+      await egSaveConfig_(rid, {
         pesoObjetivo: document.getElementById('eg-proj-peso-'+rid)?.value||'',
         precioProyectado: document.getElementById('eg-proj-precio-'+rid)?.value||'',
       });
+      btn.disabled = false;
       toast('Guardado','ok'); render();
     };
   });
@@ -4680,7 +4685,22 @@ function egSetCorralId(val) {
   S.engordeCorralId = val;
   localStorage.setItem('eg_corral_sel', val);
 }
+// Configuración por corral — persiste en Sheets (entidad config_corral), una fila por rodeo_id.
+// Se cachea en S.cache.config_corral igual que cualquier otra entidad (loadEntity).
+// Fallback de lectura a localStorage SOLO para datos viejos cargados antes de esta migración
+// (así no se "pierden" configuraciones ya guardadas mientras el usuario no las vuelve a tocar).
 function egConfig_(rodeoId) {
+  const fila = (S.cache.config_corral || []).find(c => String(c.rodeo_id) === String(rodeoId));
+  if (fila) {
+    return {
+      kgIngreso: fila.kg_ingreso || '',
+      precioCompra: fila.precio_compra || '',
+      precioStock: fila.precio_stock || '',
+      pesoObjetivo: fila.peso_objetivo || '',
+      precioProyectado: fila.precio_proyectado || '',
+    };
+  }
+  // Fallback legacy a localStorage (datos previos a la migración a Sheets)
   try { return JSON.parse(localStorage.getItem('eg_cfg') || '{}')[rodeoId] || {}; } catch(e) { return {}; }
 }
 // Devuelve lista de { producto_id, fecha_baja } de productos inactivos para un corral
@@ -4701,15 +4721,61 @@ function egEsProductoActivo_(rodeoId, productoId, fecha) {
   if (!reg.fecha_baja) return false; // inactivo sin fecha → siempre inactivo
   return String(fecha || today()) < String(reg.fecha_baja); // activo solo antes de la fecha de baja
 }
-function egSaveConfig_(rodeoId, cfg) {
+// Guarda la configuración del corral en Sheets (asíncrono). Hace merge: solo pisa los
+// campos que vienen en cfg, deja el resto como estaba. Actualiza el caché local optimistamente
+// para que la UI refleje el cambio sin esperar el round-trip, y revierte si falla.
+async function egSaveConfig_(rodeoId, cfg) {
+  const dataApi = {};
+  if (cfg.kgIngreso !== undefined) dataApi.kg_ingreso = cfg.kgIngreso;
+  if (cfg.precioCompra !== undefined) dataApi.precio_compra = cfg.precioCompra;
+  if (cfg.precioStock !== undefined) dataApi.precio_stock = cfg.precioStock;
+  if (cfg.pesoObjetivo !== undefined) dataApi.peso_objetivo = cfg.pesoObjetivo;
+  if (cfg.precioProyectado !== undefined) dataApi.precio_proyectado = cfg.precioProyectado;
+
+  // Actualización optimista del caché local
+  if (!S.cache.config_corral) S.cache.config_corral = [];
+  let fila = S.cache.config_corral.find(c => String(c.rodeo_id) === String(rodeoId));
+  if (fila) Object.assign(fila, dataApi);
+  else S.cache.config_corral.push(Object.assign({ rodeo_id: rodeoId }, dataApi));
+
   try {
-    const all = JSON.parse(localStorage.getItem('eg_cfg') || '{}');
-    all[rodeoId] = Object.assign({}, all[rodeoId] || {}, cfg);
-    localStorage.setItem('eg_cfg', JSON.stringify(all));
-  } catch(e) {}
+    await apiCall('saveConfigCorral', { body: { rodeo_id: rodeoId, data: dataApi } });
+  } catch (e) {
+    toast('No se pudo guardar en el servidor: ' + e.message, 'err');
+    await loadEntity('config_corral', true); // revertir al estado real del servidor
+  }
 }
 function egLotes_() { try { return JSON.parse(localStorage.getItem('eg_lotes') || '[]'); } catch(e) { return []; } }
 function egSaveLotes_(lotes) { try { localStorage.setItem('eg_lotes', JSON.stringify(lotes)); } catch(e) {} }
+
+// Migración única: si hay configuraciones de corral guardadas en localStorage (eg_cfg)
+// de antes de que esto pasara a vivir en Sheets, las sube al servidor automáticamente
+// la primera vez que se detectan, así no se pierden por limpiar caché o cambiar de equipo.
+// Se marca con una bandera en localStorage para no repetir la migración en cada carga.
+async function migrarConfigCorralLegacy_() {
+  try {
+    if (localStorage.getItem('eg_cfg_migrado')) return;
+    const legacy = JSON.parse(localStorage.getItem('eg_cfg') || '{}');
+    const rodeoIds = Object.keys(legacy || {});
+    if (!rodeoIds.length) { localStorage.setItem('eg_cfg_migrado', '1'); return; }
+
+    const yaEnSheets = new Set((S.cache.config_corral || []).map(c => String(c.rodeo_id)));
+    let migrados = 0;
+    for (const rid of rodeoIds) {
+      if (yaEnSheets.has(String(rid))) continue; // ya migrado antes, no pisar
+      const cfg = legacy[rid] || {};
+      const tieneAlgo = cfg.kgIngreso || cfg.precioCompra || cfg.precioStock || cfg.pesoObjetivo || cfg.precioProyectado;
+      if (!tieneAlgo) continue;
+      await egSaveConfig_(rid, cfg);
+      migrados++;
+    }
+    localStorage.setItem('eg_cfg_migrado', '1');
+    if (migrados > 0) {
+      toast('✓ Se recuperaron ' + migrados + ' configuración(es) de corral guardadas localmente y se subieron a la planilla.', 'ok');
+      render();
+    }
+  } catch (e) { /* silencioso — no bloquea la carga de la app */ }
+}
 
 function egStock_(rodeoId) {
   const row = (S.stock || []).find(r => String(r.rodeo_id) === String(rodeoId));
@@ -6230,24 +6296,28 @@ function attachEngordeEvents_old_() {
 
   // Config corral (Costos)
   const cfgSave = document.getElementById('eg-cfg-save');
-  if (cfgSave) cfgSave.onclick = () => {
+  if (cfgSave) cfgSave.onclick = async () => {
     const rid = cfgSave.dataset.rodeo;
-    egSaveConfig_(rid, {
+    cfgSave.disabled = true;
+    await egSaveConfig_(rid, {
       kgIngreso: document.getElementById('eg-cfg-kg')?.value||'',
       precioCompra: document.getElementById('eg-cfg-precio')?.value||'',
       precioStock: document.getElementById('eg-cfg-stock')?.value||'',
     });
+    cfgSave.disabled = false;
     toast('Configuración guardada','ok'); render();
   };
 
   // Proyección — guardar peso objetivo y precio
   document.querySelectorAll('[id^="eg-proj-save-"]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const rid = btn.dataset.rodeo;
-      egSaveConfig_(rid, {
+      btn.disabled = true;
+      await egSaveConfig_(rid, {
         pesoObjetivo: document.getElementById('eg-proj-peso-'+rid)?.value||'',
         precioProyectado: document.getElementById('eg-proj-precio-'+rid)?.value||'',
       });
+      btn.disabled = false;
       toast('Guardado','ok'); render();
     };
   });
