@@ -2617,7 +2617,44 @@ function attachAbortosEvents() {
       invalidateCache('abortos');
       toast('Aborto registrado', 'ok');
       await loadEntity('abortos', true);
-      S.dashboard = null; // invalida — se recalcula al visitar el Resumen
+      S.dashboard = null;
+
+      // ── Traslado automático a Vacas Venta ──────────────────────────
+      // Buscar el rodeo origen para obtener su campo
+      const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_id));
+      const campoId = rodeoOrigen ? rodeoOrigen.campo_id : null;
+
+      // Buscar rodeo con categoría "vaca venta" o "vacas venta" en el mismo campo
+      const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const rodeoVacaVenta = rodeosTodos().find(r =>
+        String(r.campo_id) === String(campoId) &&
+        (norm(r.categoria) === 'vaca venta' || norm(r.categoria) === 'vacas venta')
+      );
+
+      if (!rodeoVacaVenta) {
+        toast('⚠ No se encontró un rodeo "Vacas Venta" en ese campo. Mové la vaca manualmente.', 'warn');
+      } else {
+        const obsTraslado = 'Traslado por aborto' + (data.caravana_vaca ? ' — caravana ' + data.caravana_vaca : '') + (data.observacion ? ' — ' + data.observacion : '');
+        const movData = {
+          tipo: 'Traslado en bloque',
+          fecha: data.fecha,
+          campo_origen_id: campoId,
+          rodeo_origen_id: data.rodeo_id,
+          campo_destino_id: campoId,
+          rodeo_destino_id: rodeoVacaVenta.rodeo_id,
+          cantidad: 1,
+          precio_cabeza: 0,
+          observaciones: obsTraslado,
+        };
+        await apiCall('create', { body: { entity: 'movimientos', data: movData } });
+        invalidateCache('movimientos');
+        await loadEntity('movimientos', true);
+        S.stock = null;
+        await loadStock();
+        toast('✓ Vaca trasladada automáticamente a "' + rodeoVacaVenta.nombre + '"', 'ok');
+      }
+      // ───────────────────────────────────────────────────────────────
+
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
