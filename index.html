@@ -3087,9 +3087,9 @@ function buildMovimientos() {
       <div class="fg" id="mv-caravana-wrap" style="display:none"><label>Caravana</label><input type="text" id="mv-caravana" placeholder="Ej: 982000..."></div>
       <div class="fg" id="mv-cantidad-wrap"><label>Cantidad</label><input type="number" id="mv-cantidad" placeholder="Ej: 50" min="1"></div>
       <div class="fg" id="mv-precio-wrap" style="display:none">
-        <label>Precio por cabeza ($) <span class="opt">— solo saldo inicial</span></label>
+        <label id="mv-precio-label">Precio por cabeza ($) <span class="opt">— solo saldo inicial</span></label>
         <input type="number" id="mv-precio-cabeza" placeholder="Ej: 900000" min="0" step="1000">
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">Se usa para valorizar el stock inicial de la campaña</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px" id="mv-precio-hint">Se usa para valorizar el stock inicial de la campaña</div>
       </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="mv-obs" placeholder="Opcional"></div>
     </div>
@@ -3596,7 +3596,16 @@ function attachMovimientosEvents() {
     document.getElementById('mv-origen-wrap').style.display = (esIndividual || esBloque) ? 'flex' : 'none';
     document.getElementById('mv-caravana-wrap').style.display = esIndividual ? 'flex' : 'none';
     document.getElementById('mv-cantidad-wrap').style.display = esIndividual ? 'none' : 'flex';
-    document.getElementById('mv-precio-wrap').style.display = esSaldoInicial ? 'flex' : 'none';
+    // El precio por cabeza se muestra para Saldo inicial y también para Traslados,
+    // por si el traslado representa un ingreso de costo (ej: compra que entra directo
+    // a un corral de Terminación sin pasar por un Saldo inicial separado).
+    document.getElementById('mv-precio-wrap').style.display = 'flex';
+    document.getElementById('mv-precio-label').innerHTML = esSaldoInicial
+      ? 'Precio por cabeza ($) <span class="opt">— solo saldo inicial</span>'
+      : 'Precio por cabeza ($) <span class="opt">— opcional</span>';
+    document.getElementById('mv-precio-hint').textContent = esSaldoInicial
+      ? 'Se usa para valorizar el stock inicial de la campaña'
+      : 'Completalo solo si este traslado representa un ingreso de costo (ej: compra que entra directo a un corral). Si los animales ya tenían costo en el rodeo de origen, dejalo en 0.';
     document.getElementById('mv-destino-label').textContent = esSaldoInicial ? 'Rodeo' : 'Rodeo destino';
   }
   document.querySelectorAll('#mv-tipo-group .radio-pill').forEach(p => p.onclick = () => {
@@ -3641,7 +3650,7 @@ function attachMovimientosEvents() {
       rodeo_origen_id: !esSaldoInicial ? document.getElementById('mv-origen').value : '',
       rodeo_destino_id: rodeoDestinoId,
       cantidad: esIndividual ? 1 : (Number(document.getElementById('mv-cantidad').value) || 0),
-      precio_cabeza: esSaldoInicial ? (Number(document.getElementById('mv-precio-cabeza').value) || 0) : 0,
+      precio_cabeza: Number(document.getElementById('mv-precio-cabeza').value) || 0,
       observaciones: document.getElementById('mv-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_destino_id) { toast('Completá fecha y rodeo destino.', 'err'); return; }
@@ -4708,11 +4717,19 @@ function egCostoCompra_(rodeoId) {
   const saldos = movs.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
   const costoSaldo = saldos.reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),m.fecha,moneda),0);
 
-  // Cesiones recibidas valorizadas al precio de origen
+  // Traslados recibidos: si el traslado trae precio_cabeza cargado manualmente
+  // (ej: el origen ya no tiene su propio Saldo inicial, o el traslado representa
+  // una compra que ingresa directo al corral), se usa ese costo explícito.
+  // Si no tiene precio cargado, se valoriza automáticamente según la cesión interna
+  // (categoría + peso del rodeo de origen al momento del traslado).
   const cesiones = movs.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_destino_id)===String(rodeoId));
   const costoCesion = cesiones.reduce((s,m)=>{
-    const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
     const cant = Number(m.cantidad)||0;
+    const precioManual = Number(m.precio_cabeza) || 0;
+    if (precioManual > 0) {
+      return s + convertirAMoneda_(cant * precioManual, m.fecha, moneda);
+    }
+    const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
     const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
     return s+convertirAMoneda_(valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO),m.fecha,moneda);
