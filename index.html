@@ -355,6 +355,20 @@ function rodeosConPrenadasPorCampo(campoId) {
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
 }
+// Categorías que NUNCA deberían estar en un corral de Terminación/Engorde,
+// aunque la columna "actividad" del catálogo esté mal cargada como "Engorde".
+// Esto es una red de seguridad ante errores de carga en la planilla — la corrección
+// real es arreglar la columna "actividad" del rodeo en la pestaña Rodeos del Sheet.
+const CATS_NO_ENGORDE_ = ['ternero', 'ternera', 'vaca', 'vaca venta', 'toro', 'vaquillona', 'vaquillona proximo servicio', 'vaquilloncita'];
+function rodeosEngordeValidos_() {
+  const norm_ = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return rodeosTodos().filter(r => {
+    if (r.actividad !== 'Engorde') return false;
+    const cat = norm_(r.categoria);
+    if (CATS_NO_ENGORDE_.some(c => norm_(c) === cat)) return false;
+    return true;
+  });
+}
 function rodeosPorCampo(campoId) {
   return rodeosTodos().filter(r => String(r.campo_id) === String(campoId));
 }
@@ -597,7 +611,7 @@ async function goto(page) {
     if (S.corralesTipoCambio === undefined) { try { await loadCorralesStock(); } catch (err) { /* silencioso */ } }
     // Inicializar corral seleccionado con el primero de Engorde que tenga animales
     if (!egGetCorralId()) {
-      const rEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+      const rEng = rodeosEngordeValidos_();
       if (rEng.length) egSetCorralId(String(rEng[0].rodeo_id));
     }
   }
@@ -4097,7 +4111,7 @@ function buildCesionesRecria() {
   const rodeos    = (S.catalogs && S.catalogs.rodeos) || [];
   const campos    = (S.catalogs && S.catalogs.campos) || [];
   const rodeosRec = rodeos.filter(r=>r.actividad==='Recría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
-  const rodeosEng = rodeos.filter(r=>r.actividad==='Engorde'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const rodeosEng = rodeosEngordeValidos_().filter(r=>r.activo===true||String(r.activo).toUpperCase()==='TRUE');
   const egresos   = (S.cache.egresos_recria||[])
     .filter(e=>e.destino==='Engorde')
     .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -4449,7 +4463,7 @@ function attachRecriaEvents() {
 }
 
 function buildEngordePesadasPage() {
-  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const rodeosEng = rodeosEngordeValidos_();
   const rodeoOpts = rodeosEng.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
   const todasPes = (S.cache.pesadas || [])
     .filter(p => rodeosEng.some(r => String(r.rodeo_id) === String(p.rodeo_id)))
@@ -4787,7 +4801,7 @@ function egPct_(a, b) { if (!b) return '—'; return (a / b * 100).toFixed(1) + 
 // ── ENGORDE — construcción principal ─────────────────────────────────────
 function buildEngorde() {
   const page = S.page;
-  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const rodeosEng = rodeosEngordeValidos_();
   const moneda = S.engordeMoneda || 'ARS';
   const fm = p => egFmon_(p, moneda);
 
@@ -5250,7 +5264,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 function buildEngordeCostos_(rodeoId, fm) {
   if (!rodeoId) {
     // Mostrar resumen de todos los corrales
-    const rodeosEngAll = rodeosTodos().filter(r => r.actividad === 'Engorde');
+    const rodeosEngAll = rodeosEngordeValidos_();
     const campFiltro = S._engCampoFiltro || '';
     const rodeosEng = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
     if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
@@ -5647,7 +5661,7 @@ function buildEngordeComparacion_(rodeosEng, fm) {
 }
 
 function buildEngordeProyeccion_(rodeoId, fm) {
-  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const rodeosEng = rodeosEngordeValidos_();
   let h = '';
   (rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))] : rodeosEng).filter(Boolean).forEach(r => {
     const rid = r.rodeo_id;
@@ -5772,7 +5786,7 @@ function buildProyeccionInsumos_(rodeoId, diasRestantes, fm) {
 }
 
 function buildEngordeCierre_(rodeoId, fm) {
-  const rodeosEng = rodeosTodos().filter(r => r.actividad === 'Engorde');
+  const rodeosEng = rodeosEngordeValidos_();
   const campFiltro = S._engCampoFiltro || '';
   const rodeosEngFilt = campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(campFiltro)) : rodeosEng;
   const lista = rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))].filter(Boolean) : rodeosEngFilt;
@@ -7090,7 +7104,7 @@ function calcMargenRecria_(campana, desde, hasta) {
 }
 
 function calcMargenTerminacion_(campana, desde, hasta) {
-  const rodeosEng = ((S.catalogs&&S.catalogs.rodeos)||[]).filter(r=>r.actividad==='Engorde'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const rodeosEng = rodeosEngordeValidos_().filter(r=>r.activo===true||String(r.activo).toUpperCase()==='TRUE');
   const rodeosIds = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
   const movs      = S.cache.movimientos||[];
   const productos = (S.catalogs&&S.catalogs.productos)||[];
@@ -7225,7 +7239,7 @@ function buildMargenBruto() {
   const mortandad = S.cache.mortandad||[];
   const rodeosAll = (S.catalogs&&S.catalogs.rodeos)||[];
   const rodeosRec = new Set(((S.resumenRecria&&S.resumenRecria.rodeos)||[]).map(r=>String(r.rodeo_id)));
-  const rodeosEng = new Set(rodeosAll.filter(r=>r.actividad==='Engorde').map(r=>String(r.rodeo_id)));
+  const rodeosEng = new Set(rodeosEngordeValidos_().map(r=>String(r.rodeo_id)));
   const mortCria  = mortandad.filter(m=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&r.actividad==='Cría'; }).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortRec   = mortandad.filter(m=>rodeosRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortEng   = mortandad.filter(m=>rodeosEng.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
@@ -8163,7 +8177,7 @@ function iaContexto_() {
   const ventas = (S.cache.ventas || []);
   const movimientos = (S.cache.movimientos || []);
   const productos = (S.catalogs && S.catalogs.productos) || [];
-  const rodeosEng = rodeos.filter(r => r.actividad === 'Engorde');
+  const rodeosEng = rodeosEngordeValidos_();
 
   // Calcular KPIs por corral de engorde
   const corralesData = rodeosEng.map(function(r) {
