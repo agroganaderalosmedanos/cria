@@ -2272,6 +2272,30 @@ function buildDashboard() {
     h += '</tbody></table></div></div>';
   }
 
+  // Mortandad — al final del dashboard, destacada en rojo
+  const mortandadCriaFilt = (S.cache.mortandad || []).filter(m => rodeosCriaIds.has(String(m.rodeo_id)));
+  const mortCriaTotal = mortandadCriaFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
+  if (mortCriaTotal > 0) {
+    const mortCriaPorRodeo = {};
+    mortandadCriaFilt.forEach(m => { mortCriaPorRodeo[m.rodeo_id] = (mortCriaPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
+    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Cría</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+    Object.entries(mortCriaPorRodeo).forEach(([rid,cant])=>{
+      const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
+      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+      </div>`;
+    });
+    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
+      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortCriaTotal} <span style="font-size:13px">bajas</span></div>
+    </div></div>
+      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
+    </div>`;
+  }
+
   return h;
 }
 
@@ -3813,26 +3837,6 @@ function buildRecriaDashboard() {
     </div>
   </div>`;
 
-  // Mortandad — panel rojo destacado
-  if (mortTotal > 0) {
-    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
-      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Recría</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
-    Object.entries(mortPorRodeo).forEach(([rid,cant])=>{
-      const r = rodeosFiltBase.find(x=>String(x.rodeo_id)===String(rid));
-      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:8px 14px;border:1px solid var(--red)">
-        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
-        <div style="font-size:22px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
-      </div>`;
-    });
-    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:8px 14px;border:2px solid var(--red)">
-      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
-      <div style="font-size:26px;font-weight:800;color:var(--red)">${mortTotal} <span style="font-size:13px">bajas</span></div>
-    </div></div>
-      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se suma como egreso — su impacto ya está reflejado en el menor stock al cierre.</div>
-    </div>`;
-  }
-
   // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
   const ventas     = (S.cache.ventas||[]).filter(v=>rodeosIdsFilt.has(String(v.rodeo_id)));
   const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIdsFilt.has(String(c.rodeo_id)));
@@ -3982,26 +3986,6 @@ function buildRecriaDashboard() {
     </div>
   </div>`;
 
-  // Mortandad — DESPUÉS del resultado, destacada en rojo
-  if (mortTotal > 0) {
-    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
-      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Recría</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
-    Object.entries(mortPorRodeo).forEach(([rid,cant])=>{
-      const r = rodeosFiltBase.find(x=>String(x.rodeo_id)===String(rid));
-      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
-        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
-        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
-      </div>`;
-    });
-    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
-      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
-      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortTotal} <span style="font-size:13px">bajas</span></div>
-    </div></div>
-      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
-    </div>`;
-  }
-
   // KPIs producción
   h += `<div class="panel">
     <div class="panel-title">📊 KPIs de producción</div>
@@ -4038,6 +4022,26 @@ function buildRecriaDashboard() {
     });
   }
   h += `</tbody></table></div></div>`;
+
+  // Mortandad — al final del dashboard, destacada en rojo
+  if (mortTotal > 0) {
+    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Recría</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+    Object.entries(mortPorRodeo).forEach(([rid,cant])=>{
+      const r = rodeosFiltBase.find(x=>String(x.rodeo_id)===String(rid));
+      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+      </div>`;
+    });
+    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
+      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortTotal} <span style="font-size:13px">bajas</span></div>
+    </div></div>
+      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
+    </div>`;
+  }
 
   return h;
 }
@@ -5433,6 +5437,30 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     </div>`;
   });
   h += '</div>';
+
+  // Mortandad — al final del dashboard, destacada en rojo
+  const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIds.has(String(m.rodeo_id)));
+  const mortEngTotal = mortandadEngFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
+  if (mortEngTotal > 0) {
+    const mortEngPorRodeo = {};
+    mortandadEngFilt.forEach(m => { mortEngPorRodeo[m.rodeo_id] = (mortEngPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
+    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Terminación</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+    Object.entries(mortEngPorRodeo).forEach(([rid,cant])=>{
+      const r = rodeosEngFilt.find(x=>String(x.rodeo_id)===String(rid));
+      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+      </div>`;
+    });
+    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
+      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortEngTotal} <span style="font-size:13px">bajas</span></div>
+    </div></div>
+      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
+    </div>`;
+  }
 
   return h;
 }
