@@ -3950,14 +3950,48 @@ function attachCesionesRecriaEvents() {
     const precio  = Number(document.getElementById('ces-r-precio').value)||0;
     const obs     = document.getElementById('ces-r-obs').value.trim();
     if (!fecha||!origen||!cant) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    if (!destino) { toast('Elegí el rodeo destino de Terminación — sin esto el animal no se mueve de stock.', 'err'); return; }
     if (!precio) { toast('Ingresá el precio de cesión ($/kg).', 'err'); return; }
-    const rodeo = (S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(origen));
+
+    // Validación de stock: no permitir ceder más animales de los que realmente hay
+    // en el rodeo de Recría origen a esa fecha (mismo criterio que en Movimientos/Ventas).
+    const rodeoOrigen = rodeosTodos().find(r=>String(r.rodeo_id)===String(origen));
+    const rodeoDestino = rodeosTodos().find(r=>String(r.rodeo_id)===String(destino));
+    const stockOrigen = (S.stock || []).find(s => String(s.rodeo_id) === String(origen));
+    const disponible = stockOrigen ? Number(stockOrigen.stock) || 0 : 0;
+    if (cant > disponible) {
+      const continuar = confirm('⚠ El rodeo de origen tiene ' + disponible + ' animales en stock actual, pero estás cediendo ' + cant + '.\n\n¿Seguro que querés continuar igual?');
+      if (!continuar) return;
+    }
+
     btn.disabled=true; btn.textContent='⏳ Guardando...';
     try {
+      // 1) Traslado real en Movimientos — esto es lo que efectivamente mueve el stock
+      // del rodeo de Recría al rodeo de Terminación. Sin esto, el animal seguiría
+      // figurando en stock de Recría aunque la cesión ya esté "registrada".
+      await apiCall('create', { body: { entity: 'movimientos', data: {
+        tipo: 'Traslado en bloque',
+        fecha,
+        rodeo_origen_id: origen,
+        rodeo_destino_id: destino,
+        campo_origen_id: rodeoOrigen?.campo_id || '',
+        campo_destino_id: rodeoDestino?.campo_id || '',
+        cantidad: cant,
+        peso_prom_kg: peso,
+        precio_kg: precio, // precio/kg real de la cesión, igual que en Cría→Recría
+        observaciones: obs || 'Cesión Recría → Terminación',
+      }}});
+      invalidateCache('movimientos');
+      await loadEntity('movimientos', true);
+      S.stock = null; await loadStock();
+
+      // 2) Registro en egresos_recria — se mantiene para no romper los reportes
+      // económicos existentes (Margen Bruto, Resultado de Terminación) que ya leen
+      // de esta entidad para calcular ingresos/egresos por cesión.
       await apiCall('create', { body: { entity: 'egresos_recria', data: {
         fecha,
         rodeo_id: origen,
-        campo_id: rodeo?.campo_id||'',
+        campo_id: rodeoOrigen?.campo_id||'',
         destino: 'Engorde',
         rodeo_destino_id: destino,
         cant_animales: cant,
@@ -3967,7 +4001,9 @@ function attachCesionesRecriaEvents() {
       }}}); 
       invalidateCache('egresos_recria');
       await loadEntity('egresos_recria', true);
-      toast('Cesión registrada — '+fn(cant)+' animales · $ '+fn(precio)+'/kg', 'ok');
+      S.margenBruto = null;
+
+      toast('✓ Cesión registrada y trasladada — '+fn(cant)+' animales · $ '+fn(precio)+'/kg', 'ok');
       render();
     } catch(err) { toast(err.message, 'err'); }
     finally { btn.disabled=false; btn.textContent='💾 Registrar cesión'; }
@@ -4820,19 +4856,35 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // Stock inicial / Cesiones recibidas de Recría
   const movs = S.cache.movimientos || [];
   const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
-  // Cesiones desde Recría — leer de egresos_recria con precio_kg_cesion
-  const egresosRecRaw = S.cache.egresos_recria || [];
-  const cesionesRec = egresosRecRaw.filter(e => e.destino === 'Engorde' && rodeosEngIds.has(String(e.rodeo_destino_id||'')));
-  // También incluir traslados directos a corrales de engorde (legacy)
+  // Traslados reales a corrales de engorde — esta es ahora la ÚNICA fuente de verdad
+  // para el costo de cesiones recibidas (antes del fix, "Cesiones Recría→Terminación"
+  // guardaba solo en egresos_recria SIN mover stock real; ahora también genera el
+  // Traslado correspondiente en Movimientos, que es lo que efectivamente mueve el stock).
   const cesionesRecTrasla = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  // Registros legacy en egresos_recria que NO tienen su Traslado correspondiente todavía
+  // (cesiones cargadas ANTES de este fix, cuando el módulo no generaba el movimiento real).
+  // Se identifican por no tener match de fecha+cantidad+rodeo en ningún Traslado — evita
+  // sumar dos veces las cesiones nuevas, que sí están en ambos lados.
+  const egresosRecRaw = S.cache.egresos_recria || [];
+  const cesionesRec = egresosRecRaw.filter(e => {
+    if (e.destino !== 'Engorde' || !rodeosEngIds.has(String(e.rodeo_destino_id||''))) return false;
+    const tieneTrasladoReal = cesionesRecTrasla.some(m =>
+      String(m.fecha) === String(e.fecha) &&
+      String(m.rodeo_origen_id) === String(e.rodeo_id) &&
+      String(m.rodeo_destino_id) === String(e.rodeo_destino_id) &&
+      Number(m.cantidad) === Number(e.cant_animales)
+    );
+    return !tieneTrasladoReal;
+  });
   const totalSaldoIni = saldosIni.reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
-  // Cesiones desde egresos_recria con precio_kg_cesion
+  // Egresos legacy (sin Traslado real) + Traslados reales (incluye los nuevos generados
+  // por el formulario de Cesiones Recría→Terminación, y los traslados directos legacy)
   const totalCesiones = cesionesRec.reduce((s,e)=>{
     return s + (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
   },0) + cesionesRecTrasla.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
     const peso = Number(m.peso_prom_kg)||0;
     if (precioKg && peso) return s + cant*peso*precioKg;
     const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
