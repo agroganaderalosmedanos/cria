@@ -9549,11 +9549,34 @@ function buildABMCorrales_() {
   const corrales = rodeosEngordeValidos_();
   const campos = (S.catalogs && S.catalogs.campos) || [];
 
+  let h = `<div class="panel">
+    <div class="panel-title">➕ Nuevo corral de Terminación</div>
+    <div class="fgrid">
+      <div class="fg"><label>Nombre</label><input type="text" id="cf-corral-nombre" placeholder="Ej: Novillos Corral 3"></div>
+      <div class="fg"><label>Campo</label>
+        <select id="cf-corral-campo">
+          ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Categoría</label>
+        <select id="cf-corral-cat">
+          <option value="novillo">Novillo</option>
+          <option value="novillito">Novillito</option>
+          <option value="vaquillona venta">Vaquillona venta</option>
+          <option value="vaca venta">Vaca venta</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="cf-corral-save" style="margin-top:8px">➕ Crear corral</button>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px">Se crea como Rodeo con Actividad = Engorde. Después cargá su Saldo inicial en Movimientos de Hacienda.</div>
+  </div>`;
+
   if (!corrales.length) {
-    return '<div class="empty-state"><span class="ico">🏭</span><div class="msg">No hay corrales de Terminación activos. Cargalos en la pestaña "Rodeos" con Actividad = Engorde.</div></div>';
+    h += '<div class="empty-state"><span class="ico">🏭</span><div class="msg">Todavía no hay corrales de Terminación. Creá el primero arriba.</div></div>';
+    return h;
   }
 
-  let h = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
+  h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
     📋 Esta ficha es la fuente única de verdad de cada corral — persiste en Sheets (hoja "Config Corral"), no en el navegador. Los cambios se guardan al instante, fila por fila.<br>
     <strong>Fecha de inicio</strong> y <strong>Stock inicial</strong> son útiles cuando cargás un corral que ya venía funcionando antes de empezar a usar el sistema — así no dependés de tener el movimiento histórico cargado para que aparezca acá.
   </div>`;
@@ -9602,6 +9625,26 @@ function buildABMCorrales_() {
 }
 
 function attachABMCorralesEvents_() {
+  const btnNuevo = document.getElementById('cf-corral-save');
+  if (btnNuevo) btnNuevo.onclick = async () => {
+    const nombre = document.getElementById('cf-corral-nombre').value.trim();
+    const campo_id = document.getElementById('cf-corral-campo').value;
+    const categoria = document.getElementById('cf-corral-cat').value;
+    if (!nombre) { toast('Ingresá el nombre del corral', 'err'); return; }
+    btnNuevo.disabled = true;
+    btnNuevo.textContent = '⏳ Creando…';
+    try {
+      await apiCall('create', { body: { entity: 'rodeos', data: { nombre, campo_id, categoria, actividad: 'Engorde', activo: 'TRUE' } } });
+      await loadCatalogs();
+      toast('Corral creado — ahora cargá su Saldo inicial en Movimientos de Hacienda', 'ok');
+      render();
+    } catch (err) {
+      btnNuevo.disabled = false;
+      btnNuevo.textContent = '➕ Crear corral';
+      toast(err.message, 'err');
+    }
+  };
+
   document.querySelectorAll('.abm-corral-save').forEach(btn => {
     btn.onclick = async () => {
       const rid = btn.dataset.rid;
