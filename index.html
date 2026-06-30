@@ -2955,7 +2955,11 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       ? `$ ${fn(f.precio_kg)}/kg`
       : f.precio_cabeza > 0
         ? `$ ${fn(f.precio_cabeza)}/cab.`
-        : (f.sinCosto ? '<span style="color:var(--clay-text);font-weight:700">⚠ Sin costo</span>' : '—');
+        : (f.sinCosto
+            ? (f.tipoLabel === 'Saldo inicial'
+                ? '<span style="color:var(--clay-text);font-weight:700">⚠ Sin precio de compra</span>'
+                : '<span style="color:var(--gold-text);font-weight:700">⚠ Sin valorizar — usar precio del mes ✎</span>')
+            : '—');
     const trStyle = f.sinCosto ? ' style="background:rgba(200,150,40,0.07)"' : '';
     h += `<tr${trStyle}>
       <td>${fd(f.fecha)}</td>
@@ -9970,7 +9974,14 @@ function openEditModal(entity, idCol, id) {
     <div class="modal-overlay" id="edit-modal-overlay">
       <div class="modal">
         <div class="modal-header"><h3>Editar registro</h3><button class="modal-close" id="edit-modal-close">✕</button></div>
-        <div class="modal-body"><div class="fgrid">${fieldsHtml}</div></div>
+        <div class="modal-body">
+          <div class="fgrid">${fieldsHtml}</div>
+          ${entity === 'movimientos' && (item.tipo === 'Traslado en bloque' || item.tipo === 'Traslado individual') ? `
+          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+            <button type="button" class="btn btn-ghost btn-sm" id="edit-modal-usar-precio-mes" style="font-size:12px;padding:4px 10px">💲 Completar precio desde Valorización de Stock</button>
+            <span style="font-size:11px;color:var(--text3);margin-left:8px">Para traslados internos sin precio real de compra — usa el precio de mercado del mes del movimiento</span>
+          </div>` : ''}
+        </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" id="edit-modal-cancel">Cancelar</button>
           <button class="btn btn-primary" id="edit-modal-save">Guardar cambios</button>
@@ -9981,6 +9992,37 @@ function openEditModal(entity, idCol, id) {
   const closeModal = () => document.getElementById('edit-modal-overlay')?.remove();
   document.getElementById('edit-modal-close').onclick = closeModal;
   document.getElementById('edit-modal-cancel').onclick = closeModal;
+
+  // Botón "Usar precio del mes" en modal de edición de Traslados
+  const btnPrecioModal = document.getElementById('edit-modal-usar-precio-mes');
+  if (btnPrecioModal) {
+    btnPrecioModal.onclick = () => {
+      const fecha = document.getElementById('edit-fecha')?.value || item.fecha;
+      const rodeoDestinoId = document.getElementById('edit-rodeo_destino_id')?.value || item.rodeo_destino_id;
+      const rodeo = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoDestinoId));
+      if (!rodeo) { toast('No se pudo identificar el rodeo destino.', 'err'); return; }
+      const cat = (rodeo.categoria || '').toLowerCase().trim();
+      const p = preciosValGet_(fecha);
+      const mapaKg = { ternero:'ternero', ternera:'ternera', vaquillona:'vaquillona', 'vaquillona venta':'vaquillona_venta', novillito:'novillito', novillo:'novillo', 'vaca venta':'vaca_venta' };
+      const mapaCab = { vaca:'vaca_cab', toro:'toro', torito:'torito' };
+      const valorKg = p[mapaKg[cat]] || 0;
+      const valorCab = p[mapaCab[cat]] || 0;
+      // Priorizar $/kg si existe para esa categoría, sino $/cabeza
+      const precioKgEl = document.getElementById('edit-precio_kg');
+      const precioCabEl = document.getElementById('edit-precio_cabeza');
+      if (valorKg > 0 && precioKgEl) {
+        precioKgEl.value = valorKg;
+        if (precioCabEl) precioCabEl.value = 0;
+        toast('Precio/kg cargado desde Valorización de Stock (' + cat + ' — ' + fd(fecha) + ')', 'ok');
+      } else if (valorCab > 0 && precioCabEl) {
+        precioCabEl.value = valorCab;
+        if (precioKgEl) precioKgEl.value = 0;
+        toast('Precio/cabeza cargado desde Valorización de Stock (' + cat + ' — ' + fd(fecha) + ')', 'ok');
+      } else {
+        toast('No hay precio cargado para "' + (rodeo.categoria||'—') + '" en Precios de Valorización para esa fecha.', 'err');
+      }
+    };
+  }
   document.getElementById('edit-modal-save').onclick = async () => {
     const data = {};
     keys.forEach(k => {
