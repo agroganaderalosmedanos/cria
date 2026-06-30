@@ -9577,19 +9577,16 @@ function buildABMCorrales_() {
   }
 
   h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
-    📋 Esta ficha es la fuente única de verdad de cada corral — persiste en Sheets (hoja "Config Corral"), no en el navegador. Los cambios se guardan al instante, fila por fila.<br>
-    <strong>Fecha de inicio</strong> y <strong>Stock inicial</strong> son útiles cuando cargás un corral que ya venía funcionando antes de empezar a usar el sistema — así no dependés de tener el movimiento histórico cargado para que aparezca acá.
+    📋 Esta ficha persiste en Sheets (hoja "Config Corral"), no en el navegador.<br>
+    <strong>Fecha de inicio</strong> y <strong>Stock inicial</strong> son útiles solo cuando un corral todavía no tiene su Saldo inicial o Traslado de entrada cargado en Movimientos — si ya lo tenés cargado ahí, no hace falta tocar nada acá.<br>
+    El resto de los datos del corral (peso de ingreso, costo de entrada, peso objetivo, precio estimado de venta) se cargan en otros lugares: peso y costo de entrada van en el movimiento mismo (Movimientos de Hacienda → Historial → ✎), y peso objetivo / precio estimado se cargan en Resultado Económico Terminación → Proyección de Salidas.
   </div>`;
 
   h += `<div class="tw"><table class="dt"><thead><tr>
     <th>Corral</th><th>Campo</th>
-    <th>Fecha inicio</th>
-    <th>Stock inicial</th>
+    <th>Fecha inicio <span class="opt" style="font-weight:400">(solo si no hay movimiento)</span></th>
+    <th>Stock inicial <span class="opt" style="font-weight:400">(solo si no hay movimiento)</span></th>
     <th>Stock actual</th>
-    <th>Peso ingreso (kg)</th>
-    <th>Costo (precio)</th>
-    <th>Peso objetivo (kg)</th>
-    <th>$/kg estimado de venta <span class="opt" style="font-weight:400">(tu hipótesis)</span></th>
     <th></th>
   </tr></thead><tbody>`;
 
@@ -9598,24 +9595,12 @@ function buildABMCorrales_() {
     const cfg = egConfig_(rid);
     const stock = egStock_(rid);
     const campoNom = campos.find(c => String(c.campo_id) === String(r.campo_id))?.nombre || '—';
-    // El modo se infiere de qué campo tiene valor cargado; por defecto "cabeza"
-    const modoActual = cfg.precioStockEsKg ? 'kg' : 'cabeza';
     h += `<tr data-corral-row="${rid}">
       <td><strong>${r.nombre}</strong></td>
       <td style="color:var(--text2)">${campoNom}</td>
       <td><input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio" value="${cfg.fechaInicio||''}" style="width:135px;font-size:13px;padding:4px 6px"></td>
       <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial" value="${cfg.stockInicial||''}" placeholder="Ej: 80" style="width:80px;font-size:13px;padding:4px 6px"></td>
       <td class="tc">${fn(stock)}</td>
-      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso" value="${cfg.kgIngreso||''}" placeholder="Ej: 350" style="width:90px;font-size:13px;padding:4px 6px"></td>
-      <td style="white-space:nowrap">
-        <select class="abm-corral-modo" data-rid="${rid}" style="width:75px;font-size:12px;padding:3px 4px;margin-right:4px">
-          <option value="cabeza" ${modoActual==='cabeza'?'selected':''}>$/cab.</option>
-          <option value="kg" ${modoActual==='kg'?'selected':''}>$/kg</option>
-        </select>
-        <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra" value="${cfg.precioCompra||''}" placeholder="Precio" style="width:100px;font-size:13px;padding:4px 6px">
-      </td>
-      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="pesoObjetivo" value="${cfg.pesoObjetivo||''}" placeholder="Ej: 480" style="width:90px;font-size:13px;padding:4px 6px"></td>
-      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioProyectado" value="${cfg.precioProyectado||''}" placeholder="Tu estimación, ej: 3200" style="width:130px;font-size:13px;padding:4px 6px"></td>
       <td><button class="btn btn-primary abm-corral-save" data-rid="${rid}" style="font-size:11px;padding:5px 12px">💾 Guardar</button></td>
     </tr>`;
   });
@@ -9652,8 +9637,6 @@ function attachABMCorralesEvents_() {
       if (!row) return;
       const cfg = {};
       row.querySelectorAll('.abm-corral-input').forEach(inp => { cfg[inp.dataset.field] = inp.value; });
-      const modo = row.querySelector('.abm-corral-modo')?.value || 'cabeza';
-      cfg.precioStockEsKg = modo === 'kg' ? '1' : '';
       btn.disabled = true;
       btn.textContent = 'Guardando...';
       await egSaveConfig_(rid, cfg);
