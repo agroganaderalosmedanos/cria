@@ -3277,6 +3277,13 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
   const mortandad  = S.cache.mortandad  || [];
   const destetes   = S.cache.destetes   || [];
 
+  // Helper: obtener campo_id de un rodeo desde el catálogo como fallback
+  function campoDe_(rodeoCatId, campoMovId) {
+    if (campoMovId) return campoMovId;
+    const cat = (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return String(r.rodeo_id) === String(rodeoCatId); });
+    return cat ? cat.campo_id : null;
+  }
+
   // Construir líneas unificadas
   var lineas = [];
 
@@ -3289,37 +3296,40 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
         pill: 'pill-gold',
         desc: 'Saldo inicial',
         rodeo: m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
-        campo: m.campo_destino_id ? campoNombre(m.campo_destino_id) : '—',
+        campo: m.campo_destino_id ? campoNombre(m.campo_destino_id) : (m.rodeo_destino_id ? campoNombre(campoDe_(m.rodeo_destino_id, m.campo_destino_id)) : '—'),
         rodeo_id: m.rodeo_destino_id,
-        campo_id: m.campo_destino_id,
+        campo_id: campoDe_(m.rodeo_destino_id, m.campo_destino_id),
         entrada: Number(m.cantidad) || 0,
         salida: 0,
         obs: m.observaciones || '',
       });
     } else if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') {
-      // Genera una línea de SALIDA para el origen y una de ENTRADA para el destino
+      const campoOrigenId  = campoDe_(m.rodeo_origen_id,  m.campo_origen_id);
+      const campoDestinoId = campoDe_(m.rodeo_destino_id, m.campo_destino_id);
+      // Línea de SALIDA para el origen
       lineas.push({
         fecha: m.fecha || '',
         tipo: m.tipo,
         pill: 'pill-clay',
         desc: 'Traslado → ' + (m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—'),
         rodeo: m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
-        campo: m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—',
+        campo: campoOrigenId ? campoNombre(campoOrigenId) : '—',
         rodeo_id: m.rodeo_origen_id,
-        campo_id: m.campo_origen_id,
+        campo_id: campoOrigenId,
         entrada: 0,
         salida: Number(m.cantidad) || 0,
         obs: m.observaciones || '',
       });
+      // Línea de ENTRADA para el destino
       lineas.push({
         fecha: m.fecha || '',
         tipo: m.tipo,
         pill: 'pill-green',
         desc: 'Traslado ← ' + (m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—'),
         rodeo: m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
-        campo: m.campo_destino_id ? campoNombre(m.campo_destino_id) : '—',
+        campo: campoDestinoId ? campoNombre(campoDestinoId) : '—',
         rodeo_id: m.rodeo_destino_id,
-        campo_id: m.campo_destino_id,
+        campo_id: campoDestinoId,
         entrada: Number(m.cantidad) || 0,
         salida: 0,
         obs: m.observaciones || '',
@@ -3334,9 +3344,9 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
       pill: 'pill-red',
       desc: v.comprador ? 'Venta a ' + v.comprador : 'Venta',
       rodeo: v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—',
-      campo: v.campo_id ? campoNombre(v.campo_id) : '—',
+      campo: campoNombre(campoDe_(v.rodeo_id, v.campo_id)),
       rodeo_id: v.rodeo_id,
-      campo_id: v.campo_id,
+      campo_id: campoDe_(v.rodeo_id, v.campo_id),
       entrada: 0,
       salida: Number(v.cant_animales) || 0,
       obs: v.observaciones || '',
@@ -3351,9 +3361,9 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
       pill: 'pill-green',
       desc: 'Nacimientos',
       rodeo: p.rodeo_id ? rodeoNombre(p.rodeo_id) : '—',
-      campo: '—',
+      campo: campoNombre(campoDe_(p.rodeo_id, p.campo_id || null)),
       rodeo_id: p.rodeo_id,
-      campo_id: null,
+      campo_id: campoDe_(p.rodeo_id, p.campo_id || null),
       entrada: Number(p.nacidos_vivos) || 0,
       salida: 0,
       obs: '',
@@ -3367,9 +3377,9 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
       pill: 'pill-clay',
       desc: 'Mortandad',
       rodeo: m.rodeo_id ? rodeoNombre(m.rodeo_id) : '—',
-      campo: '—',
+      campo: campoNombre(campoDe_(m.rodeo_id, m.campo_id || null)),
       rodeo_id: m.rodeo_id,
-      campo_id: null,
+      campo_id: campoDe_(m.rodeo_id, m.campo_id || null),
       entrada: 0,
       salida: Number(m.cantidad) || 0,
       obs: m.observaciones || '',
@@ -3383,9 +3393,9 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
       pill: 'pill-clay',
       desc: 'Destete',
       rodeo: d.rodeo_id ? rodeoNombre(d.rodeo_id) : '—',
-      campo: '—',
+      campo: campoNombre(campoDe_(d.rodeo_id, d.campo_id || null)),
       rodeo_id: d.rodeo_id,
-      campo_id: null,
+      campo_id: campoDe_(d.rodeo_id, d.campo_id || null),
       entrada: 0,
       salida: Number(d.cantidad) || 0,
       obs: '',
