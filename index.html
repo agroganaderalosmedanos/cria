@@ -3314,11 +3314,14 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
   const mortandad  = S.cache.mortandad  || [];
   const destetes   = S.cache.destetes   || [];
 
-  // Helper: obtener campo_id de un rodeo desde el catálogo como fallback
+  // Helper: el campo de un rodeo SIEMPRE se toma del catálogo (fuente de verdad).
+  // El campo_id suelto guardado en cada registro (venta, movimiento, etc.) puede estar
+  // desincronizado por errores de carga — por eso no se usa como prioridad, solo como fallback
+  // si el rodeo no está en catálogo (rodeo eliminado, por ejemplo).
   function campoDe_(rodeoCatId, campoMovId) {
-    if (campoMovId) return campoMovId;
     const cat = (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return String(r.rodeo_id) === String(rodeoCatId); });
-    return cat ? cat.campo_id : null;
+    if (cat && cat.campo_id) return cat.campo_id;
+    return campoMovId || null;
   }
 
   // Construir líneas unificadas
@@ -3333,7 +3336,7 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
         pill: 'pill-gold',
         desc: 'Saldo inicial',
         rodeo: m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
-        campo: m.campo_destino_id ? campoNombre(m.campo_destino_id) : (m.rodeo_destino_id ? campoNombre(campoDe_(m.rodeo_destino_id, m.campo_destino_id)) : '—'),
+        campo: campoNombre(campoDe_(m.rodeo_destino_id, m.campo_destino_id)),
         rodeo_id: m.rodeo_destino_id,
         campo_id: campoDe_(m.rodeo_destino_id, m.campo_destino_id),
         entrada: Number(m.cantidad) || 0,
@@ -6332,10 +6335,14 @@ function attachVentasEvents() {
   if (save) save.onclick = async () => {
     const peso = Number(document.getElementById('ve-peso').value) || '';
     const precio = Number(document.getElementById('ve-precio').value) || '';
+    const rodeoIdSel = document.getElementById('ve-rodeo').value;
+    // El campo SIEMPRE se deriva del rodeo seleccionado (catálogo), nunca del select de campo —
+    // así se evita guardar una venta con campo_id desincronizado del rodeo real.
+    const rodeoObj = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoIdSel));
     const data = {
       fecha_salida: document.getElementById('ve-fecha').value,
-      rodeo_id: document.getElementById('ve-rodeo').value,
-      campo_id: document.getElementById('ve-campo').value,
+      rodeo_id: rodeoIdSel,
+      campo_id: rodeoObj ? rodeoObj.campo_id : document.getElementById('ve-campo').value,
       comprador: document.getElementById('ve-comprador').value.trim(),
       tipo_venta: 'Venta real',
       cant_animales: Number(document.getElementById('ve-cantidad').value) || 0,
