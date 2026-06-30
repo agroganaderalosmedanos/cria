@@ -7151,6 +7151,7 @@ function calcMargenCria_(campana, desde, hasta) {
   });
   const pesadas = S.cache.pesadas||[];
   let ingCesiones = 0;
+  const filasEI = [], filasEF = [], filesCes = [];
   cesiones.forEach(m => {
     const cant = Number(m.cantidad)||0;
     const peso = Number(m.peso_prom_kg)||(()=>{
@@ -7159,11 +7160,16 @@ function calcMargenCria_(campana, desde, hasta) {
     })();
     // Priorizar precio_kg, luego precio_cabeza (como $/kg), luego valorización del mes
     const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-    if (precioKg) { ingCesiones += cant * peso * precioKg; return; }
-    const p = preciosValGet_(m.fecha);
-    const cat = (rodeosPorId[String(m.rodeo_origen_id)]?.categoria||'ternero').toLowerCase();
-    const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
-    ingCesiones += cant * peso * (p[mapaKg[cat]]||0);
+    let total = 0;
+    if (precioKg) { total = cant * peso * precioKg; ingCesiones += total; }
+    else {
+      const p = preciosValGet_(m.fecha);
+      const cat = (rodeosPorId[String(m.rodeo_origen_id)]?.categoria||'ternero').toLowerCase();
+      const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
+      total = cant * peso * (p[mapaKg[cat]]||0);
+      ingCesiones += total;
+    }
+    filesCes.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: precioKg || (total/cant/peso||0), total });
   });
 
   // EF — stock valorizado actual
@@ -7171,15 +7177,23 @@ function calcMargenCria_(campana, desde, hasta) {
   let ef = 0;
   rodeosCria.forEach(r => {
     const stk = stockTodos.find(s => String(s.rodeo_id) === String(r.rodeo_id));
-    if (stk && stk.stock > 0) ef += valorizarRodeo_(r, stk.stock, 0);
+    if (stk && stk.stock > 0) {
+      const val = valorizarRodeo_(r, stk.stock, 0);
+      ef += val;
+      filasEF.push({ rodeo: r.nombre, cant: stk.stock, precio: val/stk.stock||0, total: val });
+    }
   });
 
   const ing = ingVentas + ingCesiones + ef;
 
   // EI — saldos iniciales
-  const ei = movs
-    .filter(m => m.tipo==='Saldo inicial' && rodeosIds.has(String(m.rodeo_destino_id)))
-    .reduce((s,m) => s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+  const movEI = movs.filter(m => m.tipo==='Saldo inicial' && rodeosIds.has(String(m.rodeo_destino_id)));
+  const ei = movEI.reduce((s,m) => {
+    const cant = Number(m.cantidad)||0, precio = Number(m.precio_cabeza)||0;
+    const total = cant*precio;
+    filasEI.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, precio, total });
+    return s + total;
+  }, 0);
 
   // Compras campaña
   const compras = comprasH
@@ -7202,7 +7216,7 @@ function calcMargenCria_(campana, desde, hasta) {
   const eg = ei + compras + egAlim + egVet + egSueldos;
   const margen = ing - eg;
 
-  return { ing, eg, margen, detalle: { ingVentas, ingCesiones, ef, ei, compras, egAlim, egVet, egSueldos, cantVentas: ventasFilt.length } };
+  return { ing, eg, margen, detalle: { ingVentas, ingCesiones, ef, ei, compras, egAlim, egVet, egSueldos, cantVentas: ventasFilt.length, filasEI, filasEF, filesCes } };
 }
 
 function calcMargenRecria_(campana, desde, hasta) {
@@ -7258,19 +7272,31 @@ function calcMargenRecria_(campana, desde, hasta) {
 
   // EF valorizado
   let ef=0;
-  rodeosRec.forEach(r=>{ const stk=Math.max(0,r.stock||0); if(!stk)return; const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:0; ef+=valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{},stk,pp); });
+  const filasEF_R = [];
+  rodeosRec.forEach(r=>{
+    const stk=Math.max(0,r.stock||0); if(!stk)return;
+    const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:0;
+    const val=valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{},stk,pp);
+    ef+=val;
+    filasEF_R.push({ rodeo: r.nombre, cant: stk, peso: pp, precio: pp?val/stk/pp:val/stk||0, total: val });
+  });
 
   const ing = ingVentas + ingCesEng + ef;
 
   // EI — saldos iniciales de recría
-  const ei = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id))).reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
+  const filasEI_R = [];
+  const ei = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id))).reduce((s,m)=>{
+    const cant=Number(m.cantidad)||0, precio=Number(m.precio_cabeza)||0, total=cant*precio;
+    const rd=rodeosAll.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
+    filasEI_R.push({ fecha: m.fecha, rodeo: rd?.nombre||'—', cant, precio, total });
+    return s+total;
+  },0);
 
-  // Cesión recibida desde Cría:
-  // 1) Traslados con precio/kg explícito (precio_kg o precio_cabeza usado como $/kg)
-  // 2) Traslados sin precio → valorizar automáticamente con precio del mes
+  // Cesión recibida desde Cría
   const rodeosPorId = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
   const pesadas = S.cache.pesadas||[];
   let egCesionCria=0;
+  const filasCesRec_R = [];
   movs.filter(m=>{
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or=rodeosPorId[String(m.rodeo_origen_id)];
@@ -7280,16 +7306,20 @@ function calcMargenRecria_(campana, desde, hasta) {
   }).forEach(m=>{
     const cant=Number(m.cantidad)||0;
     const peso=Number(m.peso_prom_kg)||0;
-    // Priorizar precio_kg, luego precio_cabeza (como $/kg en cesiones), luego valorización del mes
     const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-    if (precioKg && peso) { egCesionCria += cant*peso*precioKg; return; }
-    const or=rodeosPorId[String(m.rodeo_origen_id)];
-    const p=preciosValGet_(m.fecha);
-    const cat=(or?.categoria||'ternero').toLowerCase();
-    const mapaKg={ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
-    const pesadasO=pesadas.filter(p2=>String(p2.rodeo_id)===String(m.rodeo_origen_id)&&String(p2.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pesoFinal=peso||Number(pesadasO[0]?.peso_prom_kg)||0;
-    egCesionCria += cant*pesoFinal*(p[mapaKg[cat]]||0);
+    let total=0;
+    if (precioKg && peso) { total=cant*peso*precioKg; egCesionCria+=total; }
+    else {
+      const or=rodeosPorId[String(m.rodeo_origen_id)];
+      const p=preciosValGet_(m.fecha);
+      const cat=(or?.categoria||'ternero').toLowerCase();
+      const mapaKg={ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
+      const pesadasO=pesadas.filter(p2=>String(p2.rodeo_id)===String(m.rodeo_origen_id)&&String(p2.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoFinal=peso||Number(pesadasO[0]?.peso_prom_kg)||0;
+      total=cant*pesoFinal*(p[mapaKg[cat]]||0);
+      egCesionCria+=total;
+    }
+    filasCesRec_R.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: total/cant/(peso||1)||0, total });
   });
 
   let egCompraExt=0;
@@ -7299,9 +7329,18 @@ function calcMargenRecria_(campana, desde, hasta) {
   let egAlim=0, egVet=0;
   consumos.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id); if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo; });
 
+  // Filas de cesiones enviadas a Engorde (para detalle)
+  const filasCesEng_R = egresos.map(e=>({
+    fecha: e.fecha, rodeo: rodeosAll.find(r=>String(r.rodeo_id)===String(e.rodeo_id))?.nombre||'—',
+    destino: rodeosAll.find(r=>String(r.rodeo_id)===String(e.rodeo_destino_id))?.nombre||'—',
+    cant: Number(e.cant_animales)||0, peso: Number(e.peso_prom_kg)||0,
+    precioKg: Number(e.precio_kg_cesion)||0,
+    total: (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0),
+  }));
+
   const egSueldos=sueldoTotalActividad_('recria');
   const eg=ei+egCesionCria+egCompraExt+egAlim+egVet+egSueldos;
-  return { ing, eg, margen: ing-eg, detalle: { ingVentas, ingCesEng, ef, ei, egCesionCria, egCompraExt, egAlim, egVet, egSueldos } };
+  return { ing, eg, margen: ing-eg, detalle: { ingVentas, ingCesEng, ef, ei, egCesionCria, egCompraExt, egAlim, egVet, egSueldos, filasEI: filasEI_R, filasEF: filasEF_R, filesCesRec: filasCesRec_R, filesCesEnv: filasCesEng_R } };
 }
 
 function calcMargenTerminacion_(campana, desde, hasta) {
@@ -7320,24 +7359,37 @@ function calcMargenTerminacion_(campana, desde, hasta) {
 
   // EF — valorizado igual que el dashboard individual (con peso de última pesada)
   let ef=0;
+  const filasEF_E = [];
   rodeosEng.forEach(r=>{
     const stk = stockList.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
     if (!stk||stk.stock<=0) return;
     const pesR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoP = pesR[0] ? Number(pesR[0].peso_prom_kg)||0 : 0;
-    ef += valorizarRodeo_(r, stk.stock, pesoP);
+    const val = valorizarRodeo_(r, stk.stock, pesoP);
+    ef += val;
+    filasEF_E.push({ rodeo: r.nombre, cant: stk.stock, peso: pesoP, precio: pesoP?val/stk.stock/pesoP:val/stk.stock||0, total: val });
   });
 
   const ing=ingVentas+ef;
 
   // EI — saldos iniciales × precio/cabeza
+  const filasEI_E = [];
   const ei=movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id)))
-    .reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
+    .reduce((s,m)=>{
+      const cant=Number(m.cantidad)||0, precio=Number(m.precio_cabeza)||0, total=cant*precio;
+      const rd=rodeosEng.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
+      filasEI_E.push({ fecha: m.fecha, rodeo: rd?.nombre||'—', cant, precio, total });
+      return s+total;
+    },0);
 
   // Cesión recibida desde Recría
   let egCesionRec=0;
+  const filasCesRec_E = [];
+  const rodeosAll_ = (S.catalogs&&S.catalogs.rodeos)||[];
   (S.cache.egresos_recria||[]).filter(e=>e.destino==='Engorde'&&(!desde||String(e.fecha)>=desde)&&(!hasta||String(e.fecha)<=hasta)).forEach(e=>{
-    egCesionRec+=(Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+    const total=(Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+    egCesionRec+=total;
+    filasCesRec_E.push({ fecha: e.fecha, rodeo: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_id))?.nombre||'—', destino: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_destino_id))?.nombre||'—', cant: Number(e.cant_animales)||0, peso: Number(e.peso_prom_kg)||0, precioKg: Number(e.precio_kg_cesion)||0, total });
   });
 
   // Compras de hacienda — filtradas por campaña o fecha (excluyendo saldos iniciales)
@@ -7368,7 +7420,63 @@ function calcMargenTerminacion_(campana, desde, hasta) {
 
   const egSueldos=sueldoTotalActividad_('engorde');
   const eg=ei+egCesionRec+egCompra+egAlim+egVet+egSueldos;
-  return { ing, eg, margen: ing-eg, detalle: { ingVentas, ef, ei, egCesionRec, egCompra, egAlim, egVet, egSueldos } };
+  return { ing, eg, margen: ing-eg, detalle: { ingVentas, ef, ei, egCesionRec, egCompra, egAlim, egVet, egSueldos, filasEI: filasEI_E, filasEF: filasEF_E, filesCesRec: filasCesRec_E } };
+}
+
+// Panel de verificación de valuación — reutilizable para Cría, Recría y Terminación.
+// Muestra EI, Cesiones recibidas, Cesiones enviadas y EF con resumen y detalle expandible.
+function buildVerificacionValuacion_(titulo, detalle, fmFn, idPrefix) {
+  const { filasEI=[], filasEF=[], filesCes=[], filesCesRec=[], filesCesEnv=[] } = detalle || {};
+  const cesEnv  = filesCes.length ? filesCes : (filesCesEnv.length ? filesCesEnv : []);
+  const cesRec  = filesCesRec.length ? filesCesRec : [];
+
+  function tablaFilas_(filas, cols) {
+    if (!filas.length) return '<div style="color:var(--text3);font-size:12px;padding:6px">Sin registros</div>';
+    let t = `<div class="tw" style="margin-top:6px"><table class="dt" style="font-size:12px"><thead><tr>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr></thead><tbody>`;
+    let tot = 0;
+    filas.forEach(f => {
+      t += `<tr>${cols.map(c => {
+        const v = f[c.key];
+        if (c.key==='total') { tot+=Number(v)||0; return `<td class="tr"><strong>${fmFn(v)}</strong></td>`; }
+        if (c.fmt==='num') return `<td class="tc">${fn(v||0)}</td>`;
+        if (c.fmt==='$') return `<td class="tc">$ ${fn(v||0)}</td>`;
+        if (c.fmt==='date') return `<td>${fd(v)}</td>`;
+        return `<td>${v||'—'}</td>`;
+      }).join('')}</tr>`;
+    });
+    t += `<tr style="background:var(--bg2);font-weight:700"><td colspan="${cols.length-1}">TOTAL</td><td class="tr">${fmFn(tot)}</td></tr>`;
+    t += `</tbody></table></div>`;
+    return t;
+  }
+
+  const colsEI   = [{key:'fecha',label:'Fecha',fmt:'date'},{key:'rodeo',label:'Rodeo'},{key:'cant',label:'Cabezas',fmt:'num'},{key:'precio',label:'Precio/cab',fmt:'$'},{key:'total',label:'Total'}];
+  const colsEF   = [{key:'rodeo',label:'Rodeo'},{key:'cant',label:'Cabezas',fmt:'num'},{key:'precio',label:'Precio/cab est.',fmt:'$'},{key:'total',label:'Total'}];
+  const colsCes  = [{key:'fecha',label:'Fecha',fmt:'date'},{key:'rodeo',label:'Rodeo origen'},{key:'destino',label:'Rodeo destino'},{key:'cant',label:'Cab.',fmt:'num'},{key:'peso',label:'Kg prom',fmt:'num'},{key:'precioKg',label:'$/kg',fmt:'$'},{key:'total',label:'Total'}];
+
+  const totEI  = filasEI.reduce((s,f)=>s+f.total,0);
+  const totEF  = filasEF.reduce((s,f)=>s+f.total,0);
+  const totCEn = cesEnv.reduce((s,f)=>s+f.total,0);
+  const totCRe = cesRec.reduce((s,f)=>s+f.total,0);
+
+  let h = `<div class="panel" style="border:1px solid var(--border2)">
+    <div class="panel-title" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="document.getElementById('${idPrefix}-det').classList.toggle('hidden')">
+      🔍 ${titulo} — Verificación de valuación
+      <span style="font-size:12px;color:var(--text3)">▾ expandir / colapsar</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <div style="background:var(--bg2);border-radius:8px;padding:7px 14px;font-size:13px"><span style="color:var(--text3)">EI:</span> <strong>${fmFn(totEI)}</strong> <span style="color:var(--text3);font-size:11px">(${filasEI.length} reg.)</span></div>
+      ${cesRec.length?`<div style="background:var(--bg2);border-radius:8px;padding:7px 14px;font-size:13px"><span style="color:var(--text3)">Ces. recibidas:</span> <strong>${fmFn(totCRe)}</strong> <span style="color:var(--text3);font-size:11px">(${cesRec.length} reg.)</span></div>`:''}
+      ${cesEnv.length?`<div style="background:var(--bg2);border-radius:8px;padding:7px 14px;font-size:13px"><span style="color:var(--text3)">Ces. enviadas:</span> <strong>${fmFn(totCEn)}</strong> <span style="color:var(--text3);font-size:11px">(${cesEnv.length} reg.)</span></div>`:''}
+      <div style="background:var(--bg2);border-radius:8px;padding:7px 14px;font-size:13px"><span style="color:var(--text3)">EF:</span> <strong>${fmFn(totEF)}</strong> <span style="color:var(--text3);font-size:11px">(${filasEF.length} rodeos)</span></div>
+    </div>
+    <div id="${idPrefix}-det" class="hidden">
+      ${filasEI.length?`<div style="font-weight:600;font-size:12.5px;margin-top:8px">📋 Saldo inicial (EI)</div>${tablaFilas_(filasEI, colsEI)}`:''}
+      ${cesRec.length?`<div style="font-weight:600;font-size:12.5px;margin-top:8px">⬇ Cesiones recibidas</div>${tablaFilas_(cesRec, colsCes)}`:''}
+      ${cesEnv.length?`<div style="font-weight:600;font-size:12.5px;margin-top:8px">⬆ Cesiones enviadas</div>${tablaFilas_(cesEnv, colsCes)}`:''}
+      ${filasEF.length?`<div style="font-weight:600;font-size:12.5px;margin-top:8px">📦 Stock final valorizado (EF)</div>${tablaFilas_(filasEF, colsEF)}`:''}
+    </div>
+  </div>`;
+  return h;
 }
 
 function buildMargenBruto() {
@@ -7519,6 +7627,10 @@ function buildMargenBruto() {
         <tr style="background:${mb2}"><td><strong>Suma de los 3</strong></td><td class="tr" style="color:${mc};font-weight:800">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</td></tr>
       </tbody></table></div>
     </div>`;
+
+    h += buildVerificacionValuacion_('🐄 Cría', rCria.detalle, fmMB, 'vv-cria');
+    h += buildVerificacionValuacion_('🌱 Recría', rRec.detalle, fmMB, 'vv-recria');
+    h += buildVerificacionValuacion_('🏭 Terminación', rEng.detalle, fmMB, 'vv-eng');
 
     // Ranking
     const acts = [
