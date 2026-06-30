@@ -352,6 +352,17 @@ function rodeosConPrenadas() {
 function rodeosConPrenadasPorCampo(campoId) {
   return rodeosConPrenadas().filter(r => String(r.campo_id) === String(campoId));
 }
+// Cantidad de terneros nacidos vivos en un rodeo (suma de Pariciones), menos los que
+// ya se destetaron antes — da el "stock de terneros disponibles para destetar".
+// Se usa para alertar si se intenta destetar un rodeo sin nacimientos cargados,
+// o más terneros de los que realmente nacieron (probable falta de carga de Pariciones).
+function ternerosDisponiblesParaDestete_(rodeoId) {
+  const pariciones = (S.cache.pariciones || []).filter(p => String(p.rodeo_id) === String(rodeoId));
+  const nacidos = pariciones.reduce((s, p) => s + (Number(p.nacidos_vivos) || 0), 0);
+  const destetesYa = (S.cache.destetes || []).filter(d => String(d.rodeo_id) === String(rodeoId));
+  const yaDestetados = destetesYa.reduce((s, d) => s + (Number(d.total) || 0), 0);
+  return { nacidos, yaDestetados, disponibles: Math.max(0, nacidos - yaDestetados) };
+}
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
 }
@@ -2401,18 +2412,36 @@ function buildDestetes() {  const _criaTabs = [
     ${rodeosConPrenadas().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene vacas preñadas confirmadas por tacto todavía.</p>' : ''}
     <div class="fgrid">
       <div class="fg"><label>Campo</label>
-        <select id="de-campo" onchange="document.getElementById('de-rodeo').innerHTML = rodeoOptionsHtml(rodeosConPrenadasPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="de-campo" onchange="document.getElementById('de-rodeo').innerHTML = rodeoOptionsHtml(rodeosConPrenadasPorCampo(this.value)); deActualizarAvisoNacimientos_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="de-fecha" value="${today()}"></div>
       <div class="fg"><label>Rodeo</label>
-        <select id="de-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
+        <select id="de-rodeo" onchange="deActualizarAvisoNacimientos_()">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
-      <div class="fg"><label>Machos</label><input type="number" id="de-machos" placeholder="Ej: 60" min="0"></div>
-      <div class="fg"><label>Hembras</label><input type="number" id="de-hembras" placeholder="Ej: 58" min="0"></div>
+      <div class="fg"><label>Machos</label><input type="number" id="de-machos" placeholder="Ej: 60" min="0" oninput="deActualizarAvisoNacimientos_()"></div>
+      <div class="fg"><label>Hembras</label><input type="number" id="de-hembras" placeholder="Ej: 58" min="0" oninput="deActualizarAvisoNacimientos_()"></div>
       <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="de-peso" placeholder="Ej: 180" min="0"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="de-obs" placeholder="Opcional"></div>
     </div>
-    <button class="btn btn-primary" id="de-save" style="margin-top:6px">Registrar destete</button>
+    <div id="de-aviso-nacimientos" style="display:none;margin-top:10px"></div>
+    <div style="border-top:1px dashed var(--border);margin-top:14px;padding-top:14px">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer;margin-bottom:8px">
+        <input type="checkbox" id="de-trasladar-check" onchange="document.getElementById('de-traslado-wrap').style.display=this.checked?'flex':'none'">
+        🐄 Trasladar a Recría en el mismo paso
+      </label>
+      <div id="de-traslado-wrap" class="fgrid" style="display:none">
+        <div class="fg"><label>Campo destino</label>
+          <select id="de-trasl-campo" onchange="document.getElementById('de-trasl-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value).filter(r=>r.actividad==='Recría'))">
+            ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label>Rodeo destino (Recría)</label>
+          <select id="de-trasl-rodeo">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id).filter(r=>r.actividad==='Recría'))}</select>
+        </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--text3);margin-top:4px">Una vez destetado, el ternero ya no está con la madre — biológicamente pasa a ser Recría. Si marcás esto, además del destete se registra automáticamente el Traslado al rodeo elegido.</div>
+    </div>
+    <button class="btn btn-primary" id="de-save" style="margin-top:12px">Registrar destete</button>
   </div>`;
   h += buildEntityTable(items, [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
@@ -2424,7 +2453,36 @@ function buildDestetes() {  const _criaTabs = [
   ], 'destetes', 'destete_id');
   return h;
 }
+window.deActualizarAvisoNacimientos_ = function() {
+  const aviso = document.getElementById('de-aviso-nacimientos');
+  if (!aviso) return;
+  const rodeoId = document.getElementById('de-rodeo')?.value;
+  if (!rodeoId) { aviso.style.display = 'none'; return; }
+  const { nacidos, yaDestetados, disponibles } = ternerosDisponiblesParaDestete_(rodeoId);
+  const machos = Number(document.getElementById('de-machos')?.value) || 0;
+  const hembras = Number(document.getElementById('de-hembras')?.value) || 0;
+  const total = machos + hembras;
+
+  if (nacidos === 0) {
+    aviso.style.display = 'block';
+    aviso.innerHTML = `<div style="background:rgba(200,50,50,0.1);border:1px solid var(--red);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--red);font-weight:600">
+      ⚠ Este rodeo no tiene ningún nacimiento (Parición) registrado todavía. Cargá la Parición antes de destetar, o vas a estar destetando terneros que el sistema no sabe que nacieron.
+    </div>`;
+  } else if (total > disponibles) {
+    aviso.style.display = 'block';
+    aviso.innerHTML = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600">
+      ⚠ Estás destetando ${fn(total)} terneros, pero este rodeo tiene ${fn(disponibles)} disponibles (${fn(nacidos)} nacidos${yaDestetados>0?' − '+fn(yaDestetados)+' ya destetados':''}). Revisá si falta cargar alguna Parición.
+    </div>`;
+  } else {
+    aviso.style.display = 'block';
+    aviso.innerHTML = `<div style="background:var(--green-bg);border:1px solid var(--green);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--green-text)">
+      ✓ ${fn(disponibles)} terneros disponibles para destetar en este rodeo (${fn(nacidos)} nacidos${yaDestetados>0?', '+fn(yaDestetados)+' ya destetados':''}).
+    </div>`;
+  }
+};
+
 function attachDestetesEvents() {
+  deActualizarAvisoNacimientos_();
   const save = document.getElementById('de-save');
   if (save) save.onclick = async () => {
     const machos = Number(document.getElementById('de-machos').value) || 0;
@@ -2440,11 +2498,51 @@ function attachDestetesEvents() {
       observacion: document.getElementById('de-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+
+    // Validación: no permitir destetar más terneros de los que realmente nacieron
+    // (o sin ningún nacimiento registrado) — evita un destete "fantasma" por olvido
+    // de cargar la Parición correspondiente.
+    const { nacidos, disponibles } = ternerosDisponiblesParaDestete_(data.rodeo_id);
+    if (nacidos === 0) {
+      const continuar = confirm('⚠ Este rodeo no tiene ningún nacimiento (Parición) registrado. ¿Seguro que querés registrar el destete igual?\n\nSi todavía no cargaste la Parición, cancelá y cargala primero.');
+      if (!continuar) return;
+    } else if (data.total > disponibles) {
+      const continuar = confirm('⚠ Estás destetando ' + data.total + ' terneros, pero solo hay ' + disponibles + ' disponibles en este rodeo (según las Pariciones cargadas).\n\n¿Seguro que querés continuar igual?');
+      if (!continuar) return;
+    }
+
+    const trasladar = document.getElementById('de-trasladar-check')?.checked;
+    const rodeoDestRecria = document.getElementById('de-trasl-rodeo')?.value;
+    if (trasladar && !rodeoDestRecria) { toast('Elegí el rodeo de Recría destino, o destildá "Trasladar a Recría".', 'err'); return; }
+
     save.disabled = true;
     try {
       await apiCall('create', { body: { entity: 'destetes', data } });
       invalidateCache('destetes');
-      toast('Destete registrado — ' + data.total + ' terneros', 'ok');
+
+      if (trasladar && rodeoDestRecria) {
+        const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_id));
+        const rodeoDestino = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoDestRecria));
+        const movData = {
+          tipo: 'Traslado en bloque',
+          fecha: data.fecha,
+          campo_origen_id: rodeoOrigen ? rodeoOrigen.campo_id : '',
+          rodeo_origen_id: data.rodeo_id,
+          campo_destino_id: rodeoDestino ? rodeoDestino.campo_id : document.getElementById('de-trasl-campo')?.value,
+          rodeo_destino_id: rodeoDestRecria,
+          cantidad: data.total,
+          peso_prom_kg: peso,
+          observaciones: 'Traslado por destete — ' + data.total + ' terneros (' + machos + ' machos, ' + hembras + ' hembras)',
+        };
+        await apiCall('create', { body: { entity: 'movimientos', data: movData } });
+        invalidateCache('movimientos');
+        await loadEntity('movimientos', true);
+        S.stock = null; await loadStock();
+        toast('✓ Destete registrado y trasladado a "' + (rodeoDestino?.nombre || 'Recría') + '"', 'ok');
+      } else {
+        toast('Destete registrado — ' + data.total + ' terneros', 'ok');
+      }
+
       await loadEntity('destetes', true);
       S.dashboard = null;
       S.margenBruto = null;
@@ -3640,7 +3738,10 @@ function buildCesionesCria() {
       </div>
       <div class="fg"><label>Cantidad</label><input type="number" id="ces-c-cant" min="1" placeholder="Ej: 150"></div>
       <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="ces-c-peso" min="0" step="0.1" placeholder="Ej: 180"></div>
-      <div class="fg"><label>Precio cesión ($/kg)</label><input type="number" id="ces-c-precio" min="0" step="1" placeholder="Ej: 2500" oninput="cesCriaCalcTotal_()"></div>
+      <div class="fg"><label>Precio cesión ($/kg)</label>
+        <input type="number" id="ces-c-precio" min="0" step="1" placeholder="Ej: 2500" oninput="cesCriaCalcTotal_()">
+        <button type="button" class="btn btn-ghost btn-sm" id="ces-c-usar-precio-mes" style="margin-top:4px;font-size:11px;padding:3px 8px">💲 Usar precio del mes</button>
+      </div>
       <div class="fg"><label>Total estimado</label><div id="ces-c-total" style="font-size:15px;font-weight:700;color:var(--green);padding:9px 0">—</div></div>
       <div class="fg" style="min-width:200px"><label>Observaciones</label><input type="text" id="ces-c-obs" placeholder="Opcional"></div>
     </div>
@@ -3692,6 +3793,20 @@ function cesCriaCalcTotal_() {
 function attachCesionesCriaEvents() {
   document.getElementById('ces-c-cant')?.addEventListener('input', cesCriaCalcTotal_);
   document.getElementById('ces-c-peso')?.addEventListener('input', cesCriaCalcTotal_);
+
+  const btnPrecioMes = document.getElementById('ces-c-usar-precio-mes');
+  if (btnPrecioMes) btnPrecioMes.onclick = () => {
+    const cat = document.getElementById('ces-c-cat')?.value || '';
+    const fecha = document.getElementById('ces-c-fecha')?.value;
+    const p = preciosValGet_(fecha);
+    const mapaKg = { ternero: 'ternero', ternera: 'ternera' };
+    const valor = p[mapaKg[cat]] || 0;
+    if (!valor) { toast('No hay precio por kg cargado para "' + cat + '" en Precios de Valorización para esa fecha.', 'err'); return; }
+    document.getElementById('ces-c-precio').value = valor;
+    toast('Precio cargado desde Valorización de Stock — revisalo antes de guardar', 'ok');
+    cesCriaCalcTotal_();
+  };
+
   const btn = document.getElementById('ces-c-save');
   if (!btn) return;
   btn.onclick = async () => {
@@ -3761,7 +3876,10 @@ function buildCesionesRecria() {
       </div>
       <div class="fg"><label>Cantidad</label><input type="number" id="ces-r-cant" min="1" placeholder="Ej: 120" oninput="cesRecriaCalcTotal_()"></div>
       <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="ces-r-peso" min="0" step="0.1" placeholder="Ej: 250" oninput="cesRecriaCalcTotal_()"></div>
-      <div class="fg"><label>Precio cesión ($/kg)</label><input type="number" id="ces-r-precio" min="0" step="1" placeholder="Ej: 3500" oninput="cesRecriaCalcTotal_()"></div>
+      <div class="fg"><label>Precio cesión ($/kg)</label>
+        <input type="number" id="ces-r-precio" min="0" step="1" placeholder="Ej: 3500" oninput="cesRecriaCalcTotal_()">
+        <button type="button" class="btn btn-ghost btn-sm" id="ces-r-usar-precio-mes" style="margin-top:4px;font-size:11px;padding:3px 8px">💲 Usar precio del mes</button>
+      </div>
       <div class="fg"><label>Total estimado</label><div id="ces-r-total" style="font-size:15px;font-weight:700;color:var(--green);padding:9px 0">—</div></div>
       <div class="fg" style="min-width:200px"><label>Observaciones</label><input type="text" id="ces-r-obs" placeholder="Opcional"></div>
     </div>
@@ -3805,6 +3923,22 @@ function cesRecriaCalcTotal_() {
 }
 
 function attachCesionesRecriaEvents() {
+  const btnPrecioMes = document.getElementById('ces-r-usar-precio-mes');
+  if (btnPrecioMes) btnPrecioMes.onclick = () => {
+    const origenId = document.getElementById('ces-r-origen')?.value;
+    const fecha = document.getElementById('ces-r-fecha')?.value;
+    const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(origenId));
+    if (!rodeoOrigen) { toast('Elegí primero el rodeo origen.', 'err'); return; }
+    const cat = (rodeoOrigen.categoria || '').toLowerCase().trim();
+    const p = preciosValGet_(fecha);
+    const mapaKg = { ternero:'ternero', ternera:'ternera', vaquillona:'vaquillona', 'vaquillona venta':'vaquillona_venta', novillito:'novillito', novillo:'novillo', 'vaca venta':'vaca_venta' };
+    const valor = p[mapaKg[cat]] || 0;
+    if (!valor) { toast('No hay precio por kg cargado para "' + (rodeoOrigen.categoria||'—') + '" en Precios de Valorización para esa fecha.', 'err'); return; }
+    document.getElementById('ces-r-precio').value = valor;
+    toast('Precio cargado desde Valorización de Stock — revisalo antes de guardar', 'ok');
+    cesRecriaCalcTotal_();
+  };
+
   const btn = document.getElementById('ces-r-save');
   if (!btn) return;
   btn.onclick = async () => {
