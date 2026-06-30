@@ -4853,7 +4853,7 @@ function egKgIngreso_(rodeoId) {
 
   // Prioridad 3: parseo de "XXX kg" en las observaciones del movimiento de entrada
   if (movEntrada) {
-    const match = (movEntrada.observaciones || '').match(/(\d+)\s*kg/);
+    const match = String(movEntrada.observaciones || '').match(/(\d+)\s*kg/);
     if (match) return Number(match[1]);
   }
   return 0;
