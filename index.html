@@ -2845,7 +2845,7 @@ function buildMovimientos() {
 
   return h;
 }
-function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId, rodeoId) {
+function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId, rodeoId, soloPendientesParam) {
   let movsF = movimientos;
   if (campoId) movsF = movsF.filter(m => String(m.campo_origen_id) === String(campoId) || String(m.campo_destino_id) === String(campoId));
   if (rodeoId) movsF = movsF.filter(m => String(m.rodeo_origen_id) === String(rodeoId) || String(m.rodeo_destino_id) === String(rodeoId));
@@ -2950,7 +2950,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
     </div>`;
   }
 
-  const soloPendientes = document.getElementById('mv-hist-solo-pendientes')?.checked;
+  const soloPendientes = soloPendientesParam || false;
   const filasVista = soloPendientes ? filas.filter(f => f.sinCosto) : filas;
 
   h += `<div class="tw"><table class="dt"><thead><tr>`;
@@ -3006,9 +3006,15 @@ window.sortHistorialMov = function(key) {
 window.renderHistorialFiltrado = function() {
   const campoId = document.getElementById('mv-hist-filtro-campo')?.value || '';
   const rodeoId = document.getElementById('mv-hist-filtro-rodeo')?.value || '';
+  // Leer el estado del checkbox ANTES de reemplazar el HTML — al reconstruir innerHTML
+  // el checkbox se destruye y recrea desmarcado, así que hay que capturarlo primero.
+  const soloPendientes = document.getElementById('mv-hist-solo-pendientes')?.checked || false;
   const el = document.getElementById('mv-historial-tabla');
   if (el) {
-    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], S.cache.ventas || [], S.corralesVentas || [], campoId, rodeoId);
+    el.innerHTML = buildMovimientosHistorial_(S.cache.movimientos || [], S.cache.ventas || [], S.corralesVentas || [], campoId, rodeoId, soloPendientes);
+    // Restaurar el estado del checkbox después de reconstruir el HTML
+    const cb = document.getElementById('mv-hist-solo-pendientes');
+    if (cb) cb.checked = soloPendientes;
     attachTableDeleteEvents('movimientos', 'movimiento_id');
     attachTableDeleteEvents('ventas', 'venta_id');
   }
