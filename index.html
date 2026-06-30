@@ -4671,13 +4671,14 @@ function egIngVentas_(rodeoId) {
   }, 0);
 }
 function egFechaIngreso_(rodeoId) {
-  // Solo "Saldo inicial" define la fecha de ingreso al corral.
-  // Los traslados posteriores distorsionan la GDP al acortar los días.
+  // Preferimos "Saldo inicial" para la fecha de ingreso (no distorsiona la GDP).
+  // Si el corral no tiene Saldo inicial (ej: ingresó por traslado directo desde otro
+  // rodeo, sin un Saldo inicial separado), usamos la fecha del primer Traslado recibido.
   const movs = (S.cache.movimientos || [])
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
   if (movs.length) return movs[0].fecha;
-  // Fallback: cualquier movimiento si no hay Saldo inicial
+  // Fallback: cualquier movimiento de entrada (traslado o saldo inicial) al rodeo
   const todos = (S.cache.movimientos || [])
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
@@ -4687,7 +4688,7 @@ function egKgIngreso_(rodeoId) {
   // Primero intentamos de la config
   const cfg = egConfig_(rodeoId);
   if (cfg.kgIngreso) return Number(cfg.kgIngreso);
-  // Fallback: observaciones del primer movimiento de Saldo inicial
+  // Fallback: observaciones del primer movimiento de entrada (Saldo inicial o Traslado)
   const movs = (S.cache.movimientos || [])
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
@@ -4701,9 +4702,15 @@ function egKgIngreso_(rodeoId) {
   return 0;
 }
 function egCantIngresada_(rodeoId) {
-  return (S.cache.movimientos || [])
-    .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
+  const movs = S.cache.movimientos || [];
+  // Animales ingresados al corral = Saldo inicial + Traslados recibidos
+  // (un corral de Terminación puede recibir animales directamente por traslado,
+  // sin pasar por un Saldo inicial separado).
+  const saldos = movs.filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
+  const traslados = movs.filter(m => String(m.rodeo_destino_id) === String(rodeoId) && (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual'))
+    .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
+  return saldos + traslados;
 }
 function egKgIngresados_(rodeoId) {
   return egCantIngresada_(rodeoId) * egKgIngreso_(rodeoId);
