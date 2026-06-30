@@ -9766,8 +9766,9 @@ function openEditModal(entity, idCol, id) {
   const items = S.cache[entity] || (S.catalogs && catalogMap[entity] ? S.catalogs[catalogMap[entity]] : []) || [];
   const item = items.find(i => String(i[idCol]) === String(id));
   if (!item) { toast('No se encontró el registro.', 'err'); return; }
-  // Para Saldo inicial: asegurarse que precio_cabeza siempre esté disponible para editar
-  if (entity === 'movimientos' && item.tipo === 'Saldo inicial' && !('precio_cabeza' in item)) {
+  // Asegurarse que precio_cabeza siempre esté disponible para editar, incluso en
+  // movimientos viejos cargados antes de habilitar este campo para traslados.
+  if (entity === 'movimientos' && !('precio_cabeza' in item)) {
     item.precio_cabeza = 0;
   }
   const keys = Object.keys(item).filter(k => k !== idCol);
@@ -9840,7 +9841,7 @@ function openEditModal(entity, idCol, id) {
       toast('Registro actualizado', 'ok');
       await loadEntity(entity, true);
       await loadDashboard();
-      if (entity === 'movimientos') { S.stock = null; await loadStock(); }
+      if (entity === 'movimientos') { S.stock = null; await loadStock(); S.margenBruto = null; }
       if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
       if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
       if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
