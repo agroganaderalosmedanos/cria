@@ -7763,8 +7763,12 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
 
   function getCat(r) {
     const c = String(r.categoria || '').trim();
+    const cLower = c.toLowerCase();
+    // Las categorías "de venta" (ej: "vaca venta", "vaquillona venta") son categorías propias,
+    // no deben agruparse dentro de su categoría base por matching de substring.
+    if (cLower.indexOf('venta') !== -1) return c || 'Otros';
     for (var i=0; i<CATS.length; i++) {
-      if (c.toLowerCase().indexOf(CATS[i].toLowerCase()) !== -1) return CATS[i];
+      if (cLower.indexOf(CATS[i].toLowerCase()) !== -1) return CATS[i];
     }
     return c || 'Otros';
   }
@@ -8048,7 +8052,9 @@ function attachStockHaciendaEvents() {
   function calcConFiltro_(p) {
     let data = calcStockHacienda_(p.desde, p.hasta, p.campoId, p.mensual);
     if (p.catFiltro) {
-      data = { ...data, filas: Object.fromEntries(Object.entries(data.filas).filter(function([k]){ return k === p.catFiltro; })) };
+      const norm_ = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const objetivo = norm_(p.catFiltro);
+      data = { ...data, filas: Object.fromEntries(Object.entries(data.filas).filter(function([k]){ return norm_(k) === objetivo; })) };
     }
     return data;
   }
