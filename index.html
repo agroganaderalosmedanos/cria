@@ -2861,11 +2861,22 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   if (rodeoId) corralesF = [];
   else if (campoId) corralesF = corralesF.filter(v => norm_(CORRAL_CAMPO_NOMBRE_[String(v.cid)]) === nombreCampoSeleccionado);
 
+  const rodeosPorId_ = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
   // Normalizamos las 3 fuentes a una misma forma de fila, así se pueden ordenar todas juntas por cualquier columna
   let filas = [
     ...movsF.map(m => {
       const tieneCosto = (Number(m.precio_cabeza) || 0) > 0 || ((Number(m.precio_kg) || 0) > 0 && (Number(m.peso_prom_kg) || 0) > 0);
       const esEntrada = m.tipo === 'Saldo inicial' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual';
+      // Solo marcar "sin costo" si el traslado cruza entre actividades distintas
+      // (Cría→Recría, Recría→Terminación) — los traslados internos dentro de la misma
+      // actividad no necesitan precio porque no afectan el Margen Bruto de ninguna actividad.
+      const esCesionInterActividad = (() => {
+        if (m.tipo === 'Saldo inicial') return true; // saldo inicial siempre necesita precio
+        const or = rodeosPorId_[String(m.rodeo_origen_id)];
+        const de = rodeosPorId_[String(m.rodeo_destino_id)];
+        if (!or || !de) return false;
+        return or.actividad !== de.actividad;
+      })();
       return {
         fecha: m.fecha || '',
         tipoLabel: m.tipo, tipoClass: m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green',
@@ -2877,7 +2888,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
         precio_cabeza: Number(m.precio_cabeza) || 0,
         precio_kg: Number(m.precio_kg) || 0,
         peso_prom_kg: Number(m.peso_prom_kg) || 0,
-        sinCosto: esEntrada && !tieneCosto,
+        sinCosto: esEntrada && !tieneCosto && esCesionInterActividad,
         entity: 'movimientos', idCol: 'movimiento_id', id: m.movimiento_id, editable: true,
       };
     }),
@@ -3752,6 +3763,41 @@ function buildCesionesCria() {
     <button class="btn btn-primary" id="ces-c-save" style="margin-top:8px">💾 Registrar cesión</button>
   </div>`;
 
+  // Traslados sin precio (valorización pendiente)
+  const sinPrecio = cesiones.filter(m => !Number(m.precio_kg) && !Number(m.precio_cabeza));
+  if (sinPrecio.length) {
+    h += `<div class="panel" style="border:2px solid var(--gold);background:var(--gold-bg);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--gold-text)">⚠ ${sinPrecio.length} cesión${sinPrecio.length>1?'es':''} Cría→Recría sin precio $/kg</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">El Margen Bruto las valoriza automáticamente con el precio del mes. Podés fijar el precio real acá:</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Origen</th><th>Destino</th><th class="tc">Cant.</th><th class="tc">Peso</th><th>Precio $/kg</th>
+      </tr></thead><tbody>`;
+    sinPrecio.forEach(m => {
+      const or = rodeosPorId[String(m.rodeo_origen_id)];
+      const de = rodeosPorId[String(m.rodeo_destino_id)];
+      const p = preciosValGet_(m.fecha);
+      const cat = (or?.categoria||'ternero').toLowerCase();
+      const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
+      const sugerido = p[mapaKg[cat]]||0;
+      h += `<tr>
+        <td>${fd(m.fecha)}</td>
+        <td>${or?.nombre||'—'}</td>
+        <td>${de?.nombre||'—'}</td>
+        <td class="tc">${fn(m.cantidad)}</td>
+        <td class="tc">${m.peso_prom_kg?fn(m.peso_prom_kg)+' kg':'—'}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" class="ces-c-precio-rapido" data-mov-id="${m.movimiento_id}" value="${sugerido||''}" placeholder="$/kg" style="width:90px;font-size:12px;padding:3px 6px">
+            <button class="btn btn-primary btn-sm ces-c-fijar-precio" data-mov-id="${m.movimiento_id}" style="font-size:11px;padding:4px 10px">✓ Fijar</button>
+          </div>
+        </td>
+      </tr>`;
+    });
+    h += `</tbody></table></div>
+      <button class="btn btn-secondary" id="ces-c-fijar-todos" style="margin-top:8px;font-size:12px">✓ Fijar todos con precio sugerido</button>
+    </div>`;
+  }
+
   // Historial
   h += `<div class="section-label">Historial de cesiones Cría → Recría</div>`;
   if (!cesiones.length) {
@@ -3834,7 +3880,7 @@ function attachCesionesCriaEvents() {
         campo_destino_id: (S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(destino))?.campo_id||'',
         cantidad: cant,
         peso_prom_kg: peso,
-        precio_cabeza: precio, // guardamos precio/kg en precio_cabeza para cesiones
+        precio_kg: precio,
         observaciones: obs || 'Cesión Cría → Recría',
       }}});
       invalidateCache('movimientos');
@@ -3843,6 +3889,37 @@ function attachCesionesCriaEvents() {
       render();
     } catch(err) { toast(err.message, 'err'); }
     finally { btn.disabled=false; btn.textContent='💾 Registrar cesión'; }
+  };
+
+  // Fijar precio rápido en cesiones Cría→Recría sin precio
+  async function fijarPrecioCesionCria_(movId, precio) {
+    if (!precio||precio<=0) { toast('Ingresá un precio $/kg.','err'); return; }
+    await apiCall('update', { body: { entity: 'movimientos', id: movId, data: { precio_kg: precio, precio_cabeza: 0 } } });
+    invalidateCache('movimientos');
+    await loadEntity('movimientos', true);
+    S.margenBruto = null;
+  }
+  document.querySelectorAll('.ces-c-fijar-precio').forEach(b => {
+    b.onclick = async () => {
+      const movId = b.dataset.movId;
+      const precio = Number(document.querySelector('.ces-c-precio-rapido[data-mov-id="'+movId+'"]')?.value)||0;
+      b.disabled=true; b.textContent='⏳...';
+      try { await fijarPrecioCesionCria_(movId, precio); toast('Precio fijado','ok'); render(); }
+      catch(e) { toast(e.message,'err'); b.disabled=false; b.textContent='✓ Fijar'; }
+    };
+  });
+  const btnFijarTodos = document.getElementById('ces-c-fijar-todos');
+  if (btnFijarTodos) btnFijarTodos.onclick = async () => {
+    const btns = document.querySelectorAll('.ces-c-fijar-precio');
+    btnFijarTodos.disabled=true; btnFijarTodos.textContent='⏳...';
+    let ok=0, err=0;
+    for (const b of btns) {
+      const movId = b.dataset.movId;
+      const precio = Number(document.querySelector('.ces-c-precio-rapido[data-mov-id="'+movId+'"]')?.value)||0;
+      try { await fijarPrecioCesionCria_(movId, precio); ok++; } catch(e) { err++; }
+    }
+    toast('✓ '+ok+' actualizados'+(err?', '+err+' con error':''), ok>0?'ok':'err');
+    render();
   };
 }
 
@@ -3889,6 +3966,57 @@ function buildCesionesRecria() {
     </div>
     <button class="btn btn-primary" id="ces-r-save" style="margin-top:8px">💾 Registrar cesión</button>
   </div>`;
+
+  // Detectar traslados Recría→Engorde que no tienen su registro en egresos_recria
+  const movsTodos = S.cache.movimientos || [];
+  const trasladosHuerfanos = movsTodos.filter(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+    const or = rodeosPorId[String(m.rodeo_origen_id)];
+    const de = rodeosPorId[String(m.rodeo_destino_id)];
+    if (!or || !de) return false;
+    if (or.actividad !== 'Recría') return false;
+    if (de.actividad !== 'Engorde') return false;
+    // Verificar que no tenga ya su registro en egresos_recria
+    return !(S.cache.egresos_recria||[]).some(e =>
+      String(e.rodeo_id) === String(m.rodeo_origen_id) &&
+      String(e.rodeo_destino_id) === String(m.rodeo_destino_id) &&
+      String(e.fecha) === String(m.fecha) &&
+      Number(e.cant_animales) === Number(m.cantidad)
+    );
+  });
+
+  if (trasladosHuerfanos.length) {
+    h += `<div class="panel" style="border:2px solid var(--gold);background:var(--gold-bg);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--gold-text)">⚠ ${trasladosHuerfanos.length} traslado${trasladosHuerfanos.length>1?'s':''} Recría→Terminación sin registro de cesión</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">Estos traslados mueven el stock correctamente, pero no tienen su registro contable de cesión (sin precio/kg). El Margen Bruto los incluye con valorización automática del mes. Podés regularizarlos acá para fijar el precio real.</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th><th class="tc">Cant.</th><th class="tc">Peso</th><th></th>
+      </tr></thead><tbody>`;
+    trasladosHuerfanos.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).forEach(m => {
+      const or = rodeosPorId[String(m.rodeo_origen_id)];
+      const de = rodeosPorId[String(m.rodeo_destino_id)];
+      const p = preciosValGet_(m.fecha);
+      const cat = (or?.categoria||'novillo').toLowerCase();
+      const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo','vaca venta':'vaca_venta'};
+      const precioSugerido = Number(m.precio_kg)||Number(m.precio_cabeza)||p[mapaKg[cat]]||0;
+      h += `<tr>
+        <td>${fd(m.fecha)}</td>
+        <td>${or?.nombre||'—'}</td>
+        <td>${de?.nombre||'—'}</td>
+        <td class="tc">${fn(m.cantidad)}</td>
+        <td class="tc">${m.peso_prom_kg?fn(m.peso_prom_kg)+' kg':'—'}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" class="ces-huerfano-precio" data-mov-id="${m.movimiento_id}" placeholder="$/kg" value="${precioSugerido||''}" style="width:90px;font-size:12px;padding:3px 6px">
+            <button class="btn btn-primary btn-sm ces-regularizar" data-mov-id="${m.movimiento_id}" style="font-size:11px;padding:4px 10px">✓ Regularizar</button>
+          </div>
+        </td>
+      </tr>`;
+    });
+    h += `</tbody></table></div>
+      <button class="btn btn-secondary" id="ces-regularizar-todos" style="margin-top:8px;font-size:12px">✓ Regularizar todos con precio sugerido</button>
+    </div>`;
+  }
 
   h += `<div class="section-label">Historial de cesiones Recría → Terminación</div>`;
   if (!egresos.length) {
@@ -4011,6 +4139,57 @@ function attachCesionesRecriaEvents() {
       render();
     } catch(err) { toast(err.message, 'err'); }
     finally { btn.disabled=false; btn.textContent='💾 Registrar cesión'; }
+  };
+
+  // Handler para regularizar traslados huérfanos individualmente
+  async function regularizarTraslado_(movId, precio) {
+    const movs = S.cache.movimientos || [];
+    const m = movs.find(x => String(x.movimiento_id) === String(movId));
+    if (!m) { toast('No se encontró el traslado.', 'err'); return; }
+    if (!precio || precio <= 0) { toast('Ingresá un precio $/kg antes de regularizar.', 'err'); return; }
+    const rodeoOr = rodeosTodos().find(r => String(r.rodeo_id) === String(m.rodeo_origen_id));
+    await apiCall('create', { body: { entity: 'egresos_recria', data: {
+      fecha: m.fecha,
+      rodeo_id: m.rodeo_origen_id,
+      campo_id: rodeoOr?.campo_id || '',
+      destino: 'Engorde',
+      rodeo_destino_id: m.rodeo_destino_id,
+      cant_animales: Number(m.cantidad) || 0,
+      peso_prom_kg: Number(m.peso_prom_kg) || 0,
+      precio_kg_cesion: precio,
+      observaciones: 'Regularización de traslado existente',
+    }}});
+    invalidateCache('egresos_recria');
+    await loadEntity('egresos_recria', true);
+    S.margenBruto = null;
+  }
+
+  document.querySelectorAll('.ces-regularizar').forEach(b => {
+    b.onclick = async () => {
+      const movId = b.dataset.movId;
+      const precio = Number(document.querySelector('.ces-huerfano-precio[data-mov-id="'+movId+'"]')?.value) || 0;
+      b.disabled = true; b.textContent = '⏳...';
+      try {
+        await regularizarTraslado_(movId, precio);
+        toast('Traslado regularizado', 'ok');
+        render();
+      } catch(err) { toast(err.message, 'err'); b.disabled=false; b.textContent='✓ Regularizar'; }
+    };
+  });
+
+  const btnTodos = document.getElementById('ces-regularizar-todos');
+  if (btnTodos) btnTodos.onclick = async () => {
+    const btns = document.querySelectorAll('.ces-regularizar');
+    btnTodos.disabled = true; btnTodos.textContent = '⏳ Regularizando...';
+    let ok = 0, err = 0;
+    for (const b of btns) {
+      const movId = b.dataset.movId;
+      const precio = Number(document.querySelector('.ces-huerfano-precio[data-mov-id="'+movId+'"]')?.value) || 0;
+      try { await regularizarTraslado_(movId, precio); ok++; }
+      catch(e) { err++; }
+    }
+    toast('✓ ' + ok + ' regularizados' + (err ? ', ' + err + ' con error' : ''), ok>0?'ok':'err');
+    render();
   };
 }
 
@@ -6968,10 +7147,17 @@ function calcMargenCria_(campana, desde, hasta) {
   let ingCesiones = 0;
   cesiones.forEach(m => {
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_cabeza)||0;
-    const pesoR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const peso = Number(m.peso_prom_kg)||Number(pesoR[0]?.peso_prom_kg)||0;
-    ingCesiones += cant * peso * precioKg;
+    const peso = Number(m.peso_prom_kg)||(()=>{
+      const pp=pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return Number(pp[0]?.peso_prom_kg)||0;
+    })();
+    // Priorizar precio_kg, luego precio_cabeza (como $/kg), luego valorización del mes
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    if (precioKg) { ingCesiones += cant * peso * precioKg; return; }
+    const p = preciosValGet_(m.fecha);
+    const cat = (rodeosPorId[String(m.rodeo_origen_id)]?.categoria||'ternero').toLowerCase();
+    const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
+    ingCesiones += cant * peso * (p[mapaKg[cat]]||0);
   });
 
   // EF — stock valorizado actual
@@ -7026,11 +7212,42 @@ function calcMargenRecria_(campana, desde, hasta) {
   let ingVentas=0;
   ventas.forEach(v=>{ ingVentas+=Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0; });
 
-  // Cesiones a Terminación con precio $/kg
-  let ingCesEng=0;
-  egresos.forEach(e=>{
-    const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precio=Number(e.precio_kg_cesion)||0;
-    ingCesEng += cant*peso*precio;
+  // Cesiones a Terminación:
+  // 1) Las registradas en egresos_recria (módulo de Cesiones)
+  // 2) Traslados directos Recría→Engorde cargados como Traslado sin pasar por el módulo
+  //    (detectados por la actividad de los rodeos: origen Recría, destino Engorde)
+  let ingCesEng = 0;
+  egresos.forEach(e => {
+    const cant = Number(e.cant_animales)||0, peso = Number(e.peso_prom_kg)||0, precio = Number(e.precio_kg_cesion)||0;
+    ingCesEng += cant * peso * precio;
+  });
+  // Traslados directos Recría→Engorde sin egresos_recria correspondiente
+  const rodeosMap_ = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
+  movs.filter(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+    const or = rodeosMap_[String(m.rodeo_origen_id)];
+    const de = rodeosMap_[String(m.rodeo_destino_id)];
+    if (!or || !de) return false;
+    if (!(or.actividad==='Recría') || !(de.actividad==='Engorde')) return false;
+    if (desde && String(m.fecha) < desde) return false;
+    if (hasta && String(m.fecha) > hasta) return false;
+    // Excluir si ya tiene registro en egresos_recria para evitar doble conteo
+    return !egresos.some(e =>
+      String(e.rodeo_id) === String(m.rodeo_origen_id) &&
+      String(e.rodeo_destino_id) === String(m.rodeo_destino_id) &&
+      String(e.fecha) === String(m.fecha) &&
+      Number(e.cant_animales) === Number(m.cantidad)
+    );
+  }).forEach(m => {
+    const cant = Number(m.cantidad)||0;
+    const peso = Number(m.peso_prom_kg)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    // Si tiene precio explícito, usarlo; si no, valorizar con precio del mes
+    if (precioKg && peso) { ingCesEng += cant * peso * precioKg; return; }
+    const p = preciosValGet_(m.fecha);
+    const cat = (rodeosMap_[String(m.rodeo_origen_id)]?.categoria||'novillo').toLowerCase();
+    const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo','vaca venta':'vaca_venta'};
+    ingCesEng += cant * peso * (p[mapaKg[cat]]||0);
   });
 
   // EF valorizado
@@ -7042,7 +7259,9 @@ function calcMargenRecria_(campana, desde, hasta) {
   // EI — saldos iniciales de recría
   const ei = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id))).reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
 
-  // Cesión recibida desde Cría (traslados con precio/kg)
+  // Cesión recibida desde Cría:
+  // 1) Traslados con precio/kg explícito (precio_kg o precio_cabeza usado como $/kg)
+  // 2) Traslados sin precio → valorizar automáticamente con precio del mes
   const rodeosPorId = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
   const pesadas = S.cache.pesadas||[];
   let egCesionCria=0;
@@ -7053,10 +7272,18 @@ function calcMargenRecria_(campana, desde, hasta) {
     return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&
       (!desde||String(m.fecha)>=desde)&&(!hasta||String(m.fecha)<=hasta);
   }).forEach(m=>{
-    const cant=Number(m.cantidad)||0, precioKg=Number(m.precio_cabeza)||0;
-    const pesoR=pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const peso=Number(m.peso_prom_kg)||Number(pesoR[0]?.peso_prom_kg)||0;
-    egCesionCria+=cant*peso*precioKg;
+    const cant=Number(m.cantidad)||0;
+    const peso=Number(m.peso_prom_kg)||0;
+    // Priorizar precio_kg, luego precio_cabeza (como $/kg en cesiones), luego valorización del mes
+    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    if (precioKg && peso) { egCesionCria += cant*peso*precioKg; return; }
+    const or=rodeosPorId[String(m.rodeo_origen_id)];
+    const p=preciosValGet_(m.fecha);
+    const cat=(or?.categoria||'ternero').toLowerCase();
+    const mapaKg={ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo'};
+    const pesadasO=pesadas.filter(p2=>String(p2.rodeo_id)===String(m.rodeo_origen_id)&&String(p2.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoFinal=peso||Number(pesadasO[0]?.peso_prom_kg)||0;
+    egCesionCria += cant*pesoFinal*(p[mapaKg[cat]]||0);
   });
 
   let egCompraExt=0;
@@ -9976,10 +10203,10 @@ function openEditModal(entity, idCol, id) {
         <div class="modal-header"><h3>Editar registro</h3><button class="modal-close" id="edit-modal-close">✕</button></div>
         <div class="modal-body">
           <div class="fgrid">${fieldsHtml}</div>
-          ${entity === 'movimientos' && (item.tipo === 'Traslado en bloque' || item.tipo === 'Traslado individual') ? `
+          ${entity === 'movimientos' && (item.tipo === 'Saldo inicial' || item.tipo === 'Traslado en bloque' || item.tipo === 'Traslado individual') ? `
           <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
             <button type="button" class="btn btn-ghost btn-sm" id="edit-modal-usar-precio-mes" style="font-size:12px;padding:4px 10px">💲 Completar precio desde Valorización de Stock</button>
-            <span style="font-size:11px;color:var(--text3);margin-left:8px">Para traslados internos sin precio real de compra — usa el precio de mercado del mes del movimiento</span>
+            <span style="font-size:11px;color:var(--text3);margin-left:8px">${item.tipo === 'Saldo inicial' ? 'Usa el precio del mes de la fecha del saldo inicial según la categoría del rodeo' : 'Para traslados internos sin precio real de compra — usa el precio de mercado del mes'}</span>
           </div>` : ''}
         </div>
         <div class="modal-footer">
@@ -10003,23 +10230,49 @@ function openEditModal(entity, idCol, id) {
       if (!rodeo) { toast('No se pudo identificar el rodeo destino.', 'err'); return; }
       const cat = (rodeo.categoria || '').toLowerCase().trim();
       const p = preciosValGet_(fecha);
-      const mapaKg = { ternero:'ternero', ternera:'ternera', vaquillona:'vaquillona', 'vaquillona venta':'vaquillona_venta', novillito:'novillito', novillo:'novillo', 'vaca venta':'vaca_venta' };
-      const mapaCab = { vaca:'vaca_cab', toro:'toro', torito:'torito' };
-      const valorKg = p[mapaKg[cat]] || 0;
-      const valorCab = p[mapaCab[cat]] || 0;
-      // Priorizar $/kg si existe para esa categoría, sino $/cabeza
-      const precioKgEl = document.getElementById('edit-precio_kg');
+      const mapaKg  = { ternero:'ternero', ternera:'ternera', vaquillona:'vaquillona', 'vaquillona venta':'vaquillona_venta', novillito:'novillito', novillo:'novillo', 'vaca venta':'vaca_venta' };
+      const mapaCab = { vaca:'vaca', toro:'toro', torito:'torito', ternero:'ternero_cab', ternera:'ternera_cab', vaquillona:'vaquillona_cab', 'vaquillona venta':'vaquillona_venta_cab', novillito:'novillito_cab', novillo:'novillo_cab', 'vaca venta':'vaca_venta_cab' };
+      const precioKgEl  = document.getElementById('edit-precio_kg');
       const precioCabEl = document.getElementById('edit-precio_cabeza');
-      if (valorKg > 0 && precioKgEl) {
-        precioKgEl.value = valorKg;
-        if (precioCabEl) precioCabEl.value = 0;
-        toast('Precio/kg cargado desde Valorización de Stock (' + cat + ' — ' + fd(fecha) + ')', 'ok');
-      } else if (valorCab > 0 && precioCabEl) {
-        precioCabEl.value = valorCab;
-        if (precioKgEl) precioKgEl.value = 0;
-        toast('Precio/cabeza cargado desde Valorización de Stock (' + cat + ' — ' + fd(fecha) + ')', 'ok');
+
+      if (item.tipo === 'Saldo inicial') {
+        // Saldo inicial → priorizar $/cabeza
+        const valorCab = p[mapaCab[cat]] || 0;
+        const valorKg  = p[mapaKg[cat]]  || 0;
+        if (valorCab > 0 && precioCabEl) {
+          precioCabEl.value = valorCab;
+          if (precioKgEl) precioKgEl.value = 0;
+          toast('Precio/cabeza cargado: ' + fn(valorCab) + ' (' + cat + ' — ' + fd(fecha) + ')', 'ok');
+        } else if (valorKg > 0) {
+          // Categorías que solo tienen $/kg → estimamos $/cabeza con el peso si está disponible
+          const peso = Number(document.getElementById('edit-peso_prom_kg')?.value) || 0;
+          if (peso > 0 && precioCabEl) {
+            precioCabEl.value = Math.round(valorKg * peso);
+            if (precioKgEl) precioKgEl.value = 0;
+            toast('Precio/cabeza estimado: ' + fn(valorKg) + ' $/kg × ' + fn(peso) + ' kg = ' + fn(Math.round(valorKg*peso)) + ' — verificalo', 'ok');
+          } else if (precioKgEl) {
+            precioKgEl.value = valorKg;
+            if (precioCabEl) precioCabEl.value = 0;
+            toast('Cargado ' + fn(valorKg) + ' $/kg — si preferís $/cabeza, ingresá el peso primero y volvé a tocar el botón', 'ok');
+          }
+        } else {
+          toast('No hay precio cargado para "' + (rodeo.categoria||'—') + '" en Precios de Valorización para esa fecha.', 'err');
+        }
       } else {
-        toast('No hay precio cargado para "' + (rodeo.categoria||'—') + '" en Precios de Valorización para esa fecha.', 'err');
+        // Traslados → priorizar $/kg
+        const valorKg  = p[mapaKg[cat]]  || 0;
+        const valorCab = p[mapaCab[cat]] || 0;
+        if (valorKg > 0 && precioKgEl) {
+          precioKgEl.value = valorKg;
+          if (precioCabEl) precioCabEl.value = 0;
+          toast('Precio/kg cargado: ' + fn(valorKg) + ' (' + cat + ' — ' + fd(fecha) + ')', 'ok');
+        } else if (valorCab > 0 && precioCabEl) {
+          precioCabEl.value = valorCab;
+          if (precioKgEl) precioKgEl.value = 0;
+          toast('Precio/cabeza cargado: ' + fn(valorCab) + ' (' + cat + ' — ' + fd(fecha) + ')', 'ok');
+        } else {
+          toast('No hay precio cargado para "' + (rodeo.categoria||'—') + '" en Precios de Valorización para esa fecha.', 'err');
+        }
       }
     };
   }
