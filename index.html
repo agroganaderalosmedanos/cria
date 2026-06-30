@@ -7550,8 +7550,11 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
     if (catFiltro && r.categoria !== catFiltro) return;
     var stock = 0;
     // Saldos iniciales — solo cuentan si su fecha es <= fecha de corte
-    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id) && (m.fecha || '') <= fechaCorte; })
-      .forEach(function(m){ stock += Number(m.cantidad) || 0; });
+    var saldosIniciales = movs.filter(function(m){
+      return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id) && (m.fecha || '') <= fechaCorte;
+    });
+    saldosIniciales.forEach(function(m){ stock += Number(m.cantidad) || 0; });
+
     // Movimientos hasta la fecha de corte
     movs.filter(function(m){ return m.tipo !== 'Saldo inicial' && m.fecha <= fechaCorte; }).forEach(function(m) {
       if (String(m.rodeo_destino_id) === String(r.rodeo_id)) stock += Number(m.cantidad) || 0;
@@ -7565,11 +7568,23 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
       .forEach(function(m){ stock -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return d.fecha <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(d){ stock -= Number(d.cantidad) || 0; });
+
+    // Detectar si el campo del saldo inicial difiere del campo actual del catálogo
+    var campoCatalogo = campoNombre(r.campo_id);
+    var campoSaldoInicial = null;
+    if (saldosIniciales.length) {
+      var primerSaldo = saldosIniciales[0];
+      if (primerSaldo.campo_destino_id && String(primerSaldo.campo_destino_id) !== String(r.campo_id)) {
+        campoSaldoInicial = campoNombre(primerSaldo.campo_destino_id);
+      }
+    }
+
     resultado.push({
       rodeo_id: r.rodeo_id,
       nombre: r.nombre,
       campo_id: r.campo_id,
-      campo: campoNombre(r.campo_id),
+      campo: campoCatalogo,
+      campoSaldoInicial: campoSaldoInicial, // null si coincide, nombre si difiere
       categoria: r.categoria || '—',
       stock: Math.max(0, stock),
     });
@@ -7620,9 +7635,14 @@ function buildStockAFechaTable_(data, fechaCorte) {
     if (a.categoria > b.categoria) return 1;
     return b.stock - a.stock;
   }).forEach(function(r){
+    var campoCell = r.campo;
+    var aviso = '';
+    if (r.campoSaldoInicial) {
+      aviso = ` <span title="Saldo inicial cargado en '${r.campoSaldoInicial}' pero el rodeo está en '${r.campo}' en el catálogo. Verificar si hubo traslado registrado." style="cursor:help;color:var(--clay-text);font-size:12px;font-weight:700">⚠ SI en ${r.campoSaldoInicial}</span>`;
+    }
     h += `<tr>
       <td><strong>${r.nombre}</strong></td>
-      <td style="color:var(--text2)">${r.campo}</td>
+      <td style="color:var(--text2)">${campoCell}${aviso}</td>
       <td><span class="pill pill-gray">${r.categoria}</span></td>
       <td class="tc"><strong style="color:var(--green-text)">${fn(r.stock)}</strong></td>
     </tr>`;
