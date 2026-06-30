@@ -10054,7 +10054,8 @@ function attachTableDeleteEvents(entity, idCol) {
         invalidateCache(entity);
         toast('Registro eliminado', 'ok');
         await loadEntity(entity, true);
-        await loadDashboard();
+        const ENTIDADES_AFECTAN_DASHBOARD_ = ['servicios', 'tactos', 'pariciones', 'destetes', 'abortos', 'mortandad'];
+        if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) { await loadDashboard(); }
         if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
         if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
         if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
@@ -10174,7 +10175,12 @@ function openEditModal(entity, idCol, id) {
       invalidateCache(entity);
       toast('Registro actualizado', 'ok');
       await loadEntity(entity, true);
-      await loadDashboard();
+      // El Dashboard general solo depende de Servicios/Tactos/Pariciones/Destetes/Abortos/Mortandad
+      // (KPIs de Cría) — recargarlo en CADA edición, sin importar la entidad, es un viaje de
+      // ida y vuelta a Apps Script innecesario y lento. Solo se recarga si la entidad editada
+      // realmente puede afectar esos KPIs.
+      const ENTIDADES_AFECTAN_DASHBOARD_ = ['servicios', 'tactos', 'pariciones', 'destetes', 'abortos', 'mortandad'];
+      if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) { await loadDashboard(); }
       if (entity === 'movimientos') { S.stock = null; await loadStock(); S.margenBruto = null; }
       if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
       if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
