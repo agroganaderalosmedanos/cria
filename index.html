@@ -1162,7 +1162,7 @@ function buildComprasHacienda() {
       </div>
       <div class="fg">
         <label>Campaña</label>
-        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list" value="${editando ? (editando.campana||'') : ''}">
+        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list" value="${editando ? (editando.campana||'') : ultimaCampanaCompras_()}">
         <datalist id="ch-campana-list">${campanas.map(c=>`<option value="${c}">`).join('')}</datalist>
       </div>
       <div class="fg">
@@ -1576,6 +1576,17 @@ function comprasHacGetAll_() {
   return S.cache.compras_hacienda || [];
 }
 
+// Devuelve la campaña a precargar por defecto en el formulario de Compras de Hacienda.
+// Misma prioridad que en Ventas: primero la marcada como activa, después fallback por fecha.
+function ultimaCampanaCompras_() {
+  const activa = campanaActivaGet_();
+  if (activa) return activa.nombre || '';
+  const conCampana = comprasHacGetAll_().filter(c => c.campana);
+  if (!conCampana.length) return '';
+  const ordenadas = conCampana.slice().sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+  return ordenadas[0].campana || '';
+}
+
 function buildComprasHacienda() {
   const compras  = comprasHacGetAll_().sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
   const campos   = (S.catalogs && S.catalogs.campos) || [];
@@ -1633,7 +1644,7 @@ function buildComprasHacienda() {
       </div>
       <div class="fg">
         <label>Campaña</label>
-        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list" value="${editando ? (editando.campana||'') : ''}">
+        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list" value="${editando ? (editando.campana||'') : ultimaCampanaCompras_()}">
         <datalist id="ch-campana-list">${campanas.map(c=>`<option value="${c}">`).join('')}</datalist>
       </div>
       <div class="fg">
@@ -6433,6 +6444,19 @@ function actividadDeRodeo_(rodeoId) {
   return r ? (r.actividad || 'Cría') : 'Cría';
 }
 
+// Devuelve la campaña a precargar por defecto en el formulario de Ventas.
+// Prioridad: la campaña marcada explícitamente como "activa" en la pestaña Campañas
+// (criterio confiable, decidido por el usuario). Si todavía no hay ninguna marcada,
+// cae como fallback a la última usada por fecha — mejor que dejarlo vacío siempre.
+function ultimaCampanaVentas_() {
+  const activa = campanaActivaGet_();
+  if (activa) return activa.nombre || '';
+  const ventasConCampana = (S.cache.ventas || []).filter(v => v.campana);
+  if (!ventasConCampana.length) return '';
+  const ordenadas = ventasConCampana.slice().sort((a, b) => String(b.fecha_salida || '').localeCompare(String(a.fecha_salida || '')));
+  return ordenadas[0].campana || '';
+}
+
 function buildVentas() {
   const items = S.cache.ventas || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
@@ -6465,9 +6489,9 @@ function buildVentas() {
       <div class="fg"><label>Precio pactado $/kg <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 2850" min="0" oninput="actualizarImporteVenta_()"></div>
       <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe estimado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
       <div class="fg"><label>Campaña</label>
-        <input type="text" id="ve-campana" placeholder="Ej: 2025/2026" list="ve-campana-list">
+        <input type="text" id="ve-campana" placeholder="Ej: 2025/2026" list="ve-campana-list" value="${ultimaCampanaVentas_()}">
         <datalist id="ve-campana-list">${[...new Set((S.cache.ventas||[]).map(v=>v.campana).filter(Boolean))].map(c=>`<option value="${c}">`).join('')}</datalist>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">Asigná la campaña a la que pertenece esta venta</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">Precargada con la última campaña usada — cambiala solo si esta venta corresponde a otro ciclo.</div>
       </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
     </div>
@@ -9401,12 +9425,27 @@ function preciosValParaPeriodo_(periodo) {
   return lista.find(p => String(p.fecha).slice(0,7) <= f) || null;
 }
 
+function campanaActivaGet_() {
+  return (S.cache.campanas || []).find(c => esPorCampo_(c.activa)) || null;
+}
+
 function buildCampanas() {
   const campanas = (S.cache.campanas || []).slice().sort((a,b)=>String(b.nombre||'').localeCompare(String(a.nombre||'')));
+  const activa = campanaActivaGet_();
   let h = `<div class="page-header">
     <div class="page-title">📅 Campañas</div>
     <div class="page-sub">Definí las campañas ganaderas para organizar los gastos por período</div>
   </div>`;
+
+  h += `<div class="panel" style="border:2px solid ${activa ? 'var(--green)' : 'var(--clay)'};background:${activa ? 'var(--green-bg)' : 'rgba(200,150,40,0.08)'};margin-bottom:16px">
+    <div class="panel-title" style="color:${activa ? 'var(--green-text)' : 'var(--clay-text)'}">⭐ Campaña activa</div>
+    ${activa
+      ? `<div style="font-size:22px;font-weight:800;color:var(--green-text)">${activa.nombre}</div>
+         <div style="font-size:12px;color:var(--text2);margin-top:4px">Esta es la campaña que se precarga automáticamente al cargar Ventas y Compras de Hacienda. Cambiala solo cuando arranque un nuevo ciclo comercial.</div>`
+      : `<div style="font-size:14px;color:var(--clay-text)">No hay ninguna campaña marcada como activa todavía. Marcá una abajo para que se precargue automáticamente en Ventas y Compras de Hacienda.</div>`
+    }
+  </div>`;
+
   h += `<div class="panel">
     <div class="panel-title">➕ Nueva campaña</div>
     <div class="fgrid">
@@ -9417,12 +9456,33 @@ function buildCampanas() {
     </div>
     <button class="btn btn-primary" id="camp-save" style="margin-top:8px">➕ Agregar campaña</button>
   </div>`;
-  h += buildEntityTable(campanas, [
-    { key: 'nombre',       label: 'Nombre' },
-    { key: 'fecha_inicio', label: 'Fecha inicio', render: v => fd(v) },
-    { key: 'fecha_fin',    label: 'Fecha fin',    render: v => fd(v) },
-    { key: 'descripcion',  label: 'Descripción',  render: v => v || '—' },
-  ], 'campanas', 'campana_id');
+
+  if (!campanas.length) {
+    h += '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay campañas. Cargá la primera arriba.</div></div>';
+    return h;
+  }
+
+  h += `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${campanas.length}</span></div>
+  <div class="tw"><table class="dt"><thead><tr>
+    <th>Nombre</th><th>Fecha inicio</th><th>Fecha fin</th><th>Descripción</th><th>Activa</th><th></th>
+  </tr></thead><tbody>`;
+  campanas.forEach(c => {
+    const esActiva = esPorCampo_(c.activa);
+    h += `<tr${esActiva ? ' style="background:var(--green-bg)"' : ''}>
+      <td><strong>${c.nombre}</strong></td>
+      <td>${fd(c.fecha_inicio)}</td>
+      <td>${fd(c.fecha_fin)}</td>
+      <td>${c.descripcion || '—'}</td>
+      <td>${esActiva
+        ? '<span class="pill pill-green">⭐ Activa</span>'
+        : `<button class="btn btn-secondary" data-marcar-activa="${c.campana_id}" style="font-size:11px;padding:4px 10px">Marcar activa</button>`}</td>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-edit="${c.campana_id}" data-entity="campanas" data-idcol="campana_id" title="Editar">✎</button>
+        <button class="icon-btn danger" data-del="${c.campana_id}" data-entity="campanas" data-idcol="campana_id" title="Eliminar">✕</button>
+      </div></td>
+    </tr>`;
+  });
+  h += `</tbody></table></div>`;
   return h;
 }
 
@@ -9446,6 +9506,25 @@ function attachCampanasEvents() {
     finally { btn.disabled = false; btn.textContent = '➕ Agregar campaña'; }
   };
   attachTableDeleteEvents('campanas', 'campana_id');
+
+  document.querySelectorAll('[data-marcar-activa]').forEach(b => {
+    b.onclick = async () => {
+      const campanaId = b.dataset.marcarActiva;
+      b.disabled = true;
+      b.textContent = '⏳...';
+      try {
+        await apiCall('marcarCampanaActiva', { body: { campana_id: campanaId } });
+        invalidateCache('campanas');
+        await loadEntity('campanas', true);
+        toast('Campaña activa actualizada', 'ok');
+        render();
+      } catch (err) {
+        b.disabled = false;
+        b.textContent = 'Marcar activa';
+        toast(err.message, 'err');
+      }
+    };
+  });
 }
 
 function buildConfig() {
