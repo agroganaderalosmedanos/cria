@@ -4703,6 +4703,8 @@ function egConfig_(rodeoId) {
       pesoObjetivo: fila.peso_objetivo || '',
       precioProyectado: fila.precio_proyectado || '',
       precioStockEsKg: fila.precio_stock_es_kg || '',
+      fechaInicio: fila.fecha_inicio || '',
+      stockInicial: fila.stock_inicial || '',
     };
   }
   // Fallback legacy a localStorage (datos previos a la migración a Sheets)
@@ -4737,6 +4739,8 @@ async function egSaveConfig_(rodeoId, cfg) {
   if (cfg.pesoObjetivo !== undefined) dataApi.peso_objetivo = cfg.pesoObjetivo;
   if (cfg.precioProyectado !== undefined) dataApi.precio_proyectado = cfg.precioProyectado;
   if (cfg.precioStockEsKg !== undefined) dataApi.precio_stock_es_kg = cfg.precioStockEsKg;
+  if (cfg.fechaInicio !== undefined) dataApi.fecha_inicio = cfg.fechaInicio;
+  if (cfg.stockInicial !== undefined) dataApi.stock_inicial = cfg.stockInicial;
 
   // Actualización optimista del caché local
   if (!S.cache.config_corral) S.cache.config_corral = [];
@@ -4830,11 +4834,16 @@ function egFechaIngreso_(rodeoId) {
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
   if (movs.length) return movs[0].fecha;
-  // Fallback: cualquier movimiento de entrada (traslado o saldo inicial) al rodeo
+  // Fallback 1: cualquier movimiento de entrada (traslado o saldo inicial) al rodeo
   const todos = (S.cache.movimientos || [])
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId))
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-  return todos.length ? todos[0].fecha : null;
+  if (todos.length) return todos[0].fecha;
+  // Fallback 2: Fecha de inicio cargada manualmente en el ABM de Corrales
+  // (corrales que ya venían funcionando antes de empezar a usar el sistema,
+  // sin movimiento histórico cargado todavía).
+  const cfg = egConfig_(rodeoId);
+  return cfg.fechaInicio || null;
 }
 function egKgIngreso_(rodeoId) {
   // Prioridad 1: peso_prom_kg cargado directamente en el movimiento de entrada
@@ -4867,7 +4876,13 @@ function egCantIngresada_(rodeoId) {
     .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
   const traslados = movs.filter(m => String(m.rodeo_destino_id) === String(rodeoId) && (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual'))
     .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
-  return saldos + traslados;
+  const totalMovs = saldos + traslados;
+  if (totalMovs > 0) return totalMovs;
+  // Fallback: Stock inicial cargado manualmente en el ABM de Corrales, para corrales
+  // sin movimiento histórico cargado todavía. Es solo referencial — el stock REAL
+  // del sistema (S.stock) sigue calculándose exclusivamente desde movimientos.
+  const cfg = egConfig_(rodeoId);
+  return Number(cfg.stockInicial) || 0;
 }
 function egKgIngresados_(rodeoId) {
   return egCantIngresada_(rodeoId) * egKgIngreso_(rodeoId);
@@ -9517,15 +9532,19 @@ function buildABMCorrales_() {
   }
 
   let h = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
-    📋 Esta ficha es la fuente única de verdad de cada corral — persiste en Sheets (hoja "Config Corral"), no en el navegador. Los cambios se guardan al instante, fila por fila.
+    📋 Esta ficha es la fuente única de verdad de cada corral — persiste en Sheets (hoja "Config Corral"), no en el navegador. Los cambios se guardan al instante, fila por fila.<br>
+    <strong>Fecha de inicio</strong> y <strong>Stock inicial</strong> son útiles cuando cargás un corral que ya venía funcionando antes de empezar a usar el sistema — así no dependés de tener el movimiento histórico cargado para que aparezca acá.
   </div>`;
 
   h += `<div class="tw"><table class="dt"><thead><tr>
-    <th>Corral</th><th>Campo</th><th>Stock actual</th>
+    <th>Corral</th><th>Campo</th>
+    <th>Fecha inicio</th>
+    <th>Stock inicial</th>
+    <th>Stock actual</th>
     <th>Peso ingreso (kg)</th>
     <th>Costo (precio)</th>
     <th>Peso objetivo (kg)</th>
-    <th>Precio proyectado ($/kg)</th>
+    <th>$/kg estimado de venta <span class="opt" style="font-weight:400">(tu hipótesis)</span></th>
     <th></th>
   </tr></thead><tbody>`;
 
@@ -9539,6 +9558,8 @@ function buildABMCorrales_() {
     h += `<tr data-corral-row="${rid}">
       <td><strong>${r.nombre}</strong></td>
       <td style="color:var(--text2)">${campoNom}</td>
+      <td><input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio" value="${cfg.fechaInicio||''}" style="width:135px;font-size:13px;padding:4px 6px"></td>
+      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial" value="${cfg.stockInicial||''}" placeholder="Ej: 80" style="width:80px;font-size:13px;padding:4px 6px"></td>
       <td class="tc">${fn(stock)}</td>
       <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso" value="${cfg.kgIngreso||''}" placeholder="Ej: 350" style="width:90px;font-size:13px;padding:4px 6px"></td>
       <td style="white-space:nowrap">
@@ -9549,7 +9570,7 @@ function buildABMCorrales_() {
         <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra" value="${cfg.precioCompra||''}" placeholder="Precio" style="width:100px;font-size:13px;padding:4px 6px">
       </td>
       <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="pesoObjetivo" value="${cfg.pesoObjetivo||''}" placeholder="Ej: 480" style="width:90px;font-size:13px;padding:4px 6px"></td>
-      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioProyectado" value="${cfg.precioProyectado||''}" placeholder="Ej: 3200" style="width:100px;font-size:13px;padding:4px 6px"></td>
+      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioProyectado" value="${cfg.precioProyectado||''}" placeholder="Tu estimación, ej: 3200" style="width:130px;font-size:13px;padding:4px 6px"></td>
       <td><button class="btn btn-primary abm-corral-save" data-rid="${rid}" style="font-size:11px;padding:5px 12px">💾 Guardar</button></td>
     </tr>`;
   });
