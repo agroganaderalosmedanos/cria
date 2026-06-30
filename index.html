@@ -7536,55 +7536,84 @@ function renderStockHaciendaActual_() {
 }
 
 function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
-  const rodeos = rodeosTodos().filter(function(r){
-    return campoFiltro ? String(r.campo_id) === String(campoFiltro) : true;
-  });
   const movs       = S.cache.movimientos || [];
   const ventas     = S.cache.ventas      || [];
   const pariciones = S.cache.pariciones  || [];
   const mortandad  = S.cache.mortandad   || [];
   const destetes   = S.cache.destetes    || [];
 
-  var resultado = [];
-  rodeos.forEach(function(r) {
-    if (catFiltro && r.categoria !== catFiltro) return;
-    var stock = 0;
-    // Saldos iniciales — solo cuentan si su fecha es <= fecha de corte
-    var saldosIniciales = movs.filter(function(m){
-      return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id) && (m.fecha || '') <= fechaCorte;
-    });
-    saldosIniciales.forEach(function(m){ stock += Number(m.cantidad) || 0; });
+  // Construir universo de rodeos que tuvieron actividad hasta la fecha de corte
+  // (en lugar de usar el catálogo con campo actual, derivamos campo desde los movimientos)
+  const rodeosSet = {};
 
-    // Movimientos hasta la fecha de corte
-    movs.filter(function(m){ return m.tipo !== 'Saldo inicial' && m.fecha <= fechaCorte; }).forEach(function(m) {
+  // De los movimientos ≤ fechaCorte, registrar el campo que corresponde a cada rodeo
+  // El campo de un rodeo a una fecha dada = campo_destino del último saldo inicial o traslado_en_bloque con destino ese rodeo
+  movs.filter(function(m){ return (m.fecha || '') <= fechaCorte; }).forEach(function(m) {
+    const cant = Number(m.cantidad) || 0;
+    if (m.rodeo_destino_id) {
+      const id = String(m.rodeo_destino_id);
+      if (!rodeosSet[id]) rodeosSet[id] = { rodeo_id: id, campo_id: m.campo_destino_id };
+      // Actualizar campo destino con el último movimiento que lo "ubica"
+      if (m.campo_destino_id) rodeosSet[id].campo_id = m.campo_destino_id;
+    }
+    if (m.rodeo_origen_id && m.tipo !== 'Saldo inicial') {
+      const id = String(m.rodeo_origen_id);
+      if (!rodeosSet[id]) rodeosSet[id] = { rodeo_id: id, campo_id: m.campo_origen_id };
+    }
+  });
+  // También incluir rodeos que tengan ventas/pariciones/mortandad/destetes
+  ventas.filter(function(v){ return (v.fecha_salida || '') <= fechaCorte && v.rodeo_id; }).forEach(function(v){
+    const id = String(v.rodeo_id);
+    if (!rodeosSet[id]) rodeosSet[id] = { rodeo_id: id, campo_id: v.campo_id };
+  });
+
+  // Completar con info del catálogo (nombre, categoría) para los rodeos que aparecen
+  const catalogRodeos = rodeosTodos();
+  Object.values(rodeosSet).forEach(function(rs) {
+    const cat = catalogRodeos.find(function(r){ return String(r.rodeo_id) === String(rs.rodeo_id); });
+    rs.nombre    = cat ? cat.nombre    : ('Rodeo ' + rs.rodeo_id);
+    rs.categoria = cat ? cat.categoria : '—';
+    // campo_id desde movimiento; si falta, fallback al catálogo
+    if (!rs.campo_id && cat) rs.campo_id = cat.campo_id;
+  });
+
+  // Aplicar filtros de campo y categoría
+  var rodeosFiltrados = Object.values(rodeosSet).filter(function(rs) {
+    if (campoFiltro && String(rs.campo_id) !== String(campoFiltro)) return false;
+    if (catFiltro && rs.categoria !== catFiltro) return false;
+    return true;
+  });
+
+  // Calcular stock por rodeo
+  var resultado = [];
+  rodeosFiltrados.forEach(function(r) {
+    var stock = 0;
+
+    // Saldos iniciales con fecha ≤ corte
+    movs.filter(function(m){
+      return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id) && (m.fecha || '') <= fechaCorte;
+    }).forEach(function(m){ stock += Number(m.cantidad) || 0; });
+
+    // Traslados y otros movimientos ≤ corte
+    movs.filter(function(m){ return m.tipo !== 'Saldo inicial' && (m.fecha || '') <= fechaCorte; }).forEach(function(m) {
       if (String(m.rodeo_destino_id) === String(r.rodeo_id)) stock += Number(m.cantidad) || 0;
       if (String(m.rodeo_origen_id)  === String(r.rodeo_id)) stock -= Number(m.cantidad) || 0;
     });
-    ventas.filter(function(v){ return v.fecha_salida <= fechaCorte && String(v.rodeo_id) === String(r.rodeo_id); })
+    ventas.filter(function(v){ return (v.fecha_salida || '') <= fechaCorte && String(v.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(v){ stock -= Number(v.cant_animales) || 0; });
-    pariciones.filter(function(p){ return p.fecha <= fechaCorte && String(p.rodeo_id) === String(r.rodeo_id); })
+    pariciones.filter(function(p){ return (p.fecha || '') <= fechaCorte && String(p.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(p){ stock += Number(p.nacidos_vivos) || 0; });
-    mortandad.filter(function(m){ return m.fecha <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id); })
+    mortandad.filter(function(m){ return (m.fecha || '') <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(m){ stock -= Number(m.cantidad) || 0; });
-    destetes.filter(function(d){ return d.fecha <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
+    destetes.filter(function(d){ return (d.fecha || '') <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(d){ stock -= Number(d.cantidad) || 0; });
-
-    // Detectar si el campo del saldo inicial difiere del campo actual del catálogo
-    var campoCatalogo = campoNombre(r.campo_id);
-    var campoSaldoInicial = null;
-    if (saldosIniciales.length) {
-      var primerSaldo = saldosIniciales[0];
-      if (primerSaldo.campo_destino_id && String(primerSaldo.campo_destino_id) !== String(r.campo_id)) {
-        campoSaldoInicial = campoNombre(primerSaldo.campo_destino_id);
-      }
-    }
 
     resultado.push({
       rodeo_id: r.rodeo_id,
       nombre: r.nombre,
       campo_id: r.campo_id,
-      campo: campoCatalogo,
-      campoSaldoInicial: campoSaldoInicial, // null si coincide, nombre si difiere
+      campo: campoNombre(r.campo_id),
+      campoSaldoInicial: null, // ya no es necesario, campo viene de movimientos
       categoria: r.categoria || '—',
       stock: Math.max(0, stock),
     });
