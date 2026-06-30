@@ -10127,7 +10127,13 @@ function openEditModal(entity, idCol, id) {
   };
 
   let fieldsHtml = '';
+  // Para Saldo inicial, los campos de origen no se usan en ningún cálculo del sistema
+  // (siempre se ignoran). Ocultarlos evita confusión — sino parece que el saldo inicial
+  // "viene de" otro rodeo, cuando en realidad es un ingreso directo sin origen.
+  const ocultarOrigenSaldoInicial = entity === 'movimientos' && item.tipo === 'Saldo inicial';
+  const camposAOcultar = ocultarOrigenSaldoInicial ? ['campo_origen_id', 'rodeo_origen_id'] : [];
   keys.forEach(k => {
+    if (camposAOcultar.includes(k)) return;
     const type = fieldInputType_(k, item[k]);
     const fid = 'edit-' + k;
     const labelText = FIELD_LABELS_[k] || k;
@@ -10174,6 +10180,10 @@ function openEditModal(entity, idCol, id) {
       if (type === 'boolean') { data[k] = el.value === 'true'; return; }
       data[k] = el.tagName === 'SELECT' ? el.value : (el.type === 'number' ? Number(el.value) : el.value.trim());
     });
+    // Si es Saldo inicial, limpiar explícitamente los campos de origen (no se editaron
+    // porque están ocultos, pero pueden tener un valor sobrante de antes — se borra
+    // para que la planilla no quede con un dato confuso e inerte).
+    camposAOcultar.forEach(k => { data[k] = ''; });
     const saveBtn = document.getElementById('edit-modal-save');
     saveBtn.disabled = true;
     try {
