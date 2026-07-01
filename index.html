@@ -3600,6 +3600,9 @@ function buildRecriaDashboard() {
   let h = `<div class="page-header">
     <div class="page-title">Dashboard Recría</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button class="radio-pill selected" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill" onclick="goto('cesiones_cria')">⬇ Cesiones de Cría</button>
+      <button class="radio-pill" onclick="goto('cesiones_recria')">⬆ Cesiones a Terminación</button>
       <button onclick="S.rcDashMoneda=S.rcDashMoneda==='USD'?'ARS':'USD';render()"
         style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
         💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
@@ -3980,6 +3983,11 @@ function buildCesionesCria() {
   let h = `<div class="page-header">
     <div class="page-title">Cesiones — Cría a Recría</div>
     <div class="page-sub">Registrá el traspaso de animales de Cría a Recría con precio de cesión $/kg</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button class="radio-pill" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill selected" onclick="goto('cesiones_cria')">⬇ Cesiones de Cría</button>
+      <button class="radio-pill" onclick="goto('cesiones_recria')">⬆ Cesiones a Terminación</button>
+    </div>
   </div>`;
 
   h += `<div class="panel">
@@ -4190,6 +4198,11 @@ function buildCesionesRecria() {
   let h = `<div class="page-header">
     <div class="page-title">Cesiones — Recría a Terminación</div>
     <div class="page-sub">Registrá el traspaso de animales de Recría a Terminación con precio de cesión $/kg</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button class="radio-pill" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill" onclick="goto('cesiones_cria')">⬇ Cesiones de Cría</button>
+      <button class="radio-pill selected" onclick="goto('cesiones_recria')">⬆ Cesiones a Terminación</button>
+    </div>
   </div>`;
 
   h += `<div class="panel">
