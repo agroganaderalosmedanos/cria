@@ -5183,31 +5183,97 @@ function buildEngorde() {
   else if (page === 'engorde_cierre') h += buildEngordeCierre_(egGetCorralId(), fm);
   else if (page === 'engorde_historial') h += buildEngordeHistorial_(rodeosEng, fm);
 
-  // Formulario pesada (en Dashboard)
+  // Formulario pesada y historial de pesadas → MOVIDOS a la pestaña Pesadas
+  // (no se muestran en el Dashboard de Terminación)
+
   if (page === 'engorde') {
-    const rodeoOpts = rodeosEng.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
-    h += `<div class="section-label" style="margin-top:20px">Registrar pesada</div>
-    <div class="panel"><div class="fgrid">
-      <div class="fg"><label>Fecha</label><input type="date" id="eg-pe-fecha" value="${today()}"></div>
-      <div class="fg"><label>Corral</label><select id="eg-pe-rodeo">${rodeoOpts}</select></div>
-      <div class="fg"><label>Cantidad</label><input type="number" id="eg-pe-cantidad" placeholder="Ej: 185" min="1"></div>
-      <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="eg-pe-peso" placeholder="Ej: 480" min="0" step="0.1"></div>
-      <div class="fg"><label>Observación</label><input type="text" id="eg-pe-obs" placeholder="Opcional"></div>
-    </div>
-    <button class="btn btn-primary" id="eg-pe-save" style="margin-top:6px">Registrar pesada</button>
-    </div>`;
-    // Historial de pesadas
-    h += '<div class="section-label">Historial de pesadas</div>';
-    const todasPes = (S.cache.pesadas || [])
-      .filter(p => rodeosEng.some(r => String(r.rodeo_id) === String(p.rodeo_id)))
-      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
-    h += buildEntityTable(todasPes, [
-      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-      { key: 'rodeo_id', label: 'Corral', render: v => rodeoNombre(v) },
-      { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
-      { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
-      { key: 'observacion', label: 'Obs.', render: v => v || '—' },
-    ], 'pesadas', 'pesada_id');
+    const rodeosAllEng = (S.catalogs&&S.catalogs.rodeos)||[];
+    const rodeosAllMap_ = Object.fromEntries(rodeosAllEng.map(r=>[String(r.rodeo_id),r]));
+    const movsAll = S.cache.movimientos||[];
+    const pesadasAll = S.cache.pesadas||[];
+
+    // ── Detalle Cesiones recibidas de Recría ──────────────────────────────
+    // Combina traslados reales + egresos_recria legacy (sin traslado real)
+    const egresosRecAll = (S.cache.egresos_recria||[]).filter(e=>e.destino==='Engorde'&&rodeosEng.some(r=>String(r.rodeo_id)===String(e.rodeo_destino_id)));
+    const cesionesRecTrasla_ = movsAll.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosEng.some(r=>String(r.rodeo_id)===String(m.rodeo_destino_id)));
+    const cesionesRecLegacy_ = egresosRecAll.filter(e=>!cesionesRecTrasla_.some(m=>
+      String(m.fecha)===String(e.fecha)&&String(m.rodeo_origen_id)===String(e.rodeo_id)&&
+      String(m.rodeo_destino_id)===String(e.rodeo_destino_id)&&Number(m.cantidad)===Number(e.cant_animales)
+    ));
+
+    const todasCesRec = [
+      ...cesionesRecTrasla_.map(m=>({
+        fecha: m.fecha,
+        origen: rodeoNombre(m.rodeo_origen_id),
+        destino: rodeoNombre(m.rodeo_destino_id),
+        cant: Number(m.cantidad)||0,
+        peso: Number(m.peso_prom_kg)||(()=>{
+          const pp=pesadasAll.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+          return pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        })(),
+        precioKg: Number(m.precio_kg)||Number(m.precio_cabeza)||0,
+      })),
+      ...cesionesRecLegacy_.map(e=>({
+        fecha: e.fecha,
+        origen: rodeoNombre(e.rodeo_id),
+        destino: rodeoNombre(e.rodeo_destino_id),
+        cant: Number(e.cant_animales)||0,
+        peso: Number(e.peso_prom_kg)||0,
+        precioKg: Number(e.precio_kg_cesion)||0,
+      })),
+    ].sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+
+    if (todasCesRec.length) {
+      h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Recría — detalle</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
+          <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">$/kg</th><th class="tr">Total</th>
+        </tr></thead><tbody>`;
+      let totCesRec=0;
+      todasCesRec.forEach(c=>{
+        const total=c.cant*c.peso*c.precioKg;
+        totCesRec+=total;
+        h += `<tr${!c.precioKg?' style="background:rgba(200,150,40,0.06)"':''}>
+          <td>${fd(c.fecha)}</td><td><strong>${c.origen}</strong></td><td>${c.destino}</td>
+          <td class="tc">${fn(c.cant)}</td>
+          <td class="tc">${c.peso?fn(c.peso)+' kg':'—'}</td>
+          <td class="tr">${c.precioKg?'$ '+fn(c.precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ sin precio</span>'}</td>
+          <td class="tr"><strong>${total?fm(total):'—'}</strong></td>
+        </tr>`;
+      });
+      h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL cesiones recibidas</td>
+        <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(totCesRec)}</td></tr>`;
+      h += `</tbody></table></div></div>`;
+    }
+
+    // ── Detalle Ventas ────────────────────────────────────────────────────
+    const ventasEng = (S.cache.ventas||[]).filter(v=>rodeosEng.some(r=>String(r.rodeo_id)===String(v.rodeo_id)))
+      .sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||'')));
+    if (ventasEng.length) {
+      h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Fecha</th><th>Corral</th><th class="tc">Cab.</th>
+          <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Total</th>
+        </tr></thead><tbody>`;
+      let totVent=0;
+      ventasEng.forEach(v=>{
+        const cant=Number(v.cant_animales)||0, kg=Number(v.peso_campo_kg)||0;
+        const pPact=Number(v.precio_pactado)||0, imLiq=Number(v.importe_liq)||0;
+        const total=imLiq||(pPact*kg)||0;
+        totVent+=total;
+        h += `<tr${!imLiq?' style="background:rgba(200,150,40,0.04)"':''}>
+          <td>${fd(v.fecha_salida)}</td><td><strong>${rodeoNombre(v.rodeo_id)}</strong></td>
+          <td class="tc">${fn(cant)}</td>
+          <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
+          <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
+          <td class="tr">${imLiq?fm(imLiq):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
+          <td class="tr"><strong>${total?fm(total):'—'}</strong></td>
+        </tr>`;
+      });
+      h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL ventas</td>
+        <td class="tr" style="color:var(--green-text);font-size:15px">${fm(totVent)}</td></tr>`;
+      h += `</tbody></table></div></div>`;
+    }
   }
 
   return h;
