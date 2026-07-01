@@ -2343,15 +2343,71 @@ function buildAbortos() {  const _criaTabs = [
     </div>
     <button class="btn btn-primary" id="ab-save" style="margin-top:10px">Registrar aborto(s)</button>
   </div>`;
-  h += buildEntityTable(items, [
-    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-    { key: 'caravana_vaca', label: 'Caravana', render: v => v || '—' },
-    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
-  ], 'abortos', 'aborto_id');
+  // Historial con filtros de campo y rodeo
+  const rodeosTodosAb = (S.catalogs?.rodeos||[]);
+  const rodeosAptosHist = rodeosConServicioPorCampo(campos[0]?.campo_id);
+  h += `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${items.length}</span></div>
+  <div class="fgrid" style="margin-bottom:10px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="ab-hist-campo" onchange="
+        const rid=document.getElementById('ab-hist-rodeo');
+        const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
+        rid.innerHTML='<option value=\"\">Todos los rodeos</option>'+rods.map(r=>\`<option value=\"\${r.rodeo_id}\">\${r.nombre}</option>\`).join('');
+        abFiltrarHistorial_()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="ab-hist-rodeo" onchange="abFiltrarHistorial_()">
+        <option value="">Todos los rodeos</option>
+        ${rodeosTodosAb.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="ab-hist-tabla">`;
+  const itemsFilt = items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  h += buildAbortosTabla_(itemsFilt);
+  h += `</div>`;
   return h;
 }
+
+function buildAbortosTabla_(items) {
+  if (!items.length) return '<div class="empty-state"><span class="ico">⊘</span><div class="msg">Sin abortos registrados.</div></div>';
+  let t = `<div class="tw"><table class="dt"><thead><tr>
+    <th>Fecha</th><th>Rodeo</th><th>Caravana</th><th>Obs.</th><th></th>
+  </tr></thead><tbody>`;
+  items.forEach(a=>{
+    t += `<tr>
+      <td>${fd(a.fecha)}</td>
+      <td>${rodeoNombre(a.rodeo_id)}</td>
+      <td>${a.caravana_vaca||'—'}</td>
+      <td>${a.observacion||'—'}</td>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-edit="${a.aborto_id}" data-entity="abortos" data-idcol="aborto_id" title="Editar">✎</button>
+        <button class="icon-btn danger" data-del="${a.aborto_id}" data-entity="abortos" data-idcol="aborto_id" title="Eliminar">✕</button>
+      </div></td>
+    </tr>`;
+  });
+  t += `</tbody></table></div>`;
+  return t;
+}
 function attachAbortosEvents() {
+  window.abFiltrarHistorial_ = function() {
+    const campoId = document.getElementById('ab-hist-campo')?.value || '';
+    const rodeoId = document.getElementById('ab-hist-rodeo')?.value || '';
+    const items = (S.cache.abortos || []).filter(a => {
+      if (rodeoId && String(a.rodeo_id) !== rodeoId) return false;
+      if (campoId && !rodeoId) {
+        const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(a.rodeo_id));
+        if (!r || String(r.campo_id) !== campoId) return false;
+      }
+      return true;
+    }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const el = document.getElementById('ab-hist-tabla');
+    if (el) { el.innerHTML = buildAbortosTabla_(items); attachTableDeleteEvents('abortos', 'aborto_id'); }
+  };
+
   const save = document.getElementById('ab-save');
   if (save) save.onclick = async () => {
     const fecha = document.getElementById('ab-fecha').value;
@@ -7116,7 +7172,7 @@ function buildInsumos() {
   ], 'productos', 'producto_id');
 
   h += `<div class="section-label">Historial de insumos</div>
-  <div class="fgrid" style="margin-bottom:10px;max-width:680px">
+  <div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por categoría</label>
       <select id="in-hist-filtro-categoria" onchange="document.getElementById('in-hist-filtro-producto').innerHTML = productoFiltroOptionsHtml_(this.value ? (S.catalogs.productos||[]).filter(p => p.categoria === this.value) : (S.catalogs.productos||[])); renderInsumosHistorialFiltrado()">
         <option value="">Todas las categorías</option>
@@ -7126,10 +7182,20 @@ function buildInsumos() {
     <div class="fg"><label>Filtrar por producto</label>
       <select id="in-hist-filtro-producto" onchange="actualizarFiltroCampoHistorial_(); renderInsumosHistorialFiltrado()">${productoFiltroOptionsHtml_(productos)}</select>
     </div>
-    <div class="fg" id="in-hist-campo-wrap" style="display:none"><label>Campo</label>
-      <select id="in-hist-filtro-campo" onchange="renderInsumosHistorialFiltrado()">
+    <div class="fg"><label>Campo</label>
+      <select id="in-hist-filtro-campo" onchange="
+        const ri=document.getElementById('in-hist-filtro-rodeo');
+        const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
+        ri.innerHTML='<option value=\"\">Todos los rodeos</option>'+rods.map(r=>\`<option value=\"\${r.rodeo_id}\">\${r.nombre}</option>\`).join('');
+        renderInsumosHistorialFiltrado()">
         <option value="">Todos los campos</option>
         ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Rodeo</label>
+      <select id="in-hist-filtro-rodeo" onchange="renderInsumosHistorialFiltrado()">
+        <option value="">Todos los rodeos</option>
+        ${(S.catalogs?.rodeos||[]).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
     <div class="fg"><label>Desde</label><input type="date" id="in-hist-desde" onchange="renderInsumosHistorialFiltrado()"></div>
@@ -7142,7 +7208,7 @@ function buildInsumos() {
   return h;
 }
 
-function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta) {
+function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro) {
   const productosMap = {};
   ((S.catalogs && S.catalogs.productos) || []).forEach(p => { productosMap[p.producto_id] = p; });
 
@@ -7155,6 +7221,15 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
   if (categoriaFiltro) {
     comprasF = comprasF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
     consumosF = consumosF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
+  }
+  if (campoFiltro) {
+    comprasF = comprasF.filter(c => String(c.campo_id || '') === String(campoFiltro));
+    consumosF = consumosF.filter(c => String(c.campo_id || '') === String(campoFiltro));
+  }
+  if (rodeoFiltro) {
+    // Las compras no tienen rodeo, solo los consumos
+    consumosF = consumosF.filter(c => String(c.rodeo_id || '') === String(rodeoFiltro));
+    comprasF = []; // si filtrás por rodeo, no tiene sentido mostrar compras que son por campo
   }
   if (desde) { comprasF = comprasF.filter(c => String(c.fecha || '') >= desde); consumosF = consumosF.filter(c => String(c.fecha || '') >= desde); }
   if (hasta) { comprasF = comprasF.filter(c => String(c.fecha || '') <= hasta); consumosF = consumosF.filter(c => String(c.fecha || '') <= hasta); }
@@ -7343,9 +7418,10 @@ window.actualizarFiltroCampoHistorial_ = function() {
 };
 
 window.renderInsumosHistorialFiltrado = function() {
-  const productoFiltro = document.getElementById('in-hist-filtro-producto')?.value || '';
-  const categoriaFiltro = document.getElementById('in-hist-filtro-categoria')?.value || '';
-  const campoFiltro = document.getElementById('in-hist-filtro-campo')?.value || '';
+  const productoFiltro   = document.getElementById('in-hist-filtro-producto')?.value || '';
+  const categoriaFiltro  = document.getElementById('in-hist-filtro-categoria')?.value || '';
+  const campoFiltro      = document.getElementById('in-hist-filtro-campo')?.value || '';
+  const rodeoFiltro      = document.getElementById('in-hist-filtro-rodeo')?.value || '';
   const desde = document.getElementById('in-hist-desde')?.value || '';
   const hasta = document.getElementById('in-hist-hasta')?.value || '';
   const stockEl = document.getElementById('in-stock-seleccionado');
@@ -7355,7 +7431,7 @@ window.renderInsumosHistorialFiltrado = function() {
     if (productoFiltro) {
       el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta, campoFiltro);
     } else {
-      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta);
+      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro);
     }
     attachTableDeleteEvents('compras_insumos', 'compra_id');
     attachTableDeleteEvents('consumos_insumos', 'consumo_id');
