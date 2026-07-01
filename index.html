@@ -1970,6 +1970,29 @@ function buildDashboard() {
     </div>`;
   }
 
+  // Abortos — al final del dashboard, igual estilo que mortandad
+  const abortosCriaFilt = (S.cache.abortos || []).filter(a => rodeosCriaIds.has(String(a.rodeo_id)));
+  const abortosCriaTotal = abortosCriaFilt.length;
+  if (abortosCriaTotal > 0) {
+    const abortosPorRodeo = {};
+    abortosCriaFilt.forEach(a => { abortosPorRodeo[a.rodeo_id] = (abortosPorRodeo[a.rodeo_id]||0) + 1; });
+    h += `<div class="panel" style="border:2px solid var(--clay);background:rgba(180,100,30,0.06);margin-bottom:16px">
+      <div class="panel-title" style="color:var(--clay-text)">⊘ Abortos en Cría</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+    Object.entries(abortosPorRodeo).forEach(([rid,cant])=>{
+      const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
+      h += `<div style="background:rgba(180,100,30,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--clay)">
+        <div style="font-size:11px;font-weight:700;color:var(--clay-text);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:26px;font-weight:800;color:var(--clay-text)">${cant} <span style="font-size:13px">aborto${cant>1?'s':''}</span></div>
+      </div>`;
+    });
+    h += `<div style="background:rgba(180,100,30,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--clay)">
+      <div style="font-size:11px;font-weight:700;color:var(--clay-text);text-transform:uppercase">Total</div>
+      <div style="font-size:30px;font-weight:800;color:var(--clay-text)">${abortosCriaTotal} <span style="font-size:13px">abortos</span></div>
+    </div></div>
+    </div>`;
+  }
+
   return h;
 }
 
@@ -2300,7 +2323,7 @@ function buildAbortos() {  const _criaTabs = [
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAptos = rodeosConServicioPorCampo(campos[0]?.campo_id);
   h += `<div class="panel">
-    <div class="panel-title">Registrar aborto</div>
+    <div class="panel-title">Registrar abortos</div>
     ${rodeosConServicio().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía.</p>' : ''}
     <div class="fgrid">
       <div class="fg"><label>Campo</label>
@@ -2310,10 +2333,15 @@ function buildAbortos() {  const _criaTabs = [
       <div class="fg"><label>Rodeo</label>
         <select id="ab-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
-      <div class="fg"><label>Caravana <span class="opt">(opcional)</span></label><input type="text" id="ab-caravana" placeholder="Si se identificó"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ab-obs" placeholder="Opcional"></div>
     </div>
-    <button class="btn btn-primary" id="ab-save" style="margin-top:6px">Registrar aborto</button>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+      <label style="font-weight:600;font-size:13px;margin-bottom:8px;display:block">🐄 Carga masiva — caravanas abortadas</label>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Escribí las caravanas una por línea, o separadas por coma. Cada una genera un aborto con la misma fecha y rodeo.</div>
+      <textarea id="ab-caravanas-bulk" rows="4" placeholder="Ej:&#10;1234&#10;1235&#10;1236&#10;o bien: 1234, 1235, 1236" style="width:100%;font-size:13px;padding:8px;border:1px solid var(--border);border-radius:6px;resize:vertical"></textarea>
+      <div style="font-size:12px;color:var(--text3);margin-top:4px">Si dejás vacío, se registra un aborto sin caravana identificada. Si ponés caravanas, se registra uno por caravana.</div>
+    </div>
+    <button class="btn btn-primary" id="ab-save" style="margin-top:10px">Registrar aborto(s)</button>
   </div>`;
   h += buildEntityTable(items, [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
@@ -2326,59 +2354,61 @@ function buildAbortos() {  const _criaTabs = [
 function attachAbortosEvents() {
   const save = document.getElementById('ab-save');
   if (save) save.onclick = async () => {
-    const data = {
-      fecha: document.getElementById('ab-fecha').value,
-      rodeo_id: document.getElementById('ab-rodeo').value,
-      caravana_vaca: document.getElementById('ab-caravana').value.trim(),
-      observacion: document.getElementById('ab-obs').value.trim(),
-    };
-    if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    const fecha = document.getElementById('ab-fecha').value;
+    const rodeoId = document.getElementById('ab-rodeo').value;
+    const obs = document.getElementById('ab-obs').value.trim();
+    if (!fecha || !rodeoId) { toast('Completá fecha y rodeo.', 'err'); return; }
+
+    // Parsear caravanas del textarea (una por línea o separadas por coma)
+    const bulk = document.getElementById('ab-caravanas-bulk')?.value || '';
+    const caravanas = bulk
+      ? bulk.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+      : [''];  // array con un string vacío → un aborto sin caravana
+
     save.disabled = true;
+    save.textContent = '⏳ Registrando...';
+    let ok = 0, errores = 0;
     try {
-      await apiCall('create', { body: { entity: 'abortos', data } });
-      invalidateCache('abortos');
-      toast('Aborto registrado', 'ok');
-      await loadEntity('abortos', true);
-      S.dashboard = null;
-
-      // ── Traslado automático a Vacas Venta ──────────────────────────
-      // Buscar el rodeo origen para obtener su campo
-      const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_id));
-      const campoId = rodeoOrigen ? rodeoOrigen.campo_id : null;
-
-      // Buscar rodeo con categoría "vaca venta" o "vacas venta" en el mismo campo
-      const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-      const rodeoVacaVenta = rodeosTodos().find(r =>
-        String(r.campo_id) === String(campoId) &&
-        (norm(r.categoria) === 'vaca venta' || norm(r.categoria) === 'vacas venta')
-      );
-
-      if (!rodeoVacaVenta) {
-        toast('⚠ No se encontró un rodeo "Vacas Venta" en ese campo. Mové la vaca manualmente.', 'warn');
-      } else {
-        const obsTraslado = 'Traslado por aborto' + (data.caravana_vaca ? ' — caravana ' + data.caravana_vaca : '') + (data.observacion ? ' — ' + data.observacion : '');
-        const movData = {
-          tipo: 'Traslado en bloque',
-          fecha: data.fecha,
-          campo_origen_id: campoId,
-          rodeo_origen_id: data.rodeo_id,
-          campo_destino_id: campoId,
-          rodeo_destino_id: rodeoVacaVenta.rodeo_id,
-          cantidad: 1,
-          precio_cabeza: 0,
-          observaciones: obsTraslado,
-        };
-        await apiCall('create', { body: { entity: 'movimientos', data: movData } });
-        invalidateCache('movimientos');
-        await loadEntity('movimientos', true);
-        S.stock = null;
-        await loadStock();
-        toast('✓ Vaca trasladada automáticamente a "' + rodeoVacaVenta.nombre + '"', 'ok');
+      for (const caravana of caravanas) {
+        const data = { fecha, rodeo_id: rodeoId, caravana_vaca: caravana, observacion: obs };
+        try {
+          await apiCall('create', { body: { entity: 'abortos', data } });
+          ok++;
+          // Traslado automático a Vacas Venta
+          const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
+          const campoId = rodeoOrigen?.campo_id;
+          const norm = s => String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+          const rodeoVacaVenta = rodeosTodos().find(r =>
+            String(r.campo_id) === String(campoId) &&
+            (norm(r.categoria) === 'vaca venta' || norm(r.categoria) === 'vacas venta')
+          );
+          if (rodeoVacaVenta) {
+            const movData = {
+              tipo: 'Traslado individual',
+              fecha,
+              rodeo_origen_id: rodeoId,
+              campo_origen_id: campoId,
+              rodeo_destino_id: rodeoVacaVenta.rodeo_id,
+              campo_destino_id: rodeoVacaVenta.campo_id,
+              cantidad: 1,
+              observaciones: 'Traslado por aborto' + (caravana ? ' — caravana ' + caravana : '') + (obs ? ' — ' + obs : ''),
+            };
+            await apiCall('create', { body: { entity: 'movimientos', data: movData } });
+          }
+        } catch(e) { errores++; }
       }
-      // ───────────────────────────────────────────────────────────────
-
+      invalidateCache('abortos');
+      invalidateCache('movimientos');
+      await loadEntity('abortos', true);
+      await loadEntity('movimientos', true);
+      S.stock = null; await loadStock();
+      S.dashboard = null;
+      const msg = ok === 1 ? 'Aborto registrado' : ok + ' abortos registrados';
+      toast(msg + (errores ? ` (${errores} con error)` : ''), ok > 0 ? 'ok' : 'err');
+      if (document.getElementById('ab-caravanas-bulk')) document.getElementById('ab-caravanas-bulk').value = '';
       render();
-    } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
+    } catch(err) { toast(err.message, 'err'); }
+    finally { save.disabled = false; save.textContent = 'Registrar aborto(s)'; }
   };
   attachTableDeleteEvents('abortos', 'aborto_id');
 }
@@ -6935,8 +6965,8 @@ function buildInsumos() {
     <div class="fgrid">
       <div class="fg" style="min-width:280px"><label>Tipo</label>
         <div class="radio-group" id="in-tipo-group">
-          <div class="radio-pill selected" data-tipo="Compra">Compra (entra stock)</div>
-          <div class="radio-pill" data-tipo="Consumo">Consumo (sale stock)</div>
+          <div class="radio-pill" data-tipo="Compra">Compra (entra stock)</div>
+          <div class="radio-pill selected" data-tipo="Consumo">Consumo (sale stock)</div>
         </div>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="in-fecha" value="${today()}"></div>
@@ -7385,7 +7415,7 @@ function attachInsumosEvents() {
     p.classList.add('selected');
     applyInsumoTipoUI(p.dataset.tipo);
   });
-  actualizarCampoCompraInsumo_();
+  applyInsumoTipoUI('Consumo'); // default es Consumo — mostrar campo/rodeo desde el inicio
 
   const npSave = document.getElementById('np-save');
   if (npSave) npSave.onclick = async () => {
@@ -8016,6 +8046,7 @@ function buildMargenBruto() {
   const mb2 = marTotal>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
   const mortandad = S.cache.mortandad||[];
+  const abortos   = S.cache.abortos||[];
   const rodeosAll = (S.catalogs&&S.catalogs.rodeos)||[];
   const rodeosRec = new Set(((S.resumenRecria&&S.resumenRecria.rodeos)||[]).map(r=>String(r.rodeo_id)));
   const rodeosEng = new Set(rodeosEngordeValidos_().map(r=>String(r.rodeo_id)));
@@ -8023,6 +8054,9 @@ function buildMargenBruto() {
   const mortRec   = mortandad.filter(m=>rodeosRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortEng   = mortandad.filter(m=>rodeosEng.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortTot   = mortCria+mortRec+mortEng;
+  const abortCria = abortos.filter(a=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(a.rodeo_id)); return r&&r.actividad==='Cría'; }).length;
+  const abortRec  = abortos.filter(a=>rodeosRec.has(String(a.rodeo_id))).length;
+  const abortTot  = abortCria+abortRec;
 
   if (tabMB === 'resultado') {
     h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
@@ -8193,6 +8227,17 @@ function buildMargenBruto() {
           ${mortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--red);font-weight:700">${mortRec} cabezas</td></tr>`:''}
           ${mortEng>0?`<tr><td>🏭 Terminación</td><td class="tc" style="color:var(--red);font-weight:700">${mortEng} cabezas</td></tr>`:''}
           <tr style="background:rgba(200,50,50,0.12)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:18px">${mortTot} cabezas</td></tr>
+        </tbody></table></div>
+      </div>`;
+    }
+
+    if (abortTot>0) {
+      h+=`<div class="panel" style="border:2px solid var(--clay);background:rgba(180,100,30,0.05)">
+        <div class="panel-title" style="color:var(--clay-text)">⊘ Resumen de abortos</div>
+        <div class="tw"><table class="dt"><tbody>
+          ${abortCria>0?`<tr><td>🐄 Cría</td><td class="tc" style="color:var(--clay-text);font-weight:700">${abortCria} abortos</td></tr>`:''}
+          ${abortRec>0?`<tr><td>🌱 Recría</td><td class="tc" style="color:var(--clay-text);font-weight:700">${abortRec} abortos</td></tr>`:''}
+          <tr style="background:rgba(180,100,30,0.12)"><td><strong>Total</strong></td><td class="tc" style="color:var(--clay-text);font-weight:800;font-size:18px">${abortTot} abortos</td></tr>
         </tbody></table></div>
       </div>`;
     }
