@@ -3805,6 +3805,143 @@ function buildRecriaDashboard() {
   }
   h += `</tbody></table></div></div>`;
 
+  // ── Detalle EF (Stock final valorizado) ───────────────────────────────────
+  const stockDetalleRec = rodeosFiltBase.filter(r=>(r.stock||0)>0).map(r=>{
+    const rodeoObj = rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{};
+    const pesoP = r.ultima_pesada ? Number(r.ultima_pesada.peso_prom_kg)||0 : 0;
+    const val = valorizarRodeo_(rodeoObj, r.stock||0, pesoP);
+    return { nombre: r.nombre, campo: r.campo_nombre||'—', cat: rodeoObj.categoria||'—', stock: r.stock||0, pesoP, val };
+  });
+  if (stockDetalleRec.length) {
+    h += `<div class="panel"><div class="panel-title">📦 Stock final valorizado (EF) — por rodeo</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock</th><th class="tr">Peso prom.</th><th class="tr">Valor total</th>
+      </tr></thead><tbody>`;
+    stockDetalleRec.forEach(r=>{
+      h += `<tr><td><strong>${r.nombre}</strong></td><td>${r.campo}</td><td>${r.cat}</td>
+        <td class="tc">${fn(r.stock)}</td>
+        <td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td>
+        <td class="tr"><strong>${fmM(r.val)}</strong></td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="5" class="tr">TOTAL EF</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmM(stockValRecria)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
+  // ── Detalle EI (Saldo inicial) ────────────────────────────────────────────
+  const saldosInicRec = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIdsFilt.has(String(m.rodeo_destino_id)));
+  if (saldosInicRec.length) {
+    h += `<div class="panel"><div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Precio/cab.</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totEI=0;
+    saldosInicRec.forEach(m=>{
+      const cant=Number(m.cantidad)||0, precio=Number(m.precio_cabeza)||0, total=cant*precio;
+      totEI+=total;
+      h += `<tr><td>${fd(m.fecha)}</td><td><strong>${rodeoNombre(m.rodeo_destino_id)}</strong></td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tr">${precio?'$ '+fn(precio):'<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
+        <td class="tr"><strong>${total?fmM(total):'—'}</strong></td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL EI</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmM(totEI)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
+  // ── Detalle Cesiones recibidas de Cría ────────────────────────────────────
+  const cesRecCria = movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or=rodeosAllMap[String(m.rodeo_origen_id)];
+    const de=rodeosAllMap[String(m.rodeo_destino_id)];
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&rodeosIdsFilt.has(String(m.rodeo_destino_id));
+  });
+  if (cesRecCria.length) {
+    const pesadasAll = S.cache.pesadas||[];
+    h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Cría — detalle</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
+        <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">$/kg</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totCesRec=0;
+    cesRecCria.forEach(m=>{
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+      const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      let pesoUsado=peso, total=0;
+      if (precioKg&&peso) { total=cant*peso*precioKg; }
+      else if (precioKg&&!peso) {
+        const pp=pesadasAll.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=cant*pesoUsado*precioKg;
+      } else {
+        const or=rodeosAllMap[String(m.rodeo_origen_id)];
+        const pp=pesadasAll.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=valorizarRodeo_(or||{},cant,pesoUsado);
+      }
+      totCesRec+=total;
+      h += `<tr${!precioKg?' style="background:rgba(200,150,40,0.06)"':''}>
+        <td>${fd(m.fecha)}</td><td><strong>${rodeoNombre(m.rodeo_origen_id)}</strong></td><td>${rodeoNombre(m.rodeo_destino_id)}</td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tc">${pesoUsado?fn(pesoUsado)+' kg'+(peso?'':' <span style="font-size:10px;color:var(--text3)">(pesada)</span>'):'—'}</td>
+        <td class="tr">${precioKg?'$ '+fn(precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
+        <td class="tr"><strong>${fmM(total)}</strong></td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL cesiones recibidas</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmM(totCesRec)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
+  // ── Detalle Cesiones enviadas a Terminación ───────────────────────────────
+  if (egresos.filter(e=>e.destino==='Engorde').length) {
+    h += `<div class="panel"><div class="panel-title">⬆ Cesiones enviadas a Terminación — detalle</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
+        <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">$/kg</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totCesEnv=0;
+    egresos.filter(e=>e.destino==='Engorde').forEach(e=>{
+      const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
+      const total=cant*peso*precioKg;
+      totCesEnv+=total;
+      h += `<tr${!precioKg?' style="background:rgba(200,150,40,0.06)"':''}>
+        <td>${fd(e.fecha)}</td><td><strong>${rodeoNombre(e.rodeo_id)}</strong></td><td>${rodeoNombre(e.rodeo_destino_id)}</td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tc">${peso?fn(peso)+' kg':'—'}</td>
+        <td class="tr">${precioKg?'$ '+fn(precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ sin precio</span>'}</td>
+        <td class="tr"><strong>${total?fmM(total):'—'}</strong></td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL cesiones enviadas</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmM(totCesEnv)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
+  // ── Detalle Ventas ────────────────────────────────────────────────────────
+  if (ventas.length) {
+    h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo</th><th class="tc">Cab.</th>
+        <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totVent=0;
+    ventas.slice().sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||''))).forEach(v=>{
+      const cant=Number(v.cant_animales)||0, kg=Number(v.peso_campo_kg)||0;
+      const pPact=Number(v.precio_pactado)||0, imLiq=Number(v.importe_liq)||0;
+      const total=imLiq||(pPact*kg)||0;
+      totVent+=total;
+      h += `<tr${!imLiq?' style="background:rgba(200,150,40,0.04)"':''}>
+        <td>${fd(v.fecha_salida)}</td><td><strong>${rodeoNombre(v.rodeo_id)}</strong></td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
+        <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
+        <td class="tr">${imLiq?fmM(imLiq):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
+        <td class="tr"><strong>${total?fmM(total):'—'}</strong></td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL ventas</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmM(totVent)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
   // Mortandad — al final del dashboard, destacada en rojo
   if (mortTotal > 0) {
     h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
