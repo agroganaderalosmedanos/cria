@@ -1747,7 +1747,7 @@ function buildDashboard() {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--green)">${fmCria_(totalIngresos)}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--green)">${fmCria_(totalIngresos)}</div>
         </div>
       </div>
     </div>
@@ -1786,7 +1786,7 @@ function buildDashboard() {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fmCria_(totalEgresos)}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--clay)">${fmCria_(totalEgresos)}</div>
         </div>
       </div>
     </div>
@@ -3748,7 +3748,7 @@ function buildRecriaDashboard() {
         <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fmM(ingVentas)}</strong></td></tr>
         <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fmM(ingCesionEng)}</strong></td></tr>
         <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmM(stockValRecria)}</strong></td></tr>
-        <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green)"><strong>${fmM(totalIngresos)}</strong></td></tr>
+        <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fmM(totalIngresos)}</strong></td></tr>
       </tbody></table>
     </div>
 
@@ -3762,7 +3762,7 @@ function buildRecriaDashboard() {
         <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fmM(egAlim)}</strong></td></tr>
         <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fmM(egVet)}</strong></td></tr>
         <tr><td>👷 Sueldos</td><td class="tr"><strong>${fmM(egSueldos)}</strong></td></tr>
-        <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red)"><strong>${fmM(totalEgresos)}</strong></td></tr>
+        <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red);font-size:20px"><strong>${fmM(totalEgresos)}</strong></td></tr>
       </tbody></table>
     </div>
   </div>`;
@@ -5475,7 +5475,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
         </div>
       </div>
     </div>
@@ -5513,7 +5513,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
         </div>
       </div>
     </div>
@@ -5764,7 +5764,7 @@ function buildEngordeCostos_(rodeoId, fm) {
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
             <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-            <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
+            <div style="font-size:28px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
           </div>
         </div>
       </div>
@@ -5793,7 +5793,7 @@ function buildEngordeCostos_(rodeoId, fm) {
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
             <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-            <div style="font-size:22px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
+            <div style="font-size:28px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
           </div>
         </div>
       </div>
@@ -7497,18 +7497,29 @@ function calcMargenCria_(campana, desde, hasta) {
     filesCes.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: precioKg || (total/cant/peso||0), total });
   });
 
-  // EF — stock valorizado actual (con peso de última pesada, igual que el dashboard)
-  const stockTodos = S.stock || [];
+  // EF — stock valorizado actual
+  // Mismo método que buildDashboard: recalcula stock desde movimientos para evitar
+  // diferencias con S.stock (que viene del backend y puede estar desactualizado).
+  const stockPorRodeoMB = {};
+  movs.forEach(m => {
+    if (m.rodeo_destino_id) stockPorRodeoMB[String(m.rodeo_destino_id)] = (stockPorRodeoMB[String(m.rodeo_destino_id)]||0) + (Number(m.cantidad)||0);
+    if (m.rodeo_origen_id && m.tipo !== 'Saldo inicial') stockPorRodeoMB[String(m.rodeo_origen_id)] = (stockPorRodeoMB[String(m.rodeo_origen_id)]||0) - (Number(m.cantidad)||0);
+  });
+  (S.cache.ventas||[]).forEach(v => {
+    if (v.rodeo_id) stockPorRodeoMB[String(v.rodeo_id)] = (stockPorRodeoMB[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
+  });
+  (S.cache.mortandad||[]).forEach(m => {
+    if (m.rodeo_id) stockPorRodeoMB[String(m.rodeo_id)] = (stockPorRodeoMB[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
+  });
   let ef = 0;
   rodeosCria.forEach(r => {
-    const stk = stockTodos.find(s => String(s.rodeo_id) === String(r.rodeo_id));
-    if (stk && stk.stock > 0) {
-      const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-      const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
-      const val = valorizarRodeo_(r, stk.stock, pesoP);
-      ef += val;
-      filasEF.push({ rodeo: r.nombre, cant: stk.stock, precio: pesoP?val/stk.stock/pesoP:val/stk.stock||0, total: val });
-    }
+    const stock = Math.max(0, stockPorRodeoMB[String(r.rodeo_id)]||0);
+    if (!stock) return;
+    const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+    const val = valorizarRodeo_(r, stock, pesoP);
+    ef += val;
+    filasEF.push({ rodeo: r.nombre, cant: stock, precio: pesoP?val/stock/pesoP:val/stock||0, total: val });
   });
 
   const ing = ingVentas + ingCesiones + ef;
