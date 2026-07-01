@@ -4375,8 +4375,8 @@ function buildCesionesRecria() {
     h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin cesiones registradas aún.</div></div>`;
   } else {
     h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Fecha</th><th>Rodeo origen</th><th>Cant.</th>
-      <th class="tc">Peso prom.</th><th class="tc">Precio $/kg</th><th class="tc">Total</th>
+      <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th><th class="tc">Cant.</th>
+      <th class="tc">Peso prom.</th><th class="tc">Precio $/kg</th><th class="tc">Total</th><th></th>
     </tr></thead><tbody>`;
     egresos.forEach(e=>{
       const cant    = Number(e.cant_animales)||0;
@@ -4384,13 +4384,19 @@ function buildCesionesRecria() {
       const precio  = Number(e.precio_kg_cesion)||0;
       const total   = cant*peso*precio;
       const or      = rodeosPorId[String(e.rodeo_id)];
+      const de      = rodeosPorId[String(e.rodeo_destino_id)];
       h += `<tr>
         <td>${fd(e.fecha)}</td>
         <td>${or?.nombre||'—'}</td>
+        <td>${de?.nombre||'—'}</td>
         <td class="tc"><strong>${fn(cant)}</strong></td>
         <td class="tc">${peso?fn(peso)+' kg':'—'}</td>
         <td class="tc">${precio?'$ '+fn(precio)+'/kg':'<span class="pill pill-clay">sin precio</span>'}</td>
         <td class="tc"><strong>${total?'$ '+fn(Math.round(total)):'—'}</strong></td>
+        <td><div class="row-actions">
+          <button class="icon-btn ces-r-edit" data-id="${e.egreso_id}" title="Editar">✎</button>
+          <button class="icon-btn danger" data-del="${e.egreso_id}" data-entity="egresos_recria" data-idcol="egreso_id" title="Eliminar">✕</button>
+        </div></td>
       </tr>`;
     });
     h += `</tbody></table></div>`;
@@ -4785,6 +4791,94 @@ function attachRecriaEvents() {
   attachTableDeleteEvents('pesadas', 'pesada_id');
   attachTableDeleteEvents('ventas', 'venta_id');
   attachTableDeleteEvents('egresos_recria', 'egreso_id');
+
+  // Edición de cesiones — actualiza egresos_recria Y el traslado real en movimientos
+  document.querySelectorAll('.ces-r-edit').forEach(btn => {
+    btn.onclick = () => {
+      const egresoId = btn.dataset.id;
+      const egreso = (S.cache.egresos_recria||[]).find(e=>String(e.egreso_id)===String(egresoId));
+      if (!egreso) { toast('No se encontró la cesión.','err'); return; }
+
+      // Modal simple inline
+      const overlay = document.createElement('div');
+      overlay.id = 'ces-edit-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+      overlay.innerHTML = `<div style="background:var(--bg);border-radius:12px;padding:24px;min-width:340px;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,0.2)">
+        <div style="font-weight:700;font-size:16px;margin-bottom:16px">✎ Editar cesión Recría → Terminación</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:14px">
+          Fecha: ${fd(egreso.fecha)} · ${(S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(egreso.rodeo_id))?.nombre||'—'}
+          → ${(S.catalogs?.rodeos||[]).find(r=>String(r.rodeo_id)===String(egreso.rodeo_destino_id))?.nombre||'—'}
+        </div>
+        <div class="fgrid">
+          <div class="fg"><label>Cantidad de animales</label>
+            <input type="number" id="ces-edit-cant" value="${egreso.cant_animales||''}" min="1" step="1"></div>
+          <div class="fg"><label>Peso prom. (kg)</label>
+            <input type="number" id="ces-edit-peso" value="${egreso.peso_prom_kg||''}" min="0" step="1"></div>
+          <div class="fg"><label>Precio $/kg</label>
+            <input type="number" id="ces-edit-precio" value="${egreso.precio_kg_cesion||''}" min="0" step="1"></div>
+        </div>
+        <div id="ces-edit-total" style="font-size:13px;color:var(--green-text);font-weight:600;margin:8px 0"></div>
+        <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+          <button class="btn btn-secondary" id="ces-edit-cancel">Cancelar</button>
+          <button class="btn btn-primary" id="ces-edit-save">💾 Guardar cambios</button>
+        </div>
+      </div>`;
+      document.body.appendChild(overlay);
+
+      function updateTotal() {
+        const c=Number(document.getElementById('ces-edit-cant')?.value)||0;
+        const p=Number(document.getElementById('ces-edit-peso')?.value)||0;
+        const pr=Number(document.getElementById('ces-edit-precio')?.value)||0;
+        const el=document.getElementById('ces-edit-total');
+        if(el) el.textContent = c&&p&&pr ? '💰 Total: $ '+fn(Math.round(c*p*pr)) : '';
+      }
+      ['ces-edit-cant','ces-edit-peso','ces-edit-precio'].forEach(id=>
+        document.getElementById(id)?.addEventListener('input', updateTotal));
+      updateTotal();
+
+      document.getElementById('ces-edit-cancel').onclick = () => overlay.remove();
+      document.getElementById('ces-edit-save').onclick = async () => {
+        const cant   = Number(document.getElementById('ces-edit-cant').value)||0;
+        const peso   = Number(document.getElementById('ces-edit-peso').value)||0;
+        const precio = Number(document.getElementById('ces-edit-precio').value)||0;
+        if (!cant) { toast('La cantidad es obligatoria.','err'); return; }
+        const saveBtn = document.getElementById('ces-edit-save');
+        saveBtn.disabled = true; saveBtn.textContent = '⏳ Guardando...';
+        try {
+          // 1) Actualizar egresos_recria
+          await apiCall('update', { body: { entity: 'egresos_recria', id: egresoId, data: {
+            cant_animales: cant, peso_prom_kg: peso, precio_kg_cesion: precio,
+          }}});
+
+          // 2) Actualizar el traslado correspondiente en movimientos (si existe)
+          const movCorresp = (S.cache.movimientos||[]).find(m=>
+            (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') &&
+            String(m.rodeo_origen_id)===String(egreso.rodeo_id) &&
+            String(m.rodeo_destino_id)===String(egreso.rodeo_destino_id) &&
+            String(m.fecha)===String(egreso.fecha)
+          );
+          if (movCorresp) {
+            await apiCall('update', { body: { entity: 'movimientos', id: movCorresp.movimiento_id, data: {
+              cantidad: cant, peso_prom_kg: peso, precio_kg: precio,
+            }}});
+          }
+
+          invalidateCache('egresos_recria');
+          invalidateCache('movimientos');
+          await loadEntity('egresos_recria', true);
+          await loadEntity('movimientos', true);
+          S.stock = null; await loadStock();
+          S.margenBruto = null;
+          toast('✓ Cesión actualizada', 'ok');
+          overlay.remove();
+          render();
+        } catch(err) {
+          saveBtn.disabled = false; saveBtn.textContent = '💾 Guardar cambios';
+          toast(err.message, 'err');
+        }
+      };
+    };
+  });
 }
 
 function buildEngordePesadasPage() {
@@ -7960,29 +8054,9 @@ function calcMargenTerminacion_(campana, desde, hasta) {
     filasCesRec_E.push({ fecha: e.fecha, rodeo: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_id))?.nombre||'—', destino: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_destino_id))?.nombre||'—', cant: Number(e.cant_animales)||0, peso: Number(e.peso_prom_kg)||0, precioKg: Number(e.precio_kg_cesion)||0, total });
   });
 
-  // Traslados reales Recría→Terminación sin registro en egresos_recria (legacy directo)
-  // IMPORTANTE: solo traslados cuyo ORIGEN es Recría — evita contar traslados internos
-  // dentro de Terminación o traslados desde Cría que ya están en egCesionCria de Recría.
-  const rodeosAllMap_E = Object.fromEntries(rodeosAll_.map(r=>[String(r.rodeo_id),r]));
-  const cesionesRecTrasla_E = movs.filter(m=>{
-    if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
-    if (!rodeosIds.has(String(m.rodeo_destino_id))) return false;
-    const or = rodeosAllMap_E[String(m.rodeo_origen_id)];
-    return or && or.actividad === 'Recría'; // solo desde Recría
-  });
-  cesionesRecTrasla_E.forEach(m=>{
-    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-    if(!precioKg||!peso) return; // sin precio → ya cubierto por egCesionRec con valorización
-    // Solo sumar si no tiene registro en egresos_recria (evitar doble conteo)
-    const yaEnEgresos = (S.cache.egresos_recria||[]).some(e=>
-      String(e.rodeo_id)===String(m.rodeo_origen_id)&&
-      String(e.rodeo_destino_id)===String(m.rodeo_destino_id)&&
-      String(e.fecha)===String(m.fecha)&&
-      Number(e.cant_animales)===Number(m.cantidad)
-    );
-    if(!yaEnEgresos) { egCesionRec+=cant*peso*precioKg; filasCesRec_E.push({ fecha:m.fecha, rodeo:rodeosAll_.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id))?.nombre||'—', destino:rodeosAll_.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id))?.nombre||'—', cant, peso, precioKg, total:cant*peso*precioKg }); }
-  });
+  // Nota: los traslados reales en movimientos NO se suman acá — el registro en
+  // egresos_recria ya cubre el costo de la cesión. El traslado existe solo para
+  // mover el stock, no para duplicar el cálculo económico.
 
   // Compras externas de hacienda (compras_hacienda, no saldos iniciales ni cesiones)
   const egCompra = comprasHacGetAll_()
