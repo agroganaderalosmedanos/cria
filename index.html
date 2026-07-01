@@ -3792,29 +3792,6 @@ function buildRecriaDashboard() {
   // Sueldos KPI
   h += buildSueldoKpiPanel_('recria');
 
-  // Stock por rodeo — formato tabla/líneas, solo stock > 0
-  h += `<div class="panel"><div class="panel-title">🐄 Stock actual por rodeo</div>
-    <div class="tw"><table class="dt"><thead><tr>
-      <th>Rodeo</th><th>Campo</th><th class="tc">Animales</th><th class="tc">Última pesada</th><th class="tc">Bajas</th>
-    </tr></thead><tbody>`;
-  const rodeoConStock = rodeosFiltBase.filter(r => (r.stock||0) > 0);
-  if (!rodeoConStock.length) {
-    h += `<tr><td colspan="5" class="tc" style="color:var(--muted)">Sin stock activo</td></tr>`;
-  } else {
-    rodeoConStock.forEach(r=>{
-      const up = r.ultima_pesada;
-      const mort = mortPorRodeo[String(r.rodeo_id)]||0;
-      h += `<tr style="${mort>0?'background:rgba(200,50,50,0.04)':''}">
-        <td><strong>${r.nombre}</strong></td>
-        <td style="color:var(--text2)">${r.campo_nombre||'—'}</td>
-        <td class="tc"><span style="font-size:18px;font-weight:800;color:var(--gold-text)">${fn(r.stock)}</span></td>
-        <td class="tc" style="color:var(--text2)">${up?`${fn(up.peso_prom_kg)} kg (${fd(up.fecha)})`:'—'}</td>
-        <td class="tc">${mort>0?`<span style="font-size:16px;font-weight:800;color:var(--red)">💀 ${mort}</span>`:'<span style="color:var(--muted)">—</span>'}</td>
-      </tr>`;
-    });
-  }
-  h += `</tbody></table></div></div>`;
-
   // ── Detalle EF (Stock final valorizado) ───────────────────────────────────
   const stockDetalleRec = rodeosFiltBase.filter(r=>(r.stock||0)>0).map(r=>{
     const rodeoObj = rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{};
