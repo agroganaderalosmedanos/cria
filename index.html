@@ -4970,10 +4970,26 @@ function egConsumos_(rodeoId, hastaFecha) {
   const todos = (S.cache.consumos_insumos || []).filter(c => String(c.rodeo_id) === String(rodeoId));
   return hastaFecha ? todos.filter(c => String(c.fecha) <= hastaFecha) : todos;
 }
+// Devuelve el precio unitario vigente de un producto a una fecha dada —
+// es el precio_unitario de la última compra registrada ANTES o EN esa fecha.
+// Si no hay compras previas, usa el precio promedio histórico como fallback.
+function egPrecioVigenteProducto_(productoId, fecha) {
+  const compras = (S.cache.compras_insumos || [])
+    .filter(c => String(c.producto_id) === String(productoId) && (Number(c.precio_unitario) || 0) > 0)
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  if (!compras.length) return 0;
+  // Precio vigente = última compra anterior o igual a la fecha del consumo
+  const vigente = fecha
+    ? compras.find(c => String(c.fecha) <= String(fecha))
+    : compras[0];
+  return vigente ? Number(vigente.precio_unitario) || 0 : Number(compras[compras.length-1].precio_unitario) || 0;
+}
+
 function egCostoPromProducto_(productoId) {
+  // Mantener compatibilidad — usa precio promedio ponderado por cantidad
   const compras = (S.cache.compras_insumos || []).filter(c => String(c.producto_id) === String(productoId));
   const cant = compras.reduce((s, c) => s + (Number(c.cantidad) || 0), 0);
-  const costo = compras.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
+  const costo = compras.reduce((s, c) => s + (Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0), 0);
   return cant > 0 ? costo / cant : 0;
 }
 function egCostoAlim_(rodeoId, hastaFecha, categoria) {
@@ -4983,7 +4999,8 @@ function egCostoAlim_(rodeoId, hastaFecha, categoria) {
       const prod = productos.find(p => String(p.producto_id) === String(c.producto_id));
       if (!prod || prod.categoria !== categoria) return s;
     }
-    return s + (Number(c.cantidad) || 0) * egCostoPromProducto_(c.producto_id);
+    // Usar precio vigente a la fecha del consumo (no promedio global)
+    return s + (Number(c.cantidad) || 0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
   }, 0);
 }
 function egKgVend_(rodeoId) {
@@ -5450,7 +5467,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     const pid = String(c.producto_id);
     if (!costoProm[pid]) costoProm[pid] = { cant: 0, costo: 0 };
     costoProm[pid].cant  += Number(c.cantidad)    || 0;
-    costoProm[pid].costo += Number(c.costo_total) || 0;
+    costoProm[pid].costo += (Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0);
   });
   const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)));
   let totalAlim=0, totalVeter=0, totalOtros=0;
@@ -6928,8 +6945,12 @@ function buildInsumos() {
       <div class="fg" style="min-width:240px"><label>Producto <a href="javascript:void(0)" onclick="toggleNuevoProducto()" style="font-size:11px;margin-left:8px;font-weight:600">+ nuevo producto</a></label>
         <select id="in-producto" onchange="actualizarCampoCompraInsumo_()">${productoOptionsHtml(productos)}</select>
       </div>
-      <div class="fg"><label>Cantidad</label><input type="number" id="in-cantidad" placeholder="Ej: 500" min="0.01" step="0.01"></div>
-      <div class="fg" id="in-costo-wrap"><label>Costo total</label><input type="number" id="in-costo" placeholder="Ej: 150000" min="0" step="0.01"></div>
+      <div class="fg"><label>Cantidad</label><input type="number" id="in-cantidad" placeholder="Ej: 500" min="0.01" step="0.01" oninput="inActualizarTotalCompra_()"></div>
+      <div class="fg" id="in-costo-wrap">
+        <label>Precio unitario</label>
+        <input type="number" id="in-costo" placeholder="Ej: 300" min="0" step="0.01" oninput="inActualizarTotalCompra_()">
+        <div id="in-costo-total-preview" style="font-size:12px;color:var(--green-text);margin-top:3px;font-weight:600"></div>
+      </div>
       <div class="fg" id="in-proveedor-wrap"><label>Proveedor <span class="opt">(opcional)</span></label><input type="text" id="in-proveedor" placeholder="Nombre del proveedor"></div>
       <div class="fg" id="in-compra-campo-wrap" style="display:none"><label>Campo <span class="opt">(este producto se guarda por separado en cada campo)</span></label>
         <select id="in-compra-campo">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
@@ -7074,7 +7095,7 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
   let filas = [
     ...comprasF.map(c => {
       const p = productosMap[c.producto_id] || {};
-      const detalle = [c.costo_total ? 'Costo: ' + fn(c.costo_total) : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
+      const detalle = [c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
       return {
         fecha: c.fecha || '', tipoLabel: 'Compra', tipoClass: 'pill-green',
         producto: p.nombre || '(producto eliminado)', campo: '—', rodeo: '—',
@@ -7193,7 +7214,7 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
   let movs = [
     ...comprasP.map(c => ({
       fecha: c.fecha || '', tipoLabel: 'Compra', tipoClass: 'pill-green', entrada: Number(c.cantidad) || 0, salida: 0,
-      detalle: [c.costo_total ? 'Costo: ' + fn(c.costo_total) : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
+      detalle: [c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
       entity: 'compras_insumos', idCol: 'compra_id', id: c.compra_id,
     })),
     ...consumosP.map(c => ({
@@ -7294,6 +7315,19 @@ window.actualizarCampoCompraInsumo_ = function() {
   if (kw && !esCompra) kw.style.display = esPorCampo ? 'flex' : 'none';
 };
 
+window.inActualizarTotalCompra_ = function() {
+  const cant = Number(document.getElementById('in-cantidad')?.value) || 0;
+  const precio = Number(document.getElementById('in-costo')?.value) || 0;
+  const preview = document.getElementById('in-costo-total-preview');
+  if (preview) {
+    if (cant > 0 && precio > 0) {
+      preview.textContent = '💰 Total: $ ' + fn(cant * precio);
+    } else {
+      preview.textContent = '';
+    }
+  }
+};
+
 function attachInsumosEvents() {
   function applyInsumoTipoUI(tipo) {
     const esCompra = tipo === 'Compra';
@@ -7360,7 +7394,7 @@ function attachInsumosEvents() {
         if (esPorCampo && !campoCompraId) { toast('Este producto se guarda por separado en cada campo — elegí a cuál entra esta compra.', 'err'); save.disabled = false; return; }
         const data = {
           fecha, producto_id: productoId, cantidad,
-          costo_total: Number(document.getElementById('in-costo').value) || '',
+          precio_unitario: Number(document.getElementById('in-costo').value) || '',
           proveedor: document.getElementById('in-proveedor').value.trim(),
           observaciones: document.getElementById('in-obs').value.trim(),
           campo_id: esPorCampo ? campoCompraId : '',
