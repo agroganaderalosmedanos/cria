@@ -7522,7 +7522,9 @@ function calcMargenCria_(campana, desde, hasta) {
       if (m.rodeo_destino_id) stockPorRodeoMB[String(m.rodeo_destino_id)] = (stockPorRodeoMB[String(m.rodeo_destino_id)]||0) + cant;
     }
   });
-  (S.cache.ventas||[]).filter(v=>rodeosIds.has(String(v.rodeo_id))).forEach(v => {
+  // Restar ventas exactamente igual que buildDashboard — sin filtrar por rodeosIds,
+  // para que stockPorRodeoMB sea idéntico al stockPorRodeo del dashboard.
+  (S.cache.ventas||[]).forEach(v => {
     stockPorRodeoMB[String(v.rodeo_id)] = (stockPorRodeoMB[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
   });
   let ef = 0;
