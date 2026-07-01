@@ -5289,7 +5289,8 @@ function buildEngorde() {
     }
 
     // 5) Detalle por corral + KPIs productivos
-    const rodeosEngFiltLocal = campSelecField ? rodeosEng.filter(r=>String(r.campo_id)===String(campSelecField)) : rodeosEng;
+    const _campFiltro = S._dashEngCampo || '';
+    const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
     h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm);
 
     // 6) Mortandad — al final
