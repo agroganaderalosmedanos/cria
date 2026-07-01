@@ -1798,17 +1798,16 @@ function buildDashboard() {
     <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fmCria_(Math.abs(margen))}</div>
   </div>`;
 
-  // ── Detalle stock valorizado ─────────────────────────────────────────
+  // ── Detalle stock valorizado (EF) ─────────────────────────────────────────
   if (stockDetalleRows.length) {
     h += `<div class="panel">
-      <div class="panel-title">📦 Detalle stock valorizado por rodeo</div>
+      <div class="panel-title">📦 Stock final valorizado (EF) — por rodeo</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Rodeo</th><th>Campo</th><th>Categoría</th>
         <th class="tc">Stock</th><th class="tr">Peso prom.</th>
         <th class="tr">Método</th><th class="tr">Valor total</th>
       </tr></thead><tbody>`;
     stockDetalleRows.forEach(row => {
-      const cat = (row.rodeo.categoria||'').toLowerCase().trim();
       const metodo = metodoValorizacion_(row.rodeo, row.pesoP);
       h += `<tr>
         <td><strong>${row.rodeo.nombre}</strong></td>
@@ -1820,6 +1819,120 @@ function buildDashboard() {
         <td class="tr"><strong>${fmCria_(row.val)}</strong></td>
       </tr>`;
     });
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="6" class="tr">TOTAL EF</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmCria_(stockValCria)}</td>
+    </tr>`;
+    h += '</tbody></table></div></div>';
+  }
+
+  // ── Detalle Saldo Inicial (EI) ─────────────────────────────────────────
+  if (saldosIniciales.length) {
+    h += `<div class="panel">
+      <div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th>
+        <th class="tr">Precio/cab.</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totEI = 0;
+    saldosIniciales.forEach(m => {
+      const cant = Number(m.cantidad)||0;
+      const precio = Number(m.precio_cabeza)||0;
+      const total = cant * precio;
+      totEI += total;
+      const rodeo = rodeosPorId[String(m.rodeo_destino_id)];
+      h += `<tr>
+        <td>${fd(m.fecha)}</td>
+        <td><strong>${rodeo?.nombre||'—'}</strong></td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tr">${precio ? '$ '+fn(precio) : '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
+        <td class="tr"><strong>${total ? fmCria_(total) : '—'}</strong></td>
+      </tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="4" class="tr">TOTAL EI</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmCria_(totEI)}</td>
+    </tr>`;
+    h += '</tbody></table></div></div>';
+  }
+
+  // ── Detalle Cesiones enviadas a Recría ─────────────────────────────────────────
+  if (cesiones.length) {
+    h += `<div class="panel">
+      <div class="panel-title">⬆ Cesiones enviadas a Recría — detalle</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
+        <th class="tc">Cab.</th><th class="tc">Kg prom.</th>
+        <th class="tr">$/kg</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totCes = 0;
+    cesiones.forEach(m => {
+      const cant = Number(m.cantidad)||0;
+      const peso = Number(m.peso_prom_kg)||0;
+      const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      let total = 0;
+      if (precioKg && peso) {
+        total = cant * peso * precioKg;
+      } else {
+        const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+        const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+        total = valorizarRodeo_(rodeo||{}, cant, pesoP);
+      }
+      totCes += total;
+      const or = rodeosPorId[String(m.rodeo_origen_id)];
+      const de = rodeosPorId[String(m.rodeo_destino_id)];
+      const sinPrecio = !precioKg || !peso;
+      h += `<tr${sinPrecio?' style="background:rgba(200,150,40,0.06)"':''}>
+        <td>${fd(m.fecha)}</td>
+        <td><strong>${or?.nombre||'—'}</strong></td>
+        <td>${de?.nombre||'—'}</td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tc">${peso?fn(peso)+' kg':'—'}</td>
+        <td class="tr">${precioKg?'$ '+fn(precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
+        <td class="tr"><strong>${fmCria_(total)}</strong></td>
+      </tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="6" class="tr">TOTAL cesiones</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmCria_(totCes)}</td>
+    </tr>`;
+    h += '</tbody></table></div></div>';
+  }
+
+  // ── Detalle Ventas ─────────────────────────────────────────
+  if (ventasCria.length) {
+    h += `<div class="panel">
+      <div class="panel-title">💰 Ventas — detalle</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo</th><th class="tc">Cab.</th>
+        <th class="tr">Kg campo</th><th class="tr">Precio pactado</th>
+        <th class="tr">Importe liq.</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totVentas = 0;
+    ventasCria.slice().sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||''))).forEach(v => {
+      const cant = Number(v.cant_animales)||0;
+      const kg = Number(v.peso_campo_kg)||0;
+      const pPact = Number(v.precio_pactado)||0;
+      const imLiq = Number(v.importe_liq)||0;
+      const total = imLiq || (pPact * kg) || 0;
+      totVentas += total;
+      const rodeo = rodeosPorId[String(v.rodeo_id)];
+      const sinLiq = !imLiq;
+      h += `<tr${sinLiq?' style="background:rgba(200,150,40,0.04)"':''}>
+        <td>${fd(v.fecha_salida)}</td>
+        <td><strong>${rodeo?.nombre||'—'}</strong></td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
+        <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
+        <td class="tr">${imLiq?fmCria_(imLiq):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
+        <td class="tr"><strong>${total?fmCria_(total):'—'}</strong></td>
+      </tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="6" class="tr">TOTAL ventas</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmCria_(totVentas)}</td>
+    </tr>`;
     h += '</tbody></table></div></div>';
   }
 
