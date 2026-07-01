@@ -3677,10 +3677,22 @@ function buildRecriaDashboard() {
     const de = rodeosAllMap[String(m.rodeo_destino_id)];
     return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&rodeosIdsFilt.has(String(m.rodeo_destino_id));
   }).forEach(m=>{
-    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_cabeza)||0;
-    const imp = cant*peso*precioKg;
-    egCesionCria += imp;
-    detalleCesCria.push({ fecha: m.fecha, rodeo: rodeoNombre(m.rodeo_destino_id), total: cant, kg: cant*peso, importe: imp });
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    let total=0, pesoUsado=peso;
+    if (precioKg&&peso) { total=cant*peso*precioKg; }
+    else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=cant*pesoUsado*precioKg;
+    } else {
+      const or=rodeosAllMap[String(m.rodeo_origen_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=valorizarRodeo_(or||{},cant,pesoUsado);
+    }
+    egCesionCria += total;
+    detalleCesCria.push({ fecha: m.fecha, rodeo: rodeoNombre(m.rodeo_destino_id), total: cant, kg: cant*(pesoUsado||0), importe: total });
   });
 
   // 2. Compra externa (movimientos hacia rodeos de recría con precio)
@@ -3738,8 +3750,6 @@ function buildRecriaDashboard() {
         <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmM(stockValRecria)}</strong></td></tr>
         <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green)"><strong>${fmM(totalIngresos)}</strong></td></tr>
       </tbody></table>
-      ${detalleVentas.length ? `<div style="font-size:11px;color:var(--text2);margin-top:8px"><strong>Ventas:</strong> ${detalleVentas.map(v=>`${fd(v.fecha)} — ${v.rodeo} (${fn(v.cant)} cab.) ${fmM(v.importe)}`).join('<br>')}</div>` : ''}
-      ${detalleCesEng.length ? `<div style="font-size:11px;color:var(--text2);margin-top:6px"><strong>Cesiones a Terminación:</strong> ${detalleCesEng.map(e=>`${fd(e.fecha)} — ${e.rodeo} ${fn(e.cant)} cab. · ${fn(Math.round(e.kg))} kg ${e.sinPrecio?'<span style="color:var(--red)">⚠ sin precio interno</span>':fmM(e.importe)}`).join('<br>')}</div>` : ''}
     </div>
 
     <!-- EGRESOS -->
