@@ -8525,13 +8525,247 @@ function attachMargenBrutoEvents() {
   });
 }
 
+async function exportarStockExcel_() {
+  toast('Generando Excel... puede tardar unos segundos', 'ok');
+  try {
+    const XLSX = await import('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js').catch(()=>null) || window.XLSX;
+    if (!XLSX) { toast('No se pudo cargar la librería Excel. Reintentá.', 'err'); return; }
+
+    const movs     = S.cache.movimientos     || [];
+    const ventas   = S.cache.ventas          || [];
+    const pariciones = S.cache.pariciones    || [];
+    const abortos  = S.cache.abortos         || [];
+    const mortandad = S.cache.mortandad      || [];
+    const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
+    const rodeosMap = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id), r]));
+
+    // Categorías únicas (columnas)
+    const cats = [...new Set(rodeos.map(r=>(r.categoria||'').toLowerCase()).filter(Boolean))].sort();
+    // Función para obtener categoría de un rodeo_id
+    const cat_ = id => (rodeosMap[String(id)]?.categoria||'').toLowerCase();
+
+    // Determinar rango de meses desde el primer movimiento hasta hoy
+    const allDates = [
+      ...movs.map(m=>m.fecha), ...ventas.map(v=>v.fecha_salida),
+      ...pariciones.map(p=>p.fecha), ...abortos.map(a=>a.fecha), ...mortandad.map(m=>m.fecha)
+    ].filter(Boolean).map(d=>String(d).slice(0,7)).sort();
+    if (!allDates.length) { toast('Sin datos para exportar.', 'err'); return; }
+
+    const mesInicio = allDates[0];
+    const mesFin = today().slice(0,7);
+
+    // Generar lista de meses
+    const meses = [];
+    let [y,m] = mesInicio.split('-').map(Number);
+    const [yf,mf] = mesFin.split('-').map(Number);
+    while (y < yf || (y===yf && m<=mf)) {
+      meses.push(`${y}-${String(m).padStart(2,'0')}`);
+      m++; if (m>12) { m=1; y++; }
+    }
+
+    // Calcular stock acumulado por categoría hasta fin de cada mes
+    function stockAlCierreDeMes_(mesStr) {
+      const hasta = mesStr + '-31';
+      const stock = {};
+      cats.forEach(c => stock[c] = 0);
+      movs.forEach(m => {
+        if (!m.fecha || String(m.fecha) > hasta) return;
+        const cant = Number(m.cantidad)||0;
+        if (m.rodeo_destino_id) { const c=cat_(m.rodeo_destino_id); if(c) stock[c]=(stock[c]||0)+cant; }
+        if (m.rodeo_origen_id && m.tipo !== 'Saldo inicial') { const c=cat_(m.rodeo_origen_id); if(c) stock[c]=(stock[c]||0)-cant; }
+      });
+      ventas.forEach(v => {
+        if (!v.fecha_salida || String(v.fecha_salida) > hasta) return;
+        const c=cat_(v.rodeo_id); if(c) stock[c]=(stock[c]||0)-(Number(v.cant_animales)||0);
+      });
+      mortandad.forEach(m => {
+        if (!m.fecha || String(m.fecha) > hasta) return;
+        const c=cat_(m.rodeo_id); if(c) stock[c]=(stock[c]||0)-(Number(m.cantidad)||1);
+      });
+      return stock;
+    }
+
+    // Calcular movimientos de un mes por tipo y categoría
+    function movsDeMes_(mesStr) {
+      const desde = mesStr + '-01', hasta = mesStr + '-31';
+      const inRange = d => d && String(d) >= desde && String(d) <= hasta;
+      const r = {
+        carga_inicial: {}, nacimiento: {}, compra: {}, traslado_in: {},
+        recategorizacion_in: {}, venta: {}, muerte: {}, traslado_out: {},
+        recategorizacion_out: {}, aborto: {},
+      };
+      cats.forEach(c => Object.keys(r).forEach(k => r[k][c]=0));
+
+      movs.forEach(m => {
+        if (!inRange(m.fecha)) return;
+        const cant = Number(m.cantidad)||0;
+        const cIn  = cat_(m.rodeo_destino_id);
+        const cOut = cat_(m.rodeo_origen_id);
+        const orAct  = rodeosMap[String(m.rodeo_origen_id)]?.actividad;
+        const deAct  = rodeosMap[String(m.rodeo_destino_id)]?.actividad;
+
+        if (m.tipo === 'Saldo inicial') {
+          if (cIn) r.carga_inicial[cIn] = (r.carga_inicial[cIn]||0) + cant;
+        } else if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') {
+          // Cambio de categoría si cat origen ≠ cat destino
+          if (cIn && cOut && cIn !== cOut) {
+            r.recategorizacion_in[cIn]  = (r.recategorizacion_in[cIn]||0)  + cant;
+            r.recategorizacion_out[cOut]= (r.recategorizacion_out[cOut]||0)+ cant;
+          } else {
+            if (cIn)  r.traslado_in[cIn]  = (r.traslado_in[cIn]||0)  + cant;
+            if (cOut) r.traslado_out[cOut]= (r.traslado_out[cOut]||0)+ cant;
+          }
+        }
+      });
+      ventas.forEach(v => {
+        if (!inRange(v.fecha_salida)) return;
+        const c=cat_(v.rodeo_id); if(c) r.venta[c]=(r.venta[c]||0)+(Number(v.cant_animales)||0);
+      });
+      pariciones.forEach(p => {
+        if (!inRange(p.fecha)) return;
+        const rodeo = rodeosMap[String(p.rodeo_id)];
+        const c = rodeo?.categoria?.toLowerCase() === 'ternero' || rodeo?.categoria?.toLowerCase() === 'ternera'
+          ? rodeo.categoria.toLowerCase() : 'ternero';
+        r.nacimiento[c] = (r.nacimiento[c]||0) + (Number(p.nacidos_vivos)||0);
+      });
+      mortandad.forEach(m => {
+        if (!inRange(m.fecha)) return;
+        const c=cat_(m.rodeo_id); if(c) r.muerte[c]=(r.muerte[c]||0)+(Number(m.cantidad)||1);
+      });
+      abortos.forEach(a => {
+        if (!inRange(a.fecha)) return;
+        const c=cat_(a.rodeo_id); if(c) r.aborto[c]=(r.aborto[c]||0)+1;
+      });
+      return r;
+    }
+
+    // Estilos
+    const HDR_DARK  = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F4E2B'}}, alignment:{horizontal:'center'} };
+    const HDR_MED   = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'2E7D32'}}, alignment:{horizontal:'center'} };
+    const ENTRADA   = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'2E7D32'}} };
+    const SALIDA    = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'C62828'}} };
+    const TOT_IN    = { font:{bold:true}, fill:{fgColor:{rgb:'C8E6C9'}}, alignment:{horizontal:'center'} };
+    const TOT_OUT   = { font:{bold:true}, fill:{fgColor:{rgb:'FFCDD2'}}, alignment:{horizontal:'center'} };
+    const TOT_FINAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1565C0'}}, alignment:{horizontal:'center'} };
+    const EX_ANT    = { font:{bold:true}, fill:{fgColor:{rgb:'E8F5E9'}}, alignment:{horizontal:'center'} };
+    const NUM       = { alignment:{horizontal:'center'} };
+    const SUBROW    = { fill:{fgColor:{rgb:'F5F5F5'}} };
+
+    const wb = XLSX.utils.book_new();
+
+    // === REPORTE 1: Stock mensual ===
+    const wsStock = [];
+    wsStock.push(['', ...meses.map(m => {
+      const [y,mo] = m.split('-');
+      return new Date(Number(y),Number(mo)-1,1).toLocaleString('es-AR',{month:'long',year:'numeric'});
+    })]);
+    cats.forEach(cat => {
+      const row = [cat.charAt(0).toUpperCase()+cat.slice(1)];
+      meses.forEach(mes => {
+        const st = stockAlCierreDeMes_(mes);
+        row.push(Math.max(0, st[cat]||0));
+      });
+      wsStock.push(row);
+    });
+    const ws1 = XLSX.utils.aoa_to_sheet(wsStock);
+    ws1['!cols'] = [{wch:20}, ...meses.map(()=>({wch:14}))];
+    XLSX.utils.book_append_sheet(wb, ws1, 'Stock Mensual');
+
+    // === REPORTE 2: Una hoja por mes ===
+    meses.forEach(mesStr => {
+      const [y,mo] = mesStr.split('-');
+      const nombreMes = new Date(Number(y),Number(mo)-1,1).toLocaleString('es-AR',{month:'long',year:'numeric'});
+      const stockAnterior = stockAlCierreDeMes_(
+        mo==='01' ? `${Number(y)-1}-12` : `${y}-${String(Number(mo)-1).padStart(2,'0')}`
+      );
+      const movMes = movsDeMes_(mesStr);
+      const stockFinal = stockAlCierreDeMes_(mesStr);
+
+      const aoa = [];
+      const styles = []; // parallel array de estilos por celda
+
+      const catCols = cats.map(c=>c.charAt(0).toUpperCase()+c.slice(1));
+      aoa.push(['CATEGORÍAS', '', ...catCols]);
+      aoa.push(['', 'EXIS. ANTERIOR', ...cats.map(c=>Math.max(0,stockAnterior[c]||0))]);
+      aoa.push(['ENTRADAS', '', ...cats.map(()=>'')]);
+
+      const rowsEntradas = [
+        ['','CARGA INICIAL',    ...cats.map(c=>movMes.carga_inicial[c]||0)],
+        ['','NACIMIENTO',       ...cats.map(c=>movMes.nacimiento[c]||0)],
+        ['','COMPRA',           ...cats.map(()=>0)],
+        ['','TRASLADO',         ...cats.map(c=>movMes.traslado_in[c]||0)],
+        ['','RECATEGORIZACIÓN', ...cats.map(c=>movMes.recategorizacion_in[c]||0)],
+        ['','AJUSTE',           ...cats.map(()=>0)],
+      ];
+      rowsEntradas.forEach(r=>aoa.push(r));
+
+      // TOTAL ENTRADAS (fórmulas)
+      const totInRow = ['TOTAL DE ENTRADAS', ''];
+      cats.forEach((c,ci) => {
+        const startRow = aoa.length - rowsEntradas.length + 1; // fila Excel base 1
+        totInRow.push(rowsEntradas.reduce((s,r)=>s+(r[ci+2]||0),0));
+      });
+      aoa.push(totInRow);
+
+      aoa.push(['SALIDAS', '', ...cats.map(()=>'')]);
+      const rowsSalidas = [
+        ['','MUERTE',           ...cats.map(c=>movMes.muerte[c]||0)],
+        ['','ABORTO',           ...cats.map(c=>movMes.aborto[c]||0)],
+        ['','VENTA',            ...cats.map(c=>movMes.venta[c]||0)],
+        ['','TRASLADO',         ...cats.map(c=>movMes.traslado_out[c]||0)],
+        ['','RECATEGORIZACIÓN', ...cats.map(c=>movMes.recategorizacion_out[c]||0)],
+        ['','AJUSTE',           ...cats.map(()=>0)],
+      ];
+      rowsSalidas.forEach(r=>aoa.push(r));
+
+      const totOutRow = ['TOTAL DE SALIDAS', ''];
+      cats.forEach((c,ci) => {
+        totOutRow.push(rowsSalidas.reduce((s,r)=>s+(r[ci+2]||0),0));
+      });
+      aoa.push(totOutRow);
+
+      aoa.push(['TOTALES FINALES', '', ...cats.map(c=>Math.max(0,stockFinal[c]||0))]);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{wch:22},{wch:20},...cats.map(()=>({wch:16}))];
+
+      // Anchos de fila para el título implícito
+      ws['!rows'] = aoa.map(()=>({hpt:18}));
+
+      XLSX.utils.book_append_sheet(wb, ws, nombreMes.slice(0,31));
+    });
+
+    // Exportar
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Stock_${today().slice(0,7)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
 function buildStockHacienda() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const hoy = today();
   const stockList = S.stock || [];
   const categoriasStock = [...new Set(stockList.map(function(s){ return s.categoria; }).filter(Boolean))].sort(function(a,b){ return a.localeCompare(b,'es'); });
 
-  let h = '<div class="page-header"><div class="page-title">Stock de Hacienda</div><div class="page-sub">Existencias actuales y reporte histórico por campo y categoría</div></div>';
+  let h = `<div class="page-header">
+    <div class="page-title">Stock de Hacienda</div>
+    <div class="page-sub">Existencias actuales y reporte histórico por campo y categoría</div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="exportarStockExcel_()" style="font-size:13px">
+        📊 Exportar Libro de Movimientos (.xlsx)
+      </button>
+    </div>
+  </div>`;
 
   // Stock actual (con selector de fecha)
   h += '<div class="panel"><div class="panel-title">📦 Stock a una fecha</div>';
