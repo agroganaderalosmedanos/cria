@@ -8574,22 +8574,39 @@ async function exportarStockExcel_() {
 
     // Calcular stock acumulado por categoría hasta fin de cada mes
     function stockAlCierreDeMes_(mesStr) {
-      const hasta = mesStr + '-31';
-      const stock = {};
-      cats.forEach(c => stock[c] = 0);
+      // Misma lógica exacta que getStockTodos en el backend:
+      // 1) Calcula stock por rodeo_id
+      // 2) Suma por categoría
+      // No incluye abortos (el backend tampoco los resta del stock)
+      const hasta = mesStr + '-99'; // '99' garantiza incluir cualquier día del mes
+      const stockRodeo = {};
+      rodeos.forEach(r => { stockRodeo[String(r.rodeo_id)] = 0; });
+
       movs.forEach(m => {
-        if (!m.fecha || String(m.fecha) > hasta) return;
+        if (!m.fecha || String(m.fecha).slice(0,7) > mesStr) return;
         const cant = Number(m.cantidad)||0;
-        if (m.rodeo_destino_id) { const c=cat_(m.rodeo_destino_id); if(c) stock[c]=(stock[c]||0)+cant; }
-        if (m.rodeo_origen_id && m.tipo !== 'Saldo inicial') { const c=cat_(m.rodeo_origen_id); if(c) stock[c]=(stock[c]||0)-cant; }
+        const dest = String(m.rodeo_destino_id||'');
+        const orig = String(m.rodeo_origen_id||'');
+        if (dest && stockRodeo[dest] !== undefined) stockRodeo[dest] += cant;
+        if (m.tipo !== 'Saldo inicial' && orig && stockRodeo[orig] !== undefined) stockRodeo[orig] -= cant;
       });
       ventas.forEach(v => {
-        if (!v.fecha_salida || String(v.fecha_salida) > hasta) return;
-        const c=cat_(v.rodeo_id); if(c) stock[c]=(stock[c]||0)-(Number(v.cant_animales)||0);
+        if (!v.fecha_salida || String(v.fecha_salida).slice(0,7) > mesStr) return;
+        const rid = String(v.rodeo_id||'');
+        if (stockRodeo[rid] !== undefined) stockRodeo[rid] -= (Number(v.cant_animales)||0);
       });
       mortandad.forEach(m => {
-        if (!m.fecha || String(m.fecha) > hasta) return;
-        const c=cat_(m.rodeo_id); if(c) stock[c]=(stock[c]||0)-(Number(m.cantidad)||1);
+        if (!m.fecha || String(m.fecha).slice(0,7) > mesStr) return;
+        const rid = String(m.rodeo_id||'');
+        if (stockRodeo[rid] !== undefined) stockRodeo[rid] -= (Number(m.cantidad)||1);
+      });
+
+      // Sumar por categoría
+      const stock = {};
+      cats.forEach(c => stock[c] = 0);
+      rodeos.forEach(r => {
+        const c = (r.categoria||'').toLowerCase();
+        if (c && stock[c] !== undefined) stock[c] += Math.max(0, stockRodeo[String(r.rodeo_id)]||0);
       });
       return stock;
     }
