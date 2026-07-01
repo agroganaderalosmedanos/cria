@@ -7497,15 +7497,17 @@ function calcMargenCria_(campana, desde, hasta) {
     filesCes.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: precioKg || (total/cant/peso||0), total });
   });
 
-  // EF — stock valorizado actual
+  // EF — stock valorizado actual (con peso de última pesada, igual que el dashboard)
   const stockTodos = S.stock || [];
   let ef = 0;
   rodeosCria.forEach(r => {
     const stk = stockTodos.find(s => String(s.rodeo_id) === String(r.rodeo_id));
     if (stk && stk.stock > 0) {
-      const val = valorizarRodeo_(r, stk.stock, 0);
+      const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+      const val = valorizarRodeo_(r, stk.stock, pesoP);
       ef += val;
-      filasEF.push({ rodeo: r.nombre, cant: stk.stock, precio: val/stk.stock||0, total: val });
+      filasEF.push({ rodeo: r.nombre, cant: stk.stock, precio: pesoP?val/stk.stock/pesoP:val/stk.stock||0, total: val });
     }
   });
 
@@ -7717,19 +7719,27 @@ function calcMargenTerminacion_(campana, desde, hasta) {
     filasCesRec_E.push({ fecha: e.fecha, rodeo: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_id))?.nombre||'—', destino: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_destino_id))?.nombre||'—', cant: Number(e.cant_animales)||0, peso: Number(e.peso_prom_kg)||0, precioKg: Number(e.precio_kg_cesion)||0, total });
   });
 
-  // Compras de hacienda — filtradas por campaña o fecha (excluyendo saldos iniciales)
-  const comprasH = comprasHacGetAll_().filter(c =>
-    rodeosIds.has(String(c.rodeo_id||'')) ||
-    rodeosEng.some(r=>String(r.campo_id)===String(c.campo_id))
-  );
-  let egCompra = comprasH
-    .filter(c=>(!campana||c.campana===campana)&&(!desde||String(c.fecha)>=desde)&&(!hasta||String(c.fecha)<=hasta))
+  // Traslados reales Recría→Terminación (mismo criterio que buildEngordeDashboard_)
+  const cesionesRecTrasla_E = movs.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosIds.has(String(m.rodeo_destino_id)));
+  cesionesRecTrasla_E.forEach(m=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    if(!precioKg||!peso) return; // sin precio → ya cubierto por egCesionRec con valorización
+    // Solo sumar si no tiene registro en egresos_recria (evitar doble conteo)
+    const yaEnEgresos = (S.cache.egresos_recria||[]).some(e=>
+      String(e.rodeo_id)===String(m.rodeo_origen_id)&&
+      String(e.rodeo_destino_id)===String(m.rodeo_destino_id)&&
+      String(e.fecha)===String(m.fecha)&&
+      Number(e.cant_animales)===Number(m.cantidad)
+    );
+    if(!yaEnEgresos) { egCesionRec+=cant*peso*precioKg; filasCesRec_E.push({ fecha:m.fecha, rodeo:rodeosAll_.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id))?.nombre||'—', destino:rodeosAll_.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id))?.nombre||'—', cant, peso, precioKg, total:cant*peso*precioKg }); }
+  });
+
+  // Compras externas de hacienda (compras_hacienda, no saldos iniciales ni cesiones)
+  const egCompra = comprasHacGetAll_()
+    .filter(c=>(rodeosIds.has(String(c.rodeo_id||''))||rodeosEng.some(r=>String(r.campo_id)===String(c.campo_id)))&&
+      (!campana||c.campana===campana)&&(!desde||String(c.fecha)>=desde)&&(!hasta||String(c.fecha)<=hasta))
     .reduce((s,c)=>s+(Number(c.importe_total)||0),0);
-  // Si no hay compras con campaña, usar egCostoCompra_ (histórico) excluyendo EI
-  if (egCompra===0) {
-    rodeosEng.forEach(r=>{ egCompra+=egCostoCompra_(r.rodeo_id); });
-    egCompra = Math.max(0, egCompra - ei); // evitar duplicar EI
-  }
 
   // Consumos — sin filtro de campaña si no tienen campaña cargada
   const consumos = (S.cache.consumos_insumos||[]).filter(c=>
