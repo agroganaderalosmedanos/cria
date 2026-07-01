@@ -7884,8 +7884,16 @@ function calcMargenTerminacion_(campana, desde, hasta) {
     filasCesRec_E.push({ fecha: e.fecha, rodeo: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_id))?.nombre||'—', destino: rodeosAll_.find(r=>String(r.rodeo_id)===String(e.rodeo_destino_id))?.nombre||'—', cant: Number(e.cant_animales)||0, peso: Number(e.peso_prom_kg)||0, precioKg: Number(e.precio_kg_cesion)||0, total });
   });
 
-  // Traslados reales Recría→Terminación (mismo criterio que buildEngordeDashboard_)
-  const cesionesRecTrasla_E = movs.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosIds.has(String(m.rodeo_destino_id)));
+  // Traslados reales Recría→Terminación sin registro en egresos_recria (legacy directo)
+  // IMPORTANTE: solo traslados cuyo ORIGEN es Recría — evita contar traslados internos
+  // dentro de Terminación o traslados desde Cría que ya están en egCesionCria de Recría.
+  const rodeosAllMap_E = Object.fromEntries(rodeosAll_.map(r=>[String(r.rodeo_id),r]));
+  const cesionesRecTrasla_E = movs.filter(m=>{
+    if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    if (!rodeosIds.has(String(m.rodeo_destino_id))) return false;
+    const or = rodeosAllMap_E[String(m.rodeo_origen_id)];
+    return or && or.actividad === 'Recría'; // solo desde Recría
+  });
   cesionesRecTrasla_E.forEach(m=>{
     const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
     const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
