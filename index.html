@@ -1627,16 +1627,21 @@ function buildDashboard() {
     return origen && (origen.actividad==='Cría'||origen.actividad==='Cria') &&
            destino && (destino.actividad==='Recría'||destino.actividad==='Engorde');
   });
-  // Valorizar cesiones con precio de cesión acordado (precio_cabeza = $/kg en cesiones)
+  // Valorizar cesiones — misma lógica que el panel de detalle para que coincidan
+  // Prioridad: precio_kg → precio_cabeza (como $/kg en cesiones) → valorización del mes
   const totalCesiones = cesiones.reduce((s,m) => {
     const cant     = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_cabeza)||0;
     const peso     = Number(m.peso_prom_kg)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
     if (precioKg && peso) {
-      // Precio de cesión cargado manualmente
       return s + cant * peso * precioKg;
+    } else if (precioKg && !peso) {
+      // Tiene precio pero no peso — buscar peso de última pesada del rodeo
+      const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoFallback = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
+      return s + cant * pesoFallback * precioKg;
     } else {
-      // Fallback: valorizar con precios de stock si no tiene precio de cesión
+      // Sin precio — valorizar con precios de stock del mes
       const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
       const cat = (rodeo?.categoria||'').toLowerCase().trim();
       const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -1870,25 +1875,30 @@ function buildDashboard() {
       const cant = Number(m.cantidad)||0;
       const peso = Number(m.peso_prom_kg)||0;
       const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-      let total = 0;
+      let total = 0, pesoUsado = peso;
       if (precioKg && peso) {
         total = cant * peso * precioKg;
+      } else if (precioKg && !peso) {
+        // Precio pero sin peso — busca peso de última pesada antes de la fecha
+        const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+        total = cant * pesoUsado * precioKg;
       } else {
         const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
         const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-        const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
-        total = valorizarRodeo_(rodeo||{}, cant, pesoP);
+        pesoUsado = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+        total = valorizarRodeo_(rodeo||{}, cant, pesoUsado);
       }
       totCes += total;
       const or = rodeosPorId[String(m.rodeo_origen_id)];
       const de = rodeosPorId[String(m.rodeo_destino_id)];
-      const sinPrecio = !precioKg || !peso;
+      const sinPrecio = !precioKg;
       h += `<tr${sinPrecio?' style="background:rgba(200,150,40,0.06)"':''}>
         <td>${fd(m.fecha)}</td>
         <td><strong>${or?.nombre||'—'}</strong></td>
         <td>${de?.nombre||'—'}</td>
         <td class="tc">${fn(cant)}</td>
-        <td class="tc">${peso?fn(peso)+' kg':'—'}</td>
+        <td class="tc">${pesoUsado?fn(pesoUsado)+' kg'+(peso?'':' <span style="font-size:10px;color:var(--text3)">(pesada)</span>'):'—'}</td>
         <td class="tr">${precioKg?'$ '+fn(precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
         <td class="tr"><strong>${fmCria_(total)}</strong></td>
       </tr>`;
