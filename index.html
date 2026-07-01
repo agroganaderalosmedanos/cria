@@ -5211,8 +5211,12 @@ function egFechaIngreso_(rodeoId) {
   return cfg.fechaInicio || null;
 }
 function egKgIngreso_(rodeoId) {
-  // Prioridad 1: peso_prom_kg cargado directamente en el movimiento de entrada
-  // (Saldo inicial o Traslado recibido) — es la fuente de verdad persistida en Sheets.
+  // Prioridad 1: ABM de Corrales (Config Corral) — el usuario lo controla explícitamente
+  // y puede corregir datos incorrectos del movimiento de entrada.
+  const cfg = egConfig_(rodeoId);
+  if (Number(cfg.kgIngreso) > 0) return Number(cfg.kgIngreso);
+
+  // Prioridad 2: peso_prom_kg del movimiento de entrada (Saldo inicial o Traslado)
   const movs = (S.cache.movimientos || [])
     .filter(m => String(m.rodeo_destino_id) === String(rodeoId) && m.tipo === 'Saldo inicial')
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
@@ -5221,11 +5225,7 @@ function egKgIngreso_(rodeoId) {
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))[0];
   if (movEntrada && Number(movEntrada.peso_prom_kg) > 0) return Number(movEntrada.peso_prom_kg);
 
-  // Prioridad 2: configuración local del corral (compatibilidad con datos viejos)
-  const cfg = egConfig_(rodeoId);
-  if (cfg.kgIngreso) return Number(cfg.kgIngreso);
-
-  // Prioridad 3: parseo de "XXX kg" en las observaciones del movimiento de entrada
+  // Prioridad 3: parseo de "XXX kg" en las observaciones
   if (movEntrada) {
     const match = String(movEntrada.observaciones || '').match(/(\d+)\s*kg/);
     if (match) return Number(match[1]);
@@ -5257,9 +5257,15 @@ function egCostoCompra_(rodeoId) {
   const moneda = S.engordeMoneda || 'ARS';
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
 
-  // Costo explícito de un movimiento: por cabeza, o por kg (cantidad × peso × precio_kg).
-  // Si tiene ambos cargados (no debería pasar por UI, pero por las dudas) se prioriza precio_kg
-  // porque suele ser más preciso cuando hay peso registrado.
+  // Prioridad 0: ABM de Corrales tiene precio de entrada → úsalo para TODOS los
+  // movimientos de entrada de este corral (reemplaza el precio del movimiento).
+  const cfg = egConfig_(rodeoId);
+  if (Number(cfg.precioCompra) > 0) {
+    const cantTotal = egCantIngresada_(rodeoId);
+    const precioABM = Number(cfg.precioCompra);
+    return convertirAMoneda_(cantTotal * precioABM, today(), moneda);
+  }
+
   function costoExplicito_(m) {
     const cant = Number(m.cantidad) || 0;
     const peso = Number(m.peso_prom_kg) || 0;
@@ -10416,7 +10422,6 @@ function buildABMCorrales_() {
       </div>
     </div>
     <button class="btn btn-primary" id="cf-corral-save" style="margin-top:8px">➕ Crear corral</button>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px">Se crea como Rodeo con Actividad = Engorde. Después cargá su Saldo inicial en Movimientos de Hacienda.</div>
   </div>`;
 
   if (!corrales.length) {
@@ -10425,35 +10430,73 @@ function buildABMCorrales_() {
   }
 
   h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
-    📋 Esta ficha persiste en Sheets (hoja "Config Corral"), no en el navegador.<br>
-    <strong>Fecha de inicio</strong> y <strong>Stock inicial</strong> son útiles solo cuando un corral todavía no tiene su Saldo inicial o Traslado de entrada cargado en Movimientos — si ya lo tenés cargado ahí, no hace falta tocar nada acá.<br>
-    El resto de los datos del corral (peso de ingreso, costo de entrada, peso objetivo, precio estimado de venta) se cargan en otros lugares: peso y costo de entrada van en el movimiento mismo (Movimientos de Hacienda → Historial → ✎), y peso objetivo / precio estimado se cargan en Resultado Económico Terminación → Proyección de Salidas.
+    📋 Los valores que cargues acá en <strong>Config Corral</strong> tienen prioridad sobre los del movimiento de entrada (Saldo inicial / Traslado) para los cálculos del Dashboard de Terminación.
+    Útil para corregir un precio de cesión incorrecto, o cuando el corral se armó con un traslado interno sin precio.<br>
+    Los campos en gris claro muestran el valor que tiene el movimiento de entrada — si cargás algo acá, ese valor pisará al del movimiento.
   </div>`;
 
-  h += `<div class="tw"><table class="dt"><thead><tr>
-    <th>Corral</th><th>Campo</th>
-    <th>Fecha inicio <span class="opt" style="font-weight:400">(solo si no hay movimiento)</span></th>
-    <th>Stock inicial <span class="opt" style="font-weight:400">(solo si no hay movimiento)</span></th>
-    <th>Stock actual</th>
-    <th></th>
-  </tr></thead><tbody>`;
-
+  // Tabla de parámetros por corral
   corrales.forEach(r => {
     const rid = r.rodeo_id;
     const cfg = egConfig_(rid);
     const stock = egStock_(rid);
     const campoNom = campos.find(c => String(c.campo_id) === String(r.campo_id))?.nombre || '—';
-    h += `<tr data-corral-row="${rid}">
-      <td><strong>${r.nombre}</strong></td>
-      <td style="color:var(--text2)">${campoNom}</td>
-      <td><input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio" value="${cfg.fechaInicio||''}" style="width:135px;font-size:13px;padding:4px 6px"></td>
-      <td><input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial" value="${cfg.stockInicial||''}" placeholder="Ej: 80" style="width:80px;font-size:13px;padding:4px 6px"></td>
-      <td class="tc">${fn(stock)}</td>
-      <td><button class="btn btn-primary abm-corral-save" data-rid="${rid}" style="font-size:11px;padding:5px 12px">💾 Guardar</button></td>
-    </tr>`;
+
+    // Valores del movimiento de entrada (para mostrar como referencia)
+    const fechaMov = egFechaIngreso_(rid);
+    const cantMov  = egCantIngresada_(rid);
+    const kgMov    = egKgIngreso_(rid);
+    const costoMov = egCostoCompra_(rid);
+    const precioCabMov = cantMov > 0 ? costoMov / cantMov : 0;
+
+    h += `<div class="panel" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div>
+          <div style="font-weight:700;font-size:15px">${r.nombre}</div>
+          <div style="font-size:12px;color:var(--text3)">${campoNom} · Stock actual: <strong>${fn(stock)}</strong> cab.</div>
+        </div>
+        <button class="btn btn-primary abm-corral-save" data-rid="${rid}" style="font-size:11px;padding:5px 14px">💾 Guardar</button>
+      </div>
+      <div class="fgrid" style="gap:10px">
+
+        <div class="fg"><label style="font-size:11px">Fecha de inicio</label>
+          <input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio"
+            value="${cfg.fechaInicio||''}" style="font-size:13px;padding:4px 6px">
+          ${fechaMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fd(fechaMov)}</div>`:''}
+        </div>
+
+        <div class="fg"><label style="font-size:11px">Cantidad ingresada</label>
+          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial"
+            value="${cfg.stockInicial||''}" placeholder="${cantMov||'—'}" style="font-size:13px;padding:4px 6px;width:90px">
+          ${cantMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(cantMov)} cab.</div>`:''}
+        </div>
+
+        <div class="fg"><label style="font-size:11px">Kg prom. de ingreso</label>
+          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso"
+            value="${cfg.kgIngreso||''}" placeholder="${kgMov||'—'}" style="font-size:13px;padding:4px 6px;width:90px">
+          ${kgMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(kgMov)} kg</div>`:''}
+        </div>
+
+        <div class="fg"><label style="font-size:11px">Precio entrada ($/cab.)</label>
+          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra"
+            value="${cfg.precioCompra||''}" placeholder="${precioCabMov?fn(Math.round(precioCabMov)):'—'}" style="font-size:13px;padding:4px 6px;width:110px">
+          ${precioCabMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: $ ${fn(Math.round(precioCabMov))}/cab.</div>`:''}
+        </div>
+
+        <div class="fg"><label style="font-size:11px">Peso objetivo (kg)</label>
+          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="pesoObjetivo"
+            value="${cfg.pesoObjetivo||''}" placeholder="Ej: 480" style="font-size:13px;padding:4px 6px;width:90px">
+        </div>
+
+        <div class="fg"><label style="font-size:11px">$/kg estimado de venta <span style="font-size:10px;color:var(--text3)">(tu hipótesis)</span></label>
+          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioProyectado"
+            value="${cfg.precioProyectado||''}" placeholder="Ej: 3500" style="font-size:13px;padding:4px 6px;width:110px">
+        </div>
+
+      </div>
+    </div>`;
   });
 
-  h += `</tbody></table></div>`;
   return h;
 }
 
