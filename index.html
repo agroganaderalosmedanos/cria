@@ -7511,18 +7511,19 @@ function calcMargenCria_(campana, desde, hasta) {
   });
 
   // EF — stock valorizado actual
-  // Mismo método que buildDashboard: recalcula stock desde movimientos para evitar
-  // diferencias con S.stock (que viene del backend y puede estar desactualizado).
+  // Copia exacta del cálculo de buildDashboard para garantizar que coincidan.
   const stockPorRodeoMB = {};
   movs.forEach(m => {
-    if (m.rodeo_destino_id) stockPorRodeoMB[String(m.rodeo_destino_id)] = (stockPorRodeoMB[String(m.rodeo_destino_id)]||0) + (Number(m.cantidad)||0);
-    if (m.rodeo_origen_id && m.tipo !== 'Saldo inicial') stockPorRodeoMB[String(m.rodeo_origen_id)] = (stockPorRodeoMB[String(m.rodeo_origen_id)]||0) - (Number(m.cantidad)||0);
+    const cant = Number(m.cantidad)||0;
+    if (m.tipo==='Saldo inicial') {
+      stockPorRodeoMB[String(m.rodeo_destino_id)] = (stockPorRodeoMB[String(m.rodeo_destino_id)]||0) + cant;
+    } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
+      if (m.rodeo_origen_id)  stockPorRodeoMB[String(m.rodeo_origen_id)]  = (stockPorRodeoMB[String(m.rodeo_origen_id)] ||0) - cant;
+      if (m.rodeo_destino_id) stockPorRodeoMB[String(m.rodeo_destino_id)] = (stockPorRodeoMB[String(m.rodeo_destino_id)]||0) + cant;
+    }
   });
-  (S.cache.ventas||[]).forEach(v => {
-    if (v.rodeo_id) stockPorRodeoMB[String(v.rodeo_id)] = (stockPorRodeoMB[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
-  });
-  (S.cache.mortandad||[]).forEach(m => {
-    if (m.rodeo_id) stockPorRodeoMB[String(m.rodeo_id)] = (stockPorRodeoMB[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
+  (S.cache.ventas||[]).filter(v=>rodeosIds.has(String(v.rodeo_id))).forEach(v => {
+    stockPorRodeoMB[String(v.rodeo_id)] = (stockPorRodeoMB[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
   });
   let ef = 0;
   rodeosCria.forEach(r => {
