@@ -7020,6 +7020,43 @@ function buildInsumos() {
   }
 
   const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
+  // ── Panel Precios Vigentes ──────────────────────────────────────────────
+  h += `<div class="panel">
+    <div class="panel-title">💲 Precios vigentes por producto</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">
+      El sistema usa el último precio registrado <strong>antes o en</strong> la fecha de cada consumo.
+      Para actualizar el precio a partir de hoy (o de otra fecha), registralo acá.
+    </div>
+    <div class="tw"><table class="dt"><thead><tr>
+      <th>Producto</th><th>Categoría</th><th class="tr">Último precio</th><th class="tr">Fecha compra</th>
+      <th style="min-width:220px">Nuevo precio desde</th>
+    </tr></thead><tbody>`;
+  productos.filter(p=>p.activo===true||String(p.activo).toUpperCase()==='TRUE').forEach(p => {
+    const pid = p.producto_id;
+    const comprasProducto = compras
+      .filter(c => String(c.producto_id) === String(pid) && Number(c.precio_unitario) > 0)
+      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    const ultimo = comprasProducto[0];
+    h += `<tr>
+      <td><strong>${p.nombre}</strong></td>
+      <td><span class="pill pill-${p.categoria==='Veterinaria'?'clay':'green'}" style="font-size:11px">${p.categoria||'—'}</span></td>
+      <td class="tr">${ultimo ? '$ '+fn(Number(ultimo.precio_unitario)) : '<span style="color:var(--text3);font-size:11px">sin precio</span>'}</td>
+      <td class="tr" style="color:var(--text3);font-size:12px">${ultimo ? fd(ultimo.fecha) : '—'}</td>
+      <td>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="number" class="pv-nuevo-precio" data-pid="${pid}" data-nombre="${p.nombre}"
+            placeholder="$ nuevo precio" min="0" step="0.01"
+            style="width:120px;font-size:13px;padding:4px 6px">
+          <input type="date" class="pv-nueva-fecha" data-pid="${pid}" value="${today()}"
+            style="font-size:13px;padding:4px 6px">
+          <button class="btn btn-primary btn-sm pv-guardar" data-pid="${pid}"
+            style="font-size:11px;padding:4px 10px;white-space:nowrap">✓ Actualizar</button>
+        </div>
+      </td>
+    </tr>`;
+  });
+  h += `</tbody></table></div></div>`;
+
   h += '<div class="section-label">Productos</div>';
   // Enriquecer productos con stock actual
   const stockMap_ = {};
@@ -7433,6 +7470,40 @@ function attachInsumosEvents() {
   attachTableDeleteEvents('compras_insumos', 'compra_id');
   attachTableDeleteEvents('consumos_insumos', 'consumo_id');
   attachTableDeleteEvents('productos', 'producto_id');
+
+  // Botones "Actualizar precio" del panel Precios Vigentes
+  document.querySelectorAll('.pv-guardar').forEach(btn => {
+    btn.onclick = async () => {
+      const pid = btn.dataset.pid;
+      const nombre = btn.dataset.nombre || 'producto';
+      const precio = Number(document.querySelector(`.pv-nuevo-precio[data-pid="${pid}"]`)?.value) || 0;
+      const fecha = document.querySelector(`.pv-nueva-fecha[data-pid="${pid}"]`)?.value;
+      if (!precio || precio <= 0) { toast('Ingresá el nuevo precio unitario.', 'err'); return; }
+      if (!fecha) { toast('Ingresá la fecha desde la que rige este precio.', 'err'); return; }
+      btn.disabled = true; btn.textContent = '⏳...';
+      try {
+        // Registra una compra de 1 unidad con el nuevo precio — sirve como registro de precio vigente
+        // sin afectar el stock significativamente (cantidad = 0.001 para no distorsionar inventario)
+        await apiCall('create', { body: { entity: 'compras_insumos', data: {
+          fecha,
+          producto_id: pid,
+          cantidad: 0,
+          precio_unitario: precio,
+          proveedor: '',
+          observaciones: 'Actualización de precio vigente',
+          campo_id: '',
+        }}});
+        invalidateCache('compras_insumos');
+        await loadStockProductos();
+        await loadEntity('compras_insumos', true);
+        toast('✓ Precio de "' + nombre + '" actualizado a $ ' + fn(precio) + ' desde ' + fd(fecha), 'ok');
+        render();
+      } catch(err) {
+        btn.disabled = false; btn.textContent = '✓ Actualizar';
+        toast(err.message, 'err');
+      }
+    };
+  });
 }
 
 // ── MARGEN BRUTO ──────────────────────────────────────────────────────────
