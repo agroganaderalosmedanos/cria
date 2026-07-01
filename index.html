@@ -5274,6 +5274,33 @@ function buildEngorde() {
         <td class="tr" style="color:var(--green-text);font-size:15px">${fm(totVent)}</td></tr>`;
       h += `</tbody></table></div></div>`;
     }
+
+    // 5) Detalle por corral + KPIs productivos
+    h += buildEngordeProductivoYCorreles_(rodeosEngFilt, fm);
+
+    // 6) Mortandad — al final
+    const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIds.has(String(m.rodeo_id)));
+    const mortEngTotal = mortandadEngFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
+    if (mortEngTotal > 0) {
+      const mortEngPorRodeo = {};
+      mortandadEngFilt.forEach(m => { mortEngPorRodeo[m.rodeo_id] = (mortEngPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
+      h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
+        <div class="panel-title" style="color:var(--red)">💀 Mortandad en Terminación</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+      Object.entries(mortEngPorRodeo).forEach(([rid,cant])=>{
+        const r = rodeosEngFilt.find(x=>String(x.rodeo_id)===String(rid));
+        h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
+          <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+          <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+        </div>`;
+      });
+      h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+        <div style="font-size:30px;font-weight:800;color:var(--red)">${mortEngTotal} <span style="font-size:13px">bajas</span></div>
+      </div></div>
+        <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
+      </div>`;
+    }
   }
 
   return h;
@@ -5560,10 +5587,20 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     h += '</tbody></table></div></div>';
   }
 
-  // ── PRODUCTIVO ──────────────────────────────────────────────────────
-  // KPIs productivos
+  // buildEngordeDashboard_ retorna acá — el resto (KPIs, tarjetas, mortandad)
+  // se renderiza en el bloque page==='engorde' en el orden correcto:
+  // EI → EF → Cesiones → Ventas → KPIs productivos → Tarjetas por corral → Mortandad
+  return h;
+}
+
+function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
+  const fn_ = (v,d=0) => fn(v,d);
   let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
-  const gdps=[];
+  const gdps=[], consumos=(S.cache.consumos_insumos||[]), productos=(S.catalogs&&S.catalogs.productos)||[];
+  const costoProm={};
+  (S.cache.compras_insumos||[]).forEach(c=>{ const pid=String(c.producto_id); if(!costoProm[pid]) costoProm[pid]={costo:0,cant:0}; costoProm[pid].costo+=(Number(c.precio_unitario)||0)*(Number(c.cantidad)||0); costoProm[pid].cant+=(Number(c.cantidad)||0); });
+  const prodPorId=Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
+
   rodeosEngFilt.forEach(r => {
     const rid = r.rodeo_id;
     totAn    += egStock_(rid);
@@ -5576,7 +5613,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   });
   const gdpProm = gdps.length ? gdps.reduce((s,v)=>s+v,0)/gdps.length : null;
 
-  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+  let h = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);letter-spacing:.05em">Animales en stock</div>
       <div style="font-size:18px;font-weight:700">${fn(totAn)}</div>
@@ -5603,7 +5640,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     </div>
   </div>`;
 
-  // ── TARJETAS POR CORRAL ─────────────────────────────────────────────
+  // Tarjetas por corral
   h += '<div class="section-label">Detalle por corral</div>';
   h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:20px">';
   rodeosEngFilt.forEach(r => {
@@ -5665,31 +5702,6 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     </div>`;
   });
   h += '</div>';
-
-  // Mortandad — al final del dashboard, destacada en rojo
-  const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIds.has(String(m.rodeo_id)));
-  const mortEngTotal = mortandadEngFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
-  if (mortEngTotal > 0) {
-    const mortEngPorRodeo = {};
-    mortandadEngFilt.forEach(m => { mortEngPorRodeo[m.rodeo_id] = (mortEngPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
-    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
-      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Terminación</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
-    Object.entries(mortEngPorRodeo).forEach(([rid,cant])=>{
-      const r = rodeosEngFilt.find(x=>String(x.rodeo_id)===String(rid));
-      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
-        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
-        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
-      </div>`;
-    });
-    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
-      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
-      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortEngTotal} <span style="font-size:13px">bajas</span></div>
-    </div></div>
-      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
-    </div>`;
-  }
-
   return h;
 }
 
