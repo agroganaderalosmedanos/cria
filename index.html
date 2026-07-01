@@ -7870,7 +7870,7 @@ function buildMargenBruto() {
   const tabs = [{ k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
-  h += `<button onclick="S.mbMoneda=S.mbMoneda==='USD'?'ARS':'USD';render()"
+  h += `<button onclick="S.margenBrutoMoneda=S.margenBrutoMoneda==='USD'?'ARS':'USD';render()"
     style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
     💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
   </button></div>`;
