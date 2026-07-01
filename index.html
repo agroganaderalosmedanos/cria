@@ -731,24 +731,24 @@ function buildShell() {
   if (!S.hasOwnProperty('_manuallyClosed')) S._manuallyClosed = null;
   // Auto-expandir la sección activa solo si ninguna está abierta Y el usuario no la cerró
   const anyOpen = Object.values(S._expandedSections).some(Boolean);
-  if (activeSection && !anyOpen && S._manuallyClosed !== activeSection.section) {
-    S._expandedSections = { [activeSection.section]: true };
+  if (activeSection && !anyOpen && S._manuallyClosed !== activeSection.defaultPage) {
+    S._expandedSections = { [activeSection.defaultPage]: true };
   }
 
   const navHtml = NAV.map(sec => {
     const isActive   = sec === activeSection;
-    const isExpanded = !!S._expandedSections[sec.section];
+    const isExpanded = !!S._expandedSections[sec.defaultPage];
     return `
     <button class="nav-section-btn${isActive ? ' active-sec' : ''}"
       onclick="
-        const wasOpen = !!(window.S._expandedSections || {})['${sec.section}'];
+        const wasOpen = !!(window.S._expandedSections || {})['${sec.defaultPage}'];
         window.S._expandedSections = {};
         if (wasOpen) {
-          window.S._manuallyClosed = '${sec.section}';
+          window.S._manuallyClosed = '${sec.defaultPage}';
           render();
         } else {
           window.S._manuallyClosed = null;
-          window.S._expandedSections['${sec.section}'] = true;
+          window.S._expandedSections['${sec.defaultPage}'] = true;
           goto('${sec.defaultPage}');
         }
       ">
@@ -7867,10 +7867,10 @@ function buildMargenBruto() {
   const tabs = [{ k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
-  h += `<div style="margin-left:auto"><div class="radio-group" id="mb-moneda-group">
-    <div class="radio-pill ${moneda==='ARS'?'selected':''}" data-moneda="ARS">$ ARS</div>
-    <div class="radio-pill ${moneda==='USD'?'selected':''}" data-moneda="USD">U$D</div>
-  </div></div></div>`;
+  h += `<button onclick="S.mbMoneda=S.mbMoneda==='USD'?'ARS':'USD';render()"
+    style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
+    💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
+  </button></div>`;
 
   // Filtros
   h += `<div class="panel" style="padding:14px 16px;margin-bottom:16px">
