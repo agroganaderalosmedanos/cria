@@ -3712,8 +3712,8 @@ function buildRecriaDashboard() {
   </div>`;
 
   // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
-  const ventas     = (S.cache.ventas||[]).filter(v=>rodeosIdsFilt.has(String(v.rodeo_id)));
-  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIdsFilt.has(String(c.rodeo_id)));
+  const ventas     = (S.cache.ventas||[]).filter(v=>todosRodeosRecriaIds.has(String(v.rodeo_id)));
+  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>todosRodeosRecriaIds.has(String(c.rodeo_id)));
   const movs       = (S.cache.movimientos||[]);
   const destetes   = (S.cache.destetes||[]);
   // Egresos: usar TODOS los rodeos de Recría del catálogo (no solo los con stock actual)
@@ -3800,11 +3800,17 @@ function buildRecriaDashboard() {
 
   // 3. Alimentación y veterinaria
   let egAlim = 0, egVet = 0;
+  const detalleAlim = [], detalleVet = [];
   consumos.forEach(c=>{
     const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
-    const costo = (Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id);
-    if (prod&&prod.categoria==='Veterinaria') egVet += costo;
-    else egAlim += costo;
+    const costo = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    if (prod&&prod.categoria==='Veterinaria') {
+      egVet += costo;
+      detalleVet.push({fecha:c.fecha,prod:prod.nombre,cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
+    } else {
+      egAlim += costo;
+      detalleAlim.push({fecha:c.fecha,prod:prod?.nombre||'—',cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
+    }
   });
 
   // 4. Sueldos prorrateados a Recría
@@ -3867,7 +3873,13 @@ function buildRecriaDashboard() {
         <tr><td>⬅ Cesión desde Cría</td><td class="tr"><strong>${fmM(egCesionCria)}</strong></td></tr>
         ${egCompraExterna>0?`<tr><td>🛒 Compra externa</td><td class="tr"><strong>${fmM(egCompraExterna)}</strong></td></tr>`:''}
         <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fmM(egAlim)}</strong></td></tr>
+        ${detalleAlim.length?`<tr><td colspan="2" style="padding:0"><table style="width:100%;font-size:11px;color:var(--text2)">
+          ${detalleAlim.map(d=>`<tr><td style="padding:2px 8px 2px 24px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:8px">${fn(d.cant)}</td><td style="text-align:right;padding-right:8px;font-weight:600">${fmM(d.costo)}</td></tr>`).join('')}
+        </table></td></tr>`:''}
         <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fmM(egVet)}</strong></td></tr>
+        ${detalleVet.length?`<tr><td colspan="2" style="padding:0"><table style="width:100%;font-size:11px;color:var(--text2)">
+          ${detalleVet.map(d=>`<tr><td style="padding:2px 8px 2px 24px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:8px">${fn(d.cant)}</td><td style="text-align:right;padding-right:8px;font-weight:600">${fmM(d.costo)}</td></tr>`).join('')}
+        </table></td></tr>`:''}
         <tr><td>👷 Sueldos</td><td class="tr"><strong>${fmM(egSueldos)}</strong></td></tr>
         <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red);font-size:20px"><strong>${fmM(totalEgresos)}</strong></td></tr>
       </tbody></table>
