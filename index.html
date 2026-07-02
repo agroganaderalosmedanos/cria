@@ -1667,6 +1667,10 @@ function buildDashboard() {
   ventas.forEach(v => {
     stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
   });
+  // Restar mortandad — igual que el backend getStockTodos
+  (S.cache.mortandad||[]).forEach(m => {
+    stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
+  });
 
   let stockValCria = 0;
   const stockDetalleRows = [];
