@@ -7954,7 +7954,9 @@ function calcMargenCria_(campana, desde, hasta) {
 
 function calcMargenRecria_(campana, desde, hasta) {
   const rodeosAll  = (S.catalogs&&S.catalogs.rodeos)||[];
-  const rodeosRec  = (S.resumenRecria&&S.resumenRecria.rodeos)||[];
+  // Usar TODOS los rodeos de Recría del catálogo (no solo los con stock actual)
+  // para capturar EI, cesiones y ventas de rodeos que ya vaciaron su stock.
+  const rodeosRec  = rodeosAll.filter(r=>normAct_(r.actividad)==='recria');
   const rodeosIds  = new Set(rodeosRec.map(r=>String(r.rodeo_id)));
   const productos  = (S.catalogs&&S.catalogs.productos)||[];
   const movs       = S.cache.movimientos||[];
