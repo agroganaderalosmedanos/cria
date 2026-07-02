@@ -8522,7 +8522,7 @@ function buildMargenBruto() {
   if (tabMB === 'productivo') {
     const stockTodos = S.stock||[];
     function stockPorAct(actividad) {
-      const rods = rodeosAll.filter(r=>r.actividad===actividad);
+      const rods = rodeosAll.filter(r=>normAct_(r.actividad)===normAct_(actividad));
       const cats = {};
       rods.forEach(r=>{ const stk=stockTodos.find(s=>String(s.rodeo_id)===String(r.rodeo_id)); const cant=stk?stk.stock||0:0; if(cant===0)return; cats[r.categoria]=(cats[r.categoria]||0)+cant; });
       return cats;
