@@ -3776,12 +3776,18 @@ function buildRecriaDashboard() {
 
   // 3. Stock valorizado actual
   let stockValRecria = 0;
-  const preciosVal = preciosValGet_();
-  rodeosFiltBase.forEach(r=>{
-    const stock = Math.max(0, r.stock||0);
+  const pesadasCache = S.cache.pesadas||[];
+  // Usar S.stock para todos los rodeos de Recría — incluye rodeos que resumenRecria omite
+  const stockDetalleRec_ = [];
+  todosRodeosRecria.forEach(r=>{
+    const stkObj = (S.stock||[]).find(s=>String(s.rodeo_id)===String(r.rodeo_id));
+    const stock = Math.max(0, stkObj?.stock||0);
     if (!stock) return;
-    const pesoP = r.ultima_pesada ? Number(r.ultima_pesada.peso_prom_kg)||0 : 0;
-    stockValRecria += valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{}, stock, pesoP);
+    const pesR = pesadasCache.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoP = pesR[0] ? Number(pesR[0].peso_prom_kg)||0 : 0;
+    const val = valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||r, stock, pesoP);
+    stockValRecria += val;
+    stockDetalleRec_.push({nombre:r.nombre, stock, pesoP, val});
   });
 
   const totalIngresos = ingVentas + ingCesionEng + stockValRecria;
@@ -3919,24 +3925,19 @@ function buildRecriaDashboard() {
   h += buildSueldoKpiPanel_('recria');
 
   // ── Detalle EF (Stock final valorizado) ───────────────────────────────────
-  const stockDetalleRec = rodeosFiltBase.filter(r=>(r.stock||0)>0).map(r=>{
-    const rodeoObj = rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{};
-    const pesoP = r.ultima_pesada ? Number(r.ultima_pesada.peso_prom_kg)||0 : 0;
-    const val = valorizarRodeo_(rodeoObj, r.stock||0, pesoP);
-    return { nombre: r.nombre, campo: r.campo_nombre||'—', cat: rodeoObj.categoria||'—', stock: r.stock||0, pesoP, val };
-  });
+  const stockDetalleRec = stockDetalleRec_;
   if (stockDetalleRec.length) {
     h += `<div class="panel"><div class="panel-title">📦 Stock final valorizado (EF) — por rodeo</div>
       <div class="tw"><table class="dt"><thead><tr>
-        <th>Rodeo</th><th>Campo</th><th>Categoría</th><th class="tc">Stock</th><th class="tr">Peso prom.</th><th class="tr">Valor total</th>
+        <th>Rodeo</th><th class="tc">Stock</th><th class="tr">Peso prom.</th><th class="tr">Valor total</th>
       </tr></thead><tbody>`;
     stockDetalleRec.forEach(r=>{
-      h += `<tr><td><strong>${r.nombre}</strong></td><td>${r.campo}</td><td>${r.cat}</td>
+      h += `<tr><td><strong>${r.nombre}</strong></td>
         <td class="tc">${fn(r.stock)}</td>
         <td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td>
         <td class="tr"><strong>${fmM(r.val)}</strong></td></tr>`;
     });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="5" class="tr">TOTAL EF</td>
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="3" class="tr">TOTAL EF</td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fmM(stockValRecria)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
@@ -8064,21 +8065,19 @@ function calcMargenRecria_(campana, desde, hasta) {
     ingCesEng += cant * peso * (p[mapaKg[cat]]||0);
   });
 
-  // EF valorizado — mismo método que buildRecriaDashboard:
-  // usa S.stock para el stock actual y busca última pesada del cache
+  // EF valorizado — usa resumenRecria igual que el dashboard de Recría
   const pesadasAll = S.cache.pesadas||[];
   let ef=0;
   const filasEF_R = [];
-  const stockTodosRec = S.stock||[];
-  rodeosAll.filter(r=>normAct_(r.actividad)==='recria').forEach(r=>{
-    const stkObj = stockTodosRec.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
-    const stk = Math.max(0, stkObj?.stock||0);
-    if (!stk) return;
-    const pesR = pesadasAll.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pp = pesR[0] ? Number(pesR[0].peso_prom_kg)||0 : 0;
-    const val = valorizarRodeo_(r, stk, pp);
+  const rodeosResumen = (S.resumenRecria&&S.resumenRecria.rodeos)||[];
+  rodeosResumen.forEach(r=>{
+    const stk=Math.max(0,r.stock||0); if(!stk)return;
+    const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:
+      (pesadasAll.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))[0]?.peso_prom_kg||0);
+    const rodeoObj=rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{};
+    const val=valorizarRodeo_(rodeoObj,stk,Number(pp));
     ef+=val;
-    filasEF_R.push({ rodeo: r.nombre, cant: stk, peso: pp, precio: pp&&stk?val/stk/pp:val/stk||0, total: val });
+    filasEF_R.push({ rodeo: r.nombre, cant: stk, peso: Number(pp), precio: pp&&stk?val/stk/Number(pp):val/stk||0, total: val });
   });
 
   const ing = ingVentas + ingCesEng + ef;
