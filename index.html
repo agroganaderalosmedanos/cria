@@ -1546,7 +1546,7 @@ function buildDashboard() {
   const campSelecField = S._dashCampo || '';
 
   // Rodeos de Cría
-  const rodeosCria = rodeos.filter(r => r.actividad === 'Cría' || r.actividad === 'Cria');
+  const rodeosCria = rodeos.filter(r => normAct_(r.actividad)==='cria');
 
   // ── Header con pestañas ─────────────────────────────────────────────
   const criaTabs = [
@@ -1627,8 +1627,8 @@ function buildDashboard() {
     if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
     const origen  = rodeosPorId[String(m.rodeo_origen_id)];
     const destino = rodeosPorId[String(m.rodeo_destino_id)];
-    return origen && (origen.actividad==='Cría'||origen.actividad==='Cria') &&
-           destino && (destino.actividad==='Recría'||destino.actividad==='Engorde');
+    return origen && normAct_(origen.actividad)==='cria' &&
+           destino && (normAct_(destino.actividad)==='recria'||normAct_(destino.actividad)==='engorde'||normAct_(destino.actividad)==='terminacion');
   });
   // Valorizar cesiones — misma lógica que el panel de detalle para que coincidan
   // Prioridad: precio_kg → precio_cabeza (como $/kg en cesiones) → valorización del mes
@@ -4071,7 +4071,7 @@ function buildCesionesCria() {
   const rodeosPorId = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
 
   // Rodeos de Cría categoria ternero/ternera como origen
-  const rodeosCria = rodeos.filter(r=>r.actividad==='Cría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE')&&
+  const rodeosCria = rodeos.filter(r=>normAct_(r.actividad)==='cria'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE')&&
     (r.categoria==='ternero'||r.categoria==='ternera'));
   // Rodeos de Recría como destino
   const rodeosRec  = rodeos.filter(r=>normAct_(r.actividad)==='recria'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
@@ -7844,7 +7844,7 @@ function calcMargenCria_(campana, desde, hasta) {
   const comprasH  = comprasHacGetAll_();
   const productos = (S.catalogs && S.catalogs.productos) || [];
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
-  const rodeosCria = rodeosAll.filter(r => r.actividad === 'Cría');
+  const rodeosCria = rodeosAll.filter(r => normAct_(r.actividad)==='cria');
   const rodeosIds  = new Set(rodeosCria.map(r => String(r.rodeo_id)));
   const prodPorId  = Object.fromEntries(productos.map(p => [String(p.producto_id), p]));
 
@@ -8279,11 +8279,11 @@ function buildMargenBruto() {
   const rodeosAll = (S.catalogs&&S.catalogs.rodeos)||[];
   const rodeosRec = new Set(((S.resumenRecria&&S.resumenRecria.rodeos)||[]).map(r=>String(r.rodeo_id)));
   const rodeosEng = new Set(rodeosEngordeValidos_().map(r=>String(r.rodeo_id)));
-  const mortCria  = mortandad.filter(m=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&r.actividad==='Cría'; }).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const mortCria  = mortandad.filter(m=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&normAct_(r.actividad)==='cria'; }).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortRec   = mortandad.filter(m=>rodeosRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortEng   = mortandad.filter(m=>rodeosEng.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortTot   = mortCria+mortRec+mortEng;
-  const abortCria = abortos.filter(a=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(a.rodeo_id)); return r&&r.actividad==='Cría'; }).length;
+  const abortCria = abortos.filter(a=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(a.rodeo_id)); return r&&normAct_(r.actividad)==='cria'; }).length;
   const abortRec  = abortos.filter(a=>rodeosRec.has(String(a.rodeo_id))).length;
   const abortTot  = abortCria+abortRec;
 
