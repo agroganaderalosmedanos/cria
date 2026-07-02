@@ -1722,6 +1722,13 @@ function buildDashboard() {
   const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
 
+  // Guardar resultados para que Resultados Económicos los lea directamente
+  S._resultCria = {
+    ing: totalIngresos, eg: totalEgresos, margen,
+    ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria,
+    ei: totalSaldoInicial, compras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria,
+  };
+
   // ── RENDER ──────────────────────────────────────────────────────────
   // Panel ingresos/egresos
   h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
@@ -2485,7 +2492,7 @@ function attachAbortosEvents() {
       await loadEntity('abortos', true);
       await loadEntity('movimientos', true);
       S.stock = null; await loadStock();
-      S.dashboard = null;
+      S.dashboard = null; S._resultCria = null;
       const msg = ok === 1 ? 'Aborto registrado' : ok + ' abortos registrados';
       toast(msg + (errores ? ` (${errores} con error)` : ''), ok > 0 ? 'ok' : 'err');
       if (document.getElementById('ab-caravanas-bulk')) document.getElementById('ab-caravanas-bulk').value = '';
@@ -2557,7 +2564,7 @@ function attachParicionesEvents() {
       await loadEntity('pariciones', true);
       await loadEntity('movimientos', true);
       await loadCatalogs(); // recargar rodeos por si se creó uno nuevo
-      S.dashboard = null;
+      S.dashboard = null; S._resultCria = null;
       const vivos = data.nacidos_vivos;
       if (result && result.rodeo_terneros) {
         const msg = result.rodeo_terneros.creado
@@ -2620,7 +2627,7 @@ function attachMortandadEvents() {
       invalidateCache('mortandad');
       toast('Mortandad registrada', 'ok');
       await loadEntity('mortandad', true);
-      S.dashboard = null;
+      S.dashboard = null; S._resultCria = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -2780,8 +2787,8 @@ function attachDestetesEvents() {
       }
 
       await loadEntity('destetes', true);
-      S.dashboard = null;
-      S.margenBruto = null;
+      S.dashboard = null; S._resultCria = null;
+      S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -3853,6 +3860,13 @@ function buildRecriaDashboard() {
 
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
+
+  // Guardar resultados para Resultados Económicos
+  S._resultRecria = {
+    ing: totalIngresos, eg: totalEgresos, margen,
+    ingVentas, ingCesEng: ingCesionEng, ef: stockValRecria,
+    ei: egEI, egCesionCria, egAlim, egVet, egSueldos,
+  };
   const mc = margen>=0?'var(--green)':'var(--red)';
   const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
@@ -4299,7 +4313,7 @@ function attachCesionesCriaEvents() {
           }}});
           invalidateCache('movimientos');
           await loadEntity('movimientos', true);
-          S.margenBruto = null;
+          S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
           toast('✓ Cesión actualizada', 'ok');
           overlay.remove();
           render();
@@ -4366,7 +4380,7 @@ function attachCesionesCriaEvents() {
     await apiCall('update', { body: { entity: 'movimientos', id: movId, data: { precio_kg: precio, precio_cabeza: 0 } } });
     invalidateCache('movimientos');
     await loadEntity('movimientos', true);
-    S.margenBruto = null;
+    S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
   }
   document.querySelectorAll('.ces-c-fijar-precio').forEach(b => {
     b.onclick = async () => {
@@ -4620,7 +4634,7 @@ function attachCesionesRecriaEvents() {
           }
           invalidateCache('egresos_recria');
           await loadEntity('egresos_recria', true);
-          S.margenBruto = null;
+          S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
           toast('✓ Cesión actualizada', 'ok');
           overlay.remove();
           render();
@@ -4685,7 +4699,7 @@ function attachCesionesRecriaEvents() {
       }}}); 
       invalidateCache('egresos_recria');
       await loadEntity('egresos_recria', true);
-      S.margenBruto = null;
+      S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
 
       toast('✓ Cesión registrada y trasladada — '+fn(cant)+' animales · $ '+fn(precio)+'/kg', 'ok');
       render();
@@ -4713,7 +4727,7 @@ function attachCesionesRecriaEvents() {
     }}});
     invalidateCache('egresos_recria');
     await loadEntity('egresos_recria', true);
-    S.margenBruto = null;
+    S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
   }
 
   document.querySelectorAll('.ces-regularizar').forEach(b => {
@@ -5779,6 +5793,14 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 
   const totalEgresos = totalSaldoIni + totalCesiones + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
   const margen = totalIngresos - totalEgresos;
+
+  // Guardar resultados para Resultados Económicos
+  S._resultEng = {
+    ing: totalIngresos, eg: totalEgresos, margen,
+    ingVentas: totalVentas, ef: stockValEng,
+    ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras,
+    egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng,
+  };
   const margenColor = margen>=0 ? 'var(--green)' : 'var(--red)';
   const margenBg    = margen>=0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
 
@@ -7185,7 +7207,7 @@ function attachVentasEvents() {
     try {
       document.getElementById('liq-save').disabled = true;
       await apiCall('update', { body: { entity: 'ventas', id, data } });
-      invalidateCache('ventas'); S.margenBruto = null;
+      invalidateCache('ventas'); S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
       await loadEntity('ventas', true);
       cerrarLiquidacion_();
       toast('Liquidación registrada — $ ' + fn(importe), 'ok');
@@ -7219,7 +7241,7 @@ function attachVentasEvents() {
     try {
       await apiCall('create', { body: { entity: 'ventas', data } });
       invalidateCache('ventas');
-      S.stock = null; S.dashboard = null; S.margenBruto = null;
+      S.stock = null; S.dashboard = null; S._resultCria = null; S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
       toast('Venta registrada — ' + data.cant_animales + ' animales', 'ok');
       await loadEntity('ventas', true);
       render();
@@ -7790,7 +7812,7 @@ function attachInsumosEvents() {
         };
         await apiCall('create', { body: { entity: 'consumos_insumos', data } });
         invalidateCache('consumos_insumos');
-        S.margenBruto = null;
+        S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
       }
       S.stockProductos = null;
       await loadStockProductos();
@@ -8330,9 +8352,26 @@ function buildMargenBruto() {
     return h;
   }
 
-  const rCria = calcMargenCria_(campSelec, desde, hasta);
-  const rRec  = calcMargenRecria_(campSelec, desde, hasta);
-  const rEng  = calcMargenTerminacion_(campSelec, desde, hasta);
+  // Leer resultados directamente de los dashboards — son la única fuente de verdad.
+  // Si alguno no está calculado todavía, mostramos aviso.
+  if (!S._resultCria || !S._resultRecria || !S._resultEng) {
+    h += `<div class="panel" style="border:2px solid var(--gold);background:var(--gold-bg);padding:16px">
+      <div style="font-weight:700;font-size:15px;color:var(--gold-text);margin-bottom:8px">⚠ Datos pendientes de cálculo</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:12px">
+        Para ver los resultados consolidados, primero visitá cada dashboard para que calcule sus totales:
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${!S._resultCria?`<button class="btn btn-primary" onclick="goto('dashboard')">🐄 Ir a Dashboard Cría</button>`:'<span style="color:var(--green-text)">✓ Cría</span>'}
+        ${!S._resultRecria?`<button class="btn btn-primary" onclick="goto('recria_dashboard')">🌱 Ir a Dashboard Recría</button>`:'<span style="color:var(--green-text)">✓ Recría</span>'}
+        ${!S._resultEng?`<button class="btn btn-primary" onclick="goto('engorde')">🏭 Ir a Dashboard Terminación</button>`:'<span style="color:var(--green-text)">✓ Terminación</span>'}
+      </div>
+    </div>`;
+    return h;
+  }
+
+  const rCria = { ing: S._resultCria.ing, eg: S._resultCria.eg, margen: S._resultCria.margen, detalle: S._resultCria };
+  const rRec  = { ing: S._resultRecria.ing, eg: S._resultRecria.eg, margen: S._resultRecria.margen, detalle: S._resultRecria };
+  const rEng  = { ing: S._resultEng.ing, eg: S._resultEng.eg, margen: S._resultEng.margen, detalle: S._resultEng };
 
   const ingTotal = rCria.ing+rRec.ing+rEng.ing;
   const egTotal  = rCria.eg+rRec.eg+rEng.eg;
@@ -8613,7 +8652,7 @@ function attachMargenBrutoEvents() {
       invalidateCache('precios_internos');
       toast('Precio interno guardado', 'ok');
       await loadEntity('precios_internos', true);
-      S.margenBruto = null;
+      S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -11340,7 +11379,7 @@ function attachTableDeleteEvents(entity, idCol) {
         if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) { await loadDashboard(); }
         if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
         if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
-        if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
+        if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
         if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
         if (entity === 'campos' || entity === 'rodeos' || entity === 'compradores') { await loadCatalogs(); }
         render();
@@ -11527,8 +11566,8 @@ function openEditModal(entity, idCol, id) {
       // realmente puede afectar esos KPIs.
       const ENTIDADES_AFECTAN_DASHBOARD_ = ['servicios', 'tactos', 'pariciones', 'destetes', 'abortos', 'mortandad'];
       if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) { await loadDashboard(); }
-      if (entity === 'movimientos') { S.stock = null; await loadStock(); S.margenBruto = null; }
-      if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; }
+      if (entity === 'movimientos') { S.stock = null; await loadStock(); S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
+      if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
       if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
       if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
       if (entity === 'campos' || entity === 'rodeos' || entity === 'compradores') { await loadCatalogs(); }
