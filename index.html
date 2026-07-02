@@ -4389,14 +4389,17 @@ function buildCesionesRecria() {
   </div>`;
 
   // Detectar traslados Recría→Engorde que no tienen su registro en egresos_recria
+  // Usa TODOS los rodeos del catálogo (incluyendo inactivos) para no perder traslados
+  // de rodeos que ya vaciaron su stock y quedaron inactivos.
+  const rodeosPorIdTodos = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
   const movsTodos = S.cache.movimientos || [];
   const trasladosHuerfanos = movsTodos.filter(m => {
     if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
-    const or = rodeosPorId[String(m.rodeo_origen_id)];
-    const de = rodeosPorId[String(m.rodeo_destino_id)];
+    const or = rodeosPorIdTodos[String(m.rodeo_origen_id)];
+    const de = rodeosPorIdTodos[String(m.rodeo_destino_id)];
     if (!or || !de) return false;
     if (or.actividad !== 'Recría') return false;
-    if (de.actividad !== 'Engorde') return false;
+    if (de.actividad !== 'Engorde' && de.actividad !== 'Terminación') return false;
     // Verificar que no tenga ya su registro en egresos_recria
     return !(S.cache.egresos_recria||[]).some(e =>
       String(e.rodeo_id) === String(m.rodeo_origen_id) &&
@@ -4414,8 +4417,8 @@ function buildCesionesRecria() {
         <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th><th class="tc">Cant.</th><th class="tc">Peso</th><th></th>
       </tr></thead><tbody>`;
     trasladosHuerfanos.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).forEach(m => {
-      const or = rodeosPorId[String(m.rodeo_origen_id)];
-      const de = rodeosPorId[String(m.rodeo_destino_id)];
+      const or = rodeosPorIdTodos[String(m.rodeo_origen_id)];
+      const de = rodeosPorIdTodos[String(m.rodeo_destino_id)];
       const p = preciosValGet_(m.fecha);
       const cat = (or?.categoria||'novillo').toLowerCase();
       const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo','vaca venta':'vaca_venta'};
