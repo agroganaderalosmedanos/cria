@@ -8064,15 +8064,21 @@ function calcMargenRecria_(campana, desde, hasta) {
     ingCesEng += cant * peso * (p[mapaKg[cat]]||0);
   });
 
-  // EF valorizado
+  // EF valorizado — mismo método que buildRecriaDashboard:
+  // usa S.stock para el stock actual y busca última pesada del cache
+  const pesadasAll = S.cache.pesadas||[];
   let ef=0;
   const filasEF_R = [];
-  rodeosRec.forEach(r=>{
-    const stk=Math.max(0,r.stock||0); if(!stk)return;
-    const pp=r.ultima_pesada?Number(r.ultima_pesada.peso_prom_kg)||0:0;
-    const val=valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||{},stk,pp);
+  const stockTodosRec = S.stock||[];
+  rodeosAll.filter(r=>normAct_(r.actividad)==='recria').forEach(r=>{
+    const stkObj = stockTodosRec.find(s=>String(s.rodeo_id)===String(r.rodeo_id));
+    const stk = Math.max(0, stkObj?.stock||0);
+    if (!stk) return;
+    const pesR = pesadasAll.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pp = pesR[0] ? Number(pesR[0].peso_prom_kg)||0 : 0;
+    const val = valorizarRodeo_(r, stk, pp);
     ef+=val;
-    filasEF_R.push({ rodeo: r.nombre, cant: stk, peso: pp, precio: pp?val/stk/pp:val/stk||0, total: val });
+    filasEF_R.push({ rodeo: r.nombre, cant: stk, peso: pp, precio: pp&&stk?val/stk/pp:val/stk||0, total: val });
   });
 
   const ing = ingVentas + ingCesEng + ef;
