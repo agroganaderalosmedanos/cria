@@ -374,7 +374,8 @@ const CATS_NO_ENGORDE_ = ['ternero', 'ternera', 'vaca', 'vaca venta', 'toro', 'v
 function rodeosEngordeValidos_() {
   const norm_ = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   return rodeosTodos().filter(r => {
-    if (r.actividad !== 'Engorde') return false;
+    const act = norm_(r.actividad);
+    if (act !== 'engorde' && act !== 'terminacion') return false;
     const cat = norm_(r.categoria);
     if (CATS_NO_ENGORDE_.some(c => norm_(c) === cat)) return false;
     return true;
@@ -4398,8 +4399,10 @@ function buildCesionesRecria() {
     const or = rodeosPorIdTodos[String(m.rodeo_origen_id)];
     const de = rodeosPorIdTodos[String(m.rodeo_destino_id)];
     if (!or || !de) return false;
-    if (or.actividad !== 'Recría') return false;
-    if (de.actividad !== 'Engorde' && de.actividad !== 'Terminación') return false;
+    const normAct = s => String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if (normAct(or.actividad) !== 'recria') return false;
+    const actDe = normAct(de.actividad);
+    if (actDe !== 'engorde' && actDe !== 'terminacion') return false;
     // Verificar que no tenga ya su registro en egresos_recria
     return !(S.cache.egresos_recria||[]).some(e =>
       String(e.rodeo_id) === String(m.rodeo_origen_id) &&
