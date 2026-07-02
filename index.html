@@ -8021,7 +8021,7 @@ function calcMargenRecria_(campana, desde, hasta) {
   const movs       = S.cache.movimientos||[];
   const ventas     = (S.cache.ventas||[]).filter(v=>rodeosIds.has(String(v.rodeo_id))&&(!desde||String(v.fecha_salida)>=desde)&&(!hasta||String(v.fecha_salida)<=hasta));
   const egresos    = (S.cache.egresos_recria||[]).filter(e=>rodeosIds.has(String(e.rodeo_id))&&e.destino==='Engorde'&&(!desde||String(e.fecha)>=desde)&&(!hasta||String(e.fecha)<=hasta));
-  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIds.has(String(c.rodeo_id))&&(!campana||c.campana===campana));
+  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIds.has(String(c.rodeo_id)));
 
   let ingVentas=0;
   ventas.forEach(v=>{ ingVentas+=Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0; });
