@@ -3844,6 +3844,16 @@ function buildRecriaDashboard() {
       <table class="dt" style="margin-bottom:12px"><tbody>
         <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fmM(ingVentas)}</strong></td></tr>
         <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fmM(ingCesionEng)}</strong></td></tr>
+        ${detalleCesEng.length?`<tr><td colspan="2" style="padding:0">
+          <table style="width:100%;font-size:11px;color:var(--text2)">
+            ${detalleCesEng.map(e=>`<tr>
+              <td style="padding:3px 8px 3px 24px">${fd(e.fecha)} · ${e.rodeo}</td>
+              <td style="text-align:right;padding-right:8px">${fn(e.cant)} cab · ${fn(e.kg)} kg</td>
+              <td style="text-align:right;padding-right:8px">${e.sinPrecio?'<span style="color:var(--gold-text)">⚠ sin precio</span>':'$ '+fn(e.kg>0?Math.round(e.importe/e.kg):0)+'/kg'}</td>
+              <td style="text-align:right;padding-right:8px;font-weight:600">${fmM(e.importe)}</td>
+            </tr>`).join('')}
+          </table>
+        </td></tr>`:''}
         <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmM(stockValRecria)}</strong></td></tr>
         <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fmM(totalIngresos)}</strong></td></tr>
       </tbody></table>
@@ -7971,7 +7981,7 @@ function calcMargenRecria_(campana, desde, hasta) {
     const or = rodeosMap_[String(m.rodeo_origen_id)];
     const de = rodeosMap_[String(m.rodeo_destino_id)];
     if (!or || !de) return false;
-    if (!(onormAct_(r.actividad)==='recria') || !(normAct_(de.actividad)==='engorde')) return false;
+    if (!(normAct_(or.actividad)==='recria') || !(normAct_(de.actividad)==='engorde')) return false;
     if (desde && String(m.fecha) < desde) return false;
     if (hasta && String(m.fecha) > hasta) return false;
     // Excluir si ya tiene registro en egresos_recria para evitar doble conteo
