@@ -1818,7 +1818,7 @@ function buildDashboard() {
             <div style="font-weight:600">📦 Stock valorizado actual</div>
             <div style="font-size:11px;color:var(--text3)">${haPrecios ? (stockDetalleRows.length + ' rodeos') : '⚠ Sin precios configurados'}</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmCria_(stockValCria)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmonACorte_(stockValCria, _criaMoneda, corteCria)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
@@ -1904,7 +1904,7 @@ function buildDashboard() {
       <td colspan="3" class="tr">TOTAL EF</td>
       <td class="tc">${fn(stockDetalleRows.reduce((s,r)=>s+r.stock,0))} cab.</td>
       <td colspan="2"></td>
-      <td class="tr" style="color:var(--green-text);font-size:15px">${fmCria_(stockValCria)}</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmonACorte_(stockValCria, _criaMoneda, corteCria)}</td>
     </tr>`;
     h += '</tbody></table></div></div>';
   }
@@ -3974,7 +3974,7 @@ function buildRecriaDashboard() {
       <table class="dt" style="margin-bottom:12px"><tbody>
         <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fmM(ingVentas)}</strong></td></tr>
         <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fmM(ingCesionEng)}</strong></td></tr>
-        <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmM(stockValRecria)}</strong></td></tr>
+        <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmonACorte_(stockValRecria, moneda, corteRecria)}</strong></td></tr>
         <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fmM(totalIngresos)}</strong></td></tr>
       </tbody></table>
     </div>
@@ -4034,7 +4034,7 @@ function buildRecriaDashboard() {
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
       <td class="tc">${fn(stockDetalleRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td></td>
-      <td class="tr" style="color:var(--green-text);font-size:15px">${fmM(stockValRecria)}</td></tr>`;
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fmonACorte_(stockValRecria, moneda, corteRecria)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
 
@@ -5539,6 +5539,20 @@ function egFmon_(pesos, moneda) {
   }
   return '$ ' + fn(Math.round(pesos), 0);
 }
+// Formatea un monto en pesos usando la cotización del dólar VIGENTE A LA FECHA DE CORTE,
+// no la de hoy. Se usa específicamente para el Stock valorizado (EF) — es lo único que
+// se valúa "al cierre del período", así que su conversión a USD debe tomar la cotización
+// de esa fecha de cierre. Todo lo demás (consumos, EI/altas de hacienda) ya se convierte
+// con la cotización de su propia fecha de movimiento vía convertirAMoneda_(importe, fecha,
+// moneda) en el cálculo — acá solo se resuelve el mismo criterio para el display de la EF.
+function fmonACorte_(pesos, moneda, corte) {
+  if (moneda === 'USD') {
+    const tc = tipoCambioVigente_(corte);
+    const val = tc ? Number(tc.valor || tc) : null;
+    if (val && val > 0) return 'U$S ' + fn(Math.round(pesos / val), 0);
+  }
+  return '$ ' + fn(Math.round(pesos), 0);
+}
 function egPct_(a, b) { if (!b) return '—'; return (a / b * 100).toFixed(1) + '%'; }
 
 // ── ENGORDE — construcción principal ─────────────────────────────────────
@@ -5909,7 +5923,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
           <div><div style="font-weight:600">📦 Stock valorizado actual</div><div style="font-size:11px;color:var(--text3)">${stockDetalleRows.length} corrales</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(stockValEng)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmonACorte_(stockValEng, moneda, corteEng)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
@@ -6022,7 +6036,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     });
     h += `<tr class="total-row"><td colspan="3"><strong>Total</strong></td>
       <td class="tc"><strong>${fn(stockDetalleRows.reduce((s,r)=>s+r.stock,0))} cab.</strong></td>
-      <td></td><td></td><td class="tr"><strong>${fm(stockValEng)}</strong></td></tr>`;
+      <td></td><td></td><td class="tr"><strong>${fmonACorte_(stockValEng, moneda, corteEng)}</strong></td></tr>`;
     h += '</tbody></table></div></div>';
   }
 
