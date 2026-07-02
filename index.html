@@ -1698,17 +1698,20 @@ function buildDashboard() {
 
   // 3. Insumos consumidos campaña (alimentación y veterinaria) en rodeos Cría
   const prodPorId = Object.fromEntries((productos||[]).map(p=>[String(p.producto_id),p]));
-  const consumosCria = consumos.filter(c => c.campana===campSelec && rodeosCriaIds.has(String(c.rodeo_id)) && (!campSelecField || String(c.campo_id)===String(campSelecField)));
-  let totalAlim = 0, totalVeter = 0, totalOtrosIns = 0;
+  const consumosCria = consumos.filter(c => rodeosCriaIds.has(String(c.rodeo_id)) && (!campSelecField || String(c.campo_id)===String(campSelecField)));
+  let totalAlim = 0, totalVeter = 0;
+  const detalleAlimCria = [], detalleVetCria = [];
   consumosCria.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
-    const cat = (prod?.categoria||'').toLowerCase();
-    // Costo = cantidad × precio del producto (necesitamos compras_insumos para el costo unitario)
-    // Por ahora sumamos cantidad como referencia — mejorar cuando tengamos precio unitario en consumos
-    const cant = Number(c.cantidad)||0;
-    if (cat.includes('aliment')) totalAlim += cant;
-    else if (cat.includes('veterin')||cat.includes('sanid')) totalVeter += cant;
-    else totalOtrosIns += cant;
+    const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const costo = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    if (cat.includes('veterin')||cat.includes('sanid')) {
+      totalVeter += costo;
+      detalleVetCria.push({fecha:c.fecha,prod:prod?.nombre||'—',cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
+    } else {
+      totalAlim += costo;
+      detalleAlimCria.push({fecha:c.fecha,prod:prod?.nombre||'—',cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
+    }
   });
 
   // 4. Sueldos imputados a Cría (filtrado por campo si corresponde)
@@ -1716,7 +1719,7 @@ function buildDashboard() {
     ? sueldoTotalActividad_('cria', s => String(s.campo_id) === String(campSelecField))
     : sueldoTotalActividad_('cria');
 
-  const totalEgresos = totalSaldoInicial + totalCompras + totalSueldosCria;
+  const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
 
   // ── RENDER ──────────────────────────────────────────────────────────
@@ -1774,11 +1777,22 @@ function buildDashboard() {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div>
+          <div style="flex:1">
             <div style="font-weight:600">🌿 Alimentación e insumos</div>
-            <div style="font-size:11px;color:var(--text3)">${consumosCria.length} consumos — importe pendiente de configurar</div>
+            ${detalleAlimCria.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:4px">
+              ${detalleAlimCria.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fmCria_(d.costo)}</td></tr>`).join('')}
+            </table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos registrados</div>`}
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">—</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalAlim>0?fmCria_(totalAlim):'—'}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1">
+            <div style="font-weight:600">💉 Veterinaria</div>
+            ${detalleVetCria.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:4px">
+              ${detalleVetCria.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fmCria_(d.costo)}</td></tr>`).join('')}
+            </table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos registrados</div>`}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalVeter>0?fmCria_(totalVeter):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -3712,15 +3726,14 @@ function buildRecriaDashboard() {
   </div>`;
 
   // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
-  const ventas     = (S.cache.ventas||[]).filter(v=>todosRodeosRecriaIds.has(String(v.rodeo_id)));
-  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>todosRodeosRecriaIds.has(String(c.rodeo_id)));
-  const movs       = (S.cache.movimientos||[]);
-  const destetes   = (S.cache.destetes||[]);
-  // Egresos: usar TODOS los rodeos de Recría del catálogo (no solo los con stock actual)
-  // para capturar cesiones de rodeos que ya vaciaron su stock (como Novillitos 2025).
+  // Todos los rodeos de Recría (incluyendo inactivos/sin stock) para no perder histórico
   const todosRodeosRecria = rodeosAll.filter(r=>normAct_(r.actividad)==='recria'&&
     (!campSelec||String(r.campo_id)===String(campSelec)));
   const todosRodeosRecriaIds = new Set(todosRodeosRecria.map(r=>String(r.rodeo_id)));
+
+  const ventas     = (S.cache.ventas||[]).filter(v=>todosRodeosRecriaIds.has(String(v.rodeo_id)));
+  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>todosRodeosRecriaIds.has(String(c.rodeo_id)));
+  const movs       = (S.cache.movimientos||[]);
   const egresos    = (S.cache.egresos_recria||[]).filter(e=>todosRodeosRecriaIds.has(String(e.rodeo_id)));
   const precios    = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
   const productos  = (S.catalogs&&S.catalogs.productos)||[];
@@ -5734,15 +5747,16 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   });
   const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)));
   let totalAlim=0, totalVeter=0, totalOtros=0;
+  const detalleAlimEng=[], detalleVetEng=[], detalleOtrosEng=[];
   consumos.forEach(c => {
     const pid = String(c.producto_id);
-    const cp = costoProm[pid];
-    const precioU = cp && cp.cant > 0 ? cp.costo / cp.cant : 0;
+    const precioU = egPrecioVigenteProducto_(pid, c.fecha);
     const importe = (Number(c.cantidad)||0) * precioU;
-    const cat = (prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-    if (cat.includes('aliment'))                              totalAlim  += importe;
-    else if (cat.includes('veterin')||cat.includes('sanid')) totalVeter += importe;
-    else                                                      totalOtros += importe;
+    const cat = (prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const row = {fecha:c.fecha, prod:prodPorId[pid]?.nombre||'—', cant:Number(c.cantidad)||0, rodeo:rodeoNombre(c.rodeo_id), costo:importe};
+    if (cat.includes('veterin')||cat.includes('sanid')) { totalVeter+=importe; detalleVetEng.push(row); }
+    else if (cat.includes('aliment'))                   { totalAlim+=importe;  detalleAlimEng.push(row); }
+    else                                                { totalOtros+=importe; detalleOtrosEng.push(row); }
   });
 
   // Sueldos
@@ -5792,16 +5806,22 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">${consumos.length} registros de consumo</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
+          <div style="flex:1"><div style="font-weight:600">🌾 Alimentación</div>
+            ${detalleAlimEng.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:3px">${detalleAlimEng.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fm(d.costo)}</td></tr>`).join('')}</table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos</div>`}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalAlim>0?fm(totalAlim):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">💉 Veterinaria</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalVeter)}</div>
+          <div style="flex:1"><div style="font-weight:600">💉 Veterinaria</div>
+            ${detalleVetEng.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:3px">${detalleVetEng.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fm(d.costo)}</td></tr>`).join('')}</table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos</div>`}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalVeter>0?fm(totalVeter):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">📦 Otros insumos</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalOtros)}</div>
+          <div style="flex:1"><div style="font-weight:600">📦 Otros insumos</div>
+            ${detalleOtrosEng.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:3px">${detalleOtrosEng.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fm(d.costo)}</td></tr>`).join('')}</table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos</div>`}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalOtros>0?fm(totalOtros):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">👤 Sueldos Engorde</div></div>
