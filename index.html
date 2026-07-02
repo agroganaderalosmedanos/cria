@@ -1588,10 +1588,17 @@ function buildDashboard() {
   const _criaMoneda = S.criaMoneda || 'ARS';
   const fmCria_ = p => egFmon_(p, _criaMoneda);
 
+  // OJO: la lista de campañas se arma con los datos SIN filtrar por fecha de corte
+  // (a propósito). Si se armara con `ventas`/`comprasH`/`consumos` ya filtrados,
+  // una campaña que todavía no tiene ningún movimiento antes de la fecha de corte
+  // desaparecería del combo, y el sistema pasaría a seleccionar otra campaña por
+  // default sin avisar — mostrando el margen de una campaña distinta a la que
+  // pensás que estás mirando. El corte sigue aplicando sobre los TOTALES de la
+  // campaña elegida, pero no debe cambiar CUÁL campaña está disponible/seleccionada.
   const campanas = [...new Set([
-    ...ventas.map(v=>v.campana).filter(Boolean),
-    ...comprasH.map(c=>c.campana).filter(Boolean),
-    ...consumos.map(c=>c.campana).filter(Boolean),
+    ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
+    ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
+    ...(S.cache.consumos_insumos||[]).map(c=>c.campana).filter(Boolean),
   ])].sort((a,b)=>b.localeCompare(a));
 
   const campSelec = S._dashCampana || campanas[0] || '';
