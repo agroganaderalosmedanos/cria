@@ -3713,7 +3713,12 @@ function buildRecriaDashboard() {
   const consumos   = (S.cache.consumos_insumos||[]).filter(c=>rodeosIdsFilt.has(String(c.rodeo_id)));
   const movs       = (S.cache.movimientos||[]);
   const destetes   = (S.cache.destetes||[]);
-  const egresos    = (S.cache.egresos_recria||[]).filter(e=>rodeosIdsFilt.has(String(e.rodeo_id)));
+  // Egresos: usar TODOS los rodeos de Recría del catálogo (no solo los con stock actual)
+  // para capturar cesiones de rodeos que ya vaciaron su stock (como Novillitos 2025).
+  const todosRodeosRecria = rodeosAll.filter(r=>r.actividad==='Recría'&&
+    (!campSelec||String(r.campo_id)===String(campSelec)));
+  const todosRodeosRecriaIds = new Set(todosRodeosRecria.map(r=>String(r.rodeo_id)));
+  const egresos    = (S.cache.egresos_recria||[]).filter(e=>todosRodeosRecriaIds.has(String(e.rodeo_id)));
   const precios    = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
   const productos  = (S.catalogs&&S.catalogs.productos)||[];
 
@@ -3764,7 +3769,7 @@ function buildRecriaDashboard() {
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or = rodeosAllMap[String(m.rodeo_origen_id)];
     const de = rodeosAllMap[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&rodeosIdsFilt.has(String(m.rodeo_destino_id));
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   }).forEach(m=>{
     const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
     const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
@@ -3930,7 +3935,7 @@ function buildRecriaDashboard() {
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or=rodeosAllMap[String(m.rodeo_origen_id)];
     const de=rodeosAllMap[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&rodeosIdsFilt.has(String(m.rodeo_destino_id));
+    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   });
   if (cesRecCria.length) {
     const pesadasAll = S.cache.pesadas||[];
