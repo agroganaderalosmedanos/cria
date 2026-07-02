@@ -297,6 +297,49 @@ function toast(msg, type) {
 }
 
 function today() { return new Date().toISOString().slice(0, 10); }
+
+// Calcula el stock de TODOS los rodeos a una fecha de corte específica (≤ corte),
+// replicando en el frontend la misma lógica que el backend usa en getStockRodeoAFecha_/
+// getStockTodos. Se usa para que los dashboards individuales puedan mostrar el margen
+// "como si fuera" una fecha pasada, sin que datos cargados después (ej. una venta de
+// mitad de mes que todavía no cerró el período) contaminen el resultado.
+function stockPorRodeoACorte_(corte) {
+  const movs = S.cache.movimientos || [];
+  const ventas = S.cache.ventas || [];
+  const mortandad = S.cache.mortandad || [];
+  const stockMap = {};
+  movs.forEach(m => {
+    const cant = Number(m.cantidad) || 0;
+    const fechaOk = (m.fecha || '') <= corte;
+    if (m.tipo === 'Saldo inicial') {
+      // El saldo inicial respeta su propia fecha, igual que el backend.
+      if (fechaOk) stockMap[String(m.rodeo_destino_id)] = (stockMap[String(m.rodeo_destino_id)] || 0) + cant;
+      return;
+    }
+    if (!fechaOk) return;
+    if (m.rodeo_destino_id) stockMap[String(m.rodeo_destino_id)] = (stockMap[String(m.rodeo_destino_id)] || 0) + cant;
+    if (m.rodeo_origen_id)  stockMap[String(m.rodeo_origen_id)]  = (stockMap[String(m.rodeo_origen_id)]  || 0) - cant;
+  });
+  ventas.forEach(v => {
+    if ((v.fecha_salida || '') <= corte) {
+      stockMap[String(v.rodeo_id)] = (stockMap[String(v.rodeo_id)] || 0) - (Number(v.cant_animales) || 0);
+    }
+  });
+  mortandad.forEach(m => {
+    if ((m.fecha || '') <= corte) {
+      stockMap[String(m.rodeo_id)] = (stockMap[String(m.rodeo_id)] || 0) - (Number(m.cantidad) || 1);
+    }
+  });
+  return stockMap;
+}
+// Último peso promedio registrado de un rodeo, respetando la fecha de corte
+// (no usa pesadas posteriores al corte, para no adelantar información).
+function ultimaPesadaACorte_(rodeoId, corte) {
+  const pesadasR = (S.cache.pesadas || [])
+    .filter(p => String(p.rodeo_id) === String(rodeoId) && (p.fecha || '') <= corte)
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  return pesadasR[0] ? Number(pesadasR[0].peso_prom_kg) || 0 : 0;
+}
 // Compara por_campo de forma robusta: acepta true, "true", "TRUE", "True", 1, "1"
 function esPorCampo_(v) {
   if (v === true || v === 1) return true;
@@ -1527,13 +1570,19 @@ function buildDashboard() {
   }
   const campos   = (S.catalogs && S.catalogs.campos) || [];
   const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
-  const movs     = S.cache.movimientos || [];
-  const ventas   = S.cache.ventas || [];
-  const consumos = S.cache.consumos_insumos || [];
-  const pesadas  = S.cache.pesadas || [];
+  // Fecha de corte: por defecto hoy. Todo lo que esté cargado con fecha posterior
+  // (ej. una venta o un consumo de mitad de mes que no querés que "manche" todavía
+  // el resultado del período que estás analizando) queda afuera del cálculo hasta
+  // que muevas la fecha.
+  const corteCria = S._corteCria || today();
+  const movs     = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteCria);
+  const ventas   = (S.cache.ventas || []).filter(v => (v.fecha_salida||'') <= corteCria);
+  const consumos = (S.cache.consumos_insumos || []).filter(c => (c.fecha||'') <= corteCria);
+  const pesadas  = (S.cache.pesadas || []).filter(p => (p.fecha||'') <= corteCria);
   const productos= S.cache.productos || [];
-  const comprasH = comprasHacGetAll_();
+  const comprasH = comprasHacGetAll_().filter(c => (c.fecha||'') <= corteCria);
   const sueldos  = sueldosGetAll_();
+  const mortandadCria = (S.cache.mortandad || []).filter(m => (m.fecha||'') <= corteCria);
 
   // Campañas disponibles
   const _criaMoneda = S.criaMoneda || 'ARS';
@@ -1591,6 +1640,12 @@ function buildDashboard() {
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(campSelecField)?'selected':''}>${c.nombre}</option>`).join('')}
       </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Fecha de corte:</label>
+      <input type="date" value="${corteCria}" style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
+        onchange="S._corteCria=this.value;render()">
+      ${corteCria!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteCria=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
     </div>
   </div>`;
 
@@ -1670,8 +1725,8 @@ function buildDashboard() {
   ventas.forEach(v => {
     stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0);
   });
-  // Restar mortandad — igual que el backend getStockTodos
-  (S.cache.mortandad||[]).forEach(m => {
+  // Restar mortandad — igual que el backend getStockTodos, respetando la fecha de corte
+  mortandadCria.forEach(m => {
     stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
   });
 
@@ -1846,7 +1901,9 @@ function buildDashboard() {
       </tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800">
-      <td colspan="6" class="tr">TOTAL EF</td>
+      <td colspan="3" class="tr">TOTAL EF</td>
+      <td class="tc">${fn(stockDetalleRows.reduce((s,r)=>s+r.stock,0))} cab.</td>
+      <td colspan="2"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fmCria_(stockValCria)}</td>
     </tr>`;
     h += '</tbody></table></div></div>';
@@ -3721,8 +3778,13 @@ function buildRecriaDashboard() {
   const moneda     = S.rcDashMoneda || 'ARS';
   const fmM = v => moneda === 'USD' ? 'U$S ' + fn(Math.round(convertirAMoneda_(v, today(), 'USD'))) : fm(v);
 
+  // Fecha de corte: por defecto hoy. Ver nota en buildDashboard() (Cría) — evita que
+  // datos cargados con fecha posterior contaminen el resultado del período analizado.
+  const corteRecria = S._corteRecria || today();
+  const stockACorteRecria = stockPorRodeoACorte_(corteRecria);
+
   // Mortandad
-  const mortandad = (S.cache.mortandad||[]);
+  const mortandad = (S.cache.mortandad||[]).filter(m => (m.fecha||'') <= corteRecria);
   const rodeosFiltBase = rodeos.filter(r => !campSelec || String(r.campo_id) === String(campSelec));
   const rodeosIdsFilt  = new Set(rodeosFiltBase.map(r=>String(r.rodeo_id)));
   const mortFilt = mortandad.filter(m=>rodeosIdsFilt.has(String(m.rodeo_id)));
@@ -3753,6 +3815,12 @@ function buildRecriaDashboard() {
         ${campos.map(c=>`<option value="${c.campo_id}" ${campSelec==c.campo_id?'selected':''}>${c.nombre}</option>`).join('')}
       </select>
     </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Fecha de corte:</label>
+      <input type="date" value="${corteRecria}" style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
+        onchange="S._corteRecria=this.value;render()">
+      ${corteRecria!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteRecria=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
+    </div>
   </div>`;
 
   // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
@@ -3761,10 +3829,10 @@ function buildRecriaDashboard() {
     (!campSelec||String(r.campo_id)===String(campSelec)));
   const todosRodeosRecriaIds = new Set(todosRodeosRecria.map(r=>String(r.rodeo_id)));
 
-  const ventas     = (S.cache.ventas||[]).filter(v=>todosRodeosRecriaIds.has(String(v.rodeo_id)));
-  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>todosRodeosRecriaIds.has(String(c.rodeo_id)));
-  const movs       = (S.cache.movimientos||[]);
-  const egresos    = (S.cache.egresos_recria||[]).filter(e=>todosRodeosRecriaIds.has(String(e.rodeo_id)));
+  const ventas     = (S.cache.ventas||[]).filter(v=>todosRodeosRecriaIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corteRecria);
+  const consumos   = (S.cache.consumos_insumos||[]).filter(c=>todosRodeosRecriaIds.has(String(c.rodeo_id)) && (c.fecha||'') <= corteRecria);
+  const movs       = (S.cache.movimientos||[]).filter(m => (m.fecha||'') <= corteRecria);
+  const egresos    = (S.cache.egresos_recria||[]).filter(e=>todosRodeosRecriaIds.has(String(e.rodeo_id)) && (e.fecha||'') <= corteRecria);
   const precios    = (S.cache.precios_internos||[]).slice().sort((a,b)=>String(b.fecha_desde||'').localeCompare(String(a.fecha_desde||'')));
   const productos  = (S.catalogs&&S.catalogs.productos)||[];
 
@@ -3794,17 +3862,17 @@ function buildRecriaDashboard() {
     detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant, kg: kgTot, importe: imp, sinPrecio: !precioKg });
   });
 
-  // 3. Stock valorizado actual
+  // 3. Stock valorizado a la fecha de corte
   let stockValRecria = 0;
-  const pesadasCache = S.cache.pesadas||[];
-  // Usar S.stock para todos los rodeos de Recría — incluye rodeos que resumenRecria omite
+  // Antes usaba S.stock (siempre "hoy", calculado por el backend) — ahora usa
+  // stockACorteRecria, calculado localmente respetando la fecha de corte elegida.
+  // Se sigue recorriendo todosRodeosRecria (no solo resumenRecria) para no perder
+  // rodeos que el backend pudiera omitir.
   const stockDetalleRec_ = [];
   todosRodeosRecria.forEach(r=>{
-    const stkObj = (S.stock||[]).find(s=>String(s.rodeo_id)===String(r.rodeo_id));
-    const stock = Math.max(0, stkObj?.stock||0);
+    const stock = Math.max(0, stockACorteRecria[String(r.rodeo_id)]||0);
     if (!stock) return;
-    const pesR = pesadasCache.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pesoP = pesR[0] ? Number(pesR[0].peso_prom_kg)||0 : 0;
+    const pesoP = ultimaPesadaACorte_(r.rodeo_id, corteRecria);
     const val = valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||r, stock, pesoP);
     stockValRecria += val;
     stockDetalleRec_.push({nombre:r.nombre, stock, pesoP, val});
@@ -3964,7 +4032,8 @@ function buildRecriaDashboard() {
         <td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td>
         <td class="tr"><strong>${fmM(r.val)}</strong></td></tr>`;
     });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="3" class="tr">TOTAL EF</td>
+    h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
+      <td class="tc">${fn(stockDetalleRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fmM(stockValRecria)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
@@ -5705,6 +5774,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         ${campos.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(campSelecField)?'selected':''}>${c.nombre}</option>`).join('')}
       </select>
     </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;font-weight:600;white-space:nowrap">Fecha de corte:</label>
+      <input type="date" value="${S._corteEng||today()}" style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
+        onchange="S._corteEng=this.value;render()">
+      ${(S._corteEng||today())!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteEng=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
+    </div>
   </div>`;
 
   // ── CÁLCULOS ECONÓMICOS ─────────────────────────────────────────────
@@ -5713,19 +5788,22 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     : rodeosEng;
   const rodeosEngIds = new Set(rodeosEngFilt.map(r=>String(r.rodeo_id)));
 
+  // Fecha de corte: por defecto hoy. Ver nota en buildDashboard() (Cría).
+  const corteEng = S._corteEng || today();
+  const stockACorteEng = stockPorRodeoACorte_(corteEng);
+
   // Ventas engorde campaña
-  const ventasEng = (S.cache.ventas||[]).filter(v => rodeosEngIds.has(String(v.rodeo_id)));
+  const ventasEng = (S.cache.ventas||[]).filter(v => rodeosEngIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corteEng);
   const totalVentas = ventasEng.reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0),0);
 
-  // Stock valorizado actual
+  // Stock valorizado a la fecha de corte (antes: egStock_, que siempre lee S.stock a "hoy")
   const pesadas = S.cache.pesadas || [];
   let stockValEng = 0;
   const stockDetalleRows = [];
   rodeosEngFilt.forEach(r => {
-    const stock = Math.max(0, egStock_(r.rodeo_id));
+    const stock = Math.max(0, stockACorteEng[String(r.rodeo_id)]||0);
     if (!stock) return;
-    const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+    const pesoP = ultimaPesadaACorte_(r.rodeo_id, corteEng);
     const val = valorizarRodeo_(r, stock, pesoP);
     stockValEng += val;
     stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
@@ -5734,7 +5812,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalIngresos = totalVentas + stockValEng;
 
   // Stock inicial / Cesiones recibidas de Recría
-  const movs = S.cache.movimientos || [];
+  const movs = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteEng);
   const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
   // Traslados reales a corrales de engorde — esta es ahora la ÚNICA fuente de verdad
   // para el costo de cesiones recibidas (antes del fix, "Cesiones Recría→Terminación"
@@ -5745,7 +5823,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // (cesiones cargadas ANTES de este fix, cuando el módulo no generaba el movimiento real).
   // Se identifican por no tener match de fecha+cantidad+rodeo en ningún Traslado — evita
   // sumar dos veces las cesiones nuevas, que sí están en ambos lados.
-  const egresosRecRaw = S.cache.egresos_recria || [];
+  const egresosRecRaw = (S.cache.egresos_recria || []).filter(e => (e.fecha||'') <= corteEng);
   const cesionesRec = egresosRecRaw.filter(e => {
     if (e.destino !== 'Engorde' || !rodeosEngIds.has(String(e.rodeo_destino_id||''))) return false;
     const tieneTrasladoReal = cesionesRecTrasla.some(m =>
@@ -5773,7 +5851,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   },0);
 
   // Compras campaña
-  const comprasEng = comprasHacGetAll_().filter(c=>c.campana===campSelec&&(!campSelecField||String(c.campo_id)===String(campSelecField)));
+  const comprasEng = comprasHacGetAll_().filter(c=>c.campana===campSelec&&(!campSelecField||String(c.campo_id)===String(campSelecField))&&(c.fecha||'')<=corteEng);
   const totalCompras = comprasEng.reduce((s,c)=>s+(Number(c.importe_total)||0),0);
 
   // Insumos: precalcular costo promedio por producto una sola vez
@@ -5787,7 +5865,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     costoProm[pid].cant  += Number(c.cantidad)    || 0;
     costoProm[pid].costo += (Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0);
   });
-  const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)));
+  const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)) && (c.fecha||'')<=corteEng);
   let totalAlim=0, totalVeter=0, totalOtros=0;
   const detalleAlimEng=[], detalleVetEng=[], detalleOtrosEng=[];
   consumos.forEach(c => {
@@ -5942,7 +6020,8 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         <td class="tr"><strong>${fm(row.val)}</strong></td>
       </tr>`;
     });
-    h += `<tr class="total-row"><td colspan="4"><strong>Total</strong></td>
+    h += `<tr class="total-row"><td colspan="3"><strong>Total</strong></td>
+      <td class="tc"><strong>${fn(stockDetalleRows.reduce((s,r)=>s+r.stock,0))} cab.</strong></td>
       <td></td><td></td><td class="tr"><strong>${fm(stockValEng)}</strong></td></tr>`;
     h += '</tbody></table></div></div>';
   }
