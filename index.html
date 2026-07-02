@@ -474,6 +474,7 @@ async function init() {
       loadEntity('pesadas').catch(()=>{}),
       loadEntity('sueldos').catch(()=>{}),
       loadEntity('mortandad').catch(()=>{}),
+      loadEntity('abortos').catch(()=>{}),
       loadEntity('destetes').catch(()=>{}),
       loadEntity('pariciones').catch(()=>{}),
       loadEntity('egresos_recria').catch(()=>{}),
@@ -567,6 +568,8 @@ async function goto(page) {
     if (!S.cache.pesadas)          loads.push(loadEntity('pesadas').catch(()=>{}));
     if (!S.cache.rodeo_productos)  loads.push(loadEntity('rodeo_productos').catch(()=>{}));
     if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
+    if (!S.cache.mortandad)        loads.push(loadEntity('mortandad').catch(()=>{}));
+    if (!S.cache.abortos)          loads.push(loadEntity('abortos').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); render(); });
   }
   if (page === 'indices_reproduccion' && !S.indicesData && !S._indicesLoading) {
