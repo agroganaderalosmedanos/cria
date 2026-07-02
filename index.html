@@ -1777,22 +1777,12 @@ function buildDashboard() {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div style="flex:1">
-            <div style="font-weight:600">🌿 Alimentación e insumos</div>
-            ${detalleAlimCria.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:4px">
-              ${detalleAlimCria.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fmCria_(d.costo)}</td></tr>`).join('')}
-            </table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos registrados</div>`}
-          </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalAlim>0?fmCria_(totalAlim):'—'}</div>
+          <div><div style="font-weight:600">🌿 Alimentación e insumos</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalAlim>0?fmCria_(totalAlim):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div style="flex:1">
-            <div style="font-weight:600">💉 Veterinaria</div>
-            ${detalleVetCria.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:4px">
-              ${detalleVetCria.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fmCria_(d.costo)}</td></tr>`).join('')}
-            </table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos registrados</div>`}
-          </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalVeter>0?fmCria_(totalVeter):'—'}</div>
+          <div><div style="font-weight:600">💉 Veterinaria</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalVeter>0?fmCria_(totalVeter):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -1962,6 +1952,26 @@ function buildDashboard() {
     </tr>`;
     h += '</tbody></table></div></div>';
   }
+
+  // ── Detalle Alimentación e Insumos ────────────────────────────────────────
+  const buildInsumoTableCria_ = (filas, titulo) => {
+    if (!filas.length) return '';
+    let t = `<div class="panel"><div class="panel-title">${titulo}</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Producto</th><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+      </tr></thead><tbody>`;
+    let tot = 0;
+    filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
+      tot+=d.costo;
+      t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
+        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fmCria_(d.costo)}</strong></td></tr>`;
+    });
+    t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmCria_(tot)}</td></tr>`;
+    return t+'</tbody></table></div></div>';
+  };
+  if (detalleAlimCria.length) h += buildInsumoTableCria_(detalleAlimCria, '🌿 Alimentación e insumos — detalle');
+  if (detalleVetCria.length)  h += buildInsumoTableCria_(detalleVetCria,  '💉 Veterinaria — detalle');
 
   // Mortandad — al final del dashboard, destacada en rojo
   const mortandadCriaFilt = (S.cache.mortandad || []).filter(m => rodeosCriaIds.has(String(m.rodeo_id)));
@@ -5586,6 +5596,27 @@ function buildEngorde() {
     const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
     h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm);
 
+    // Detalle de insumos
+    const buildInsumoTableEng_ = (filas, titulo) => {
+      if (!filas.length) return '';
+      let t = `<div class="panel"><div class="panel-title">${titulo}</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Fecha</th><th>Producto</th><th>Corral</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+        </tr></thead><tbody>`;
+      let tot=0;
+      filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
+        tot+=d.costo;
+        t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
+          <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
+      });
+      t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
+        <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
+      return t+'</tbody></table></div></div>';
+    };
+    if (detalleAlimEng.length)  h += buildInsumoTableEng_(detalleAlimEng,  '🌾 Alimentación — detalle');
+    if (detalleVetEng.length)   h += buildInsumoTableEng_(detalleVetEng,   '💉 Veterinaria — detalle');
+    if (detalleOtrosEng.length) h += buildInsumoTableEng_(detalleOtrosEng, '📦 Otros insumos — detalle');
+
     // 6) Mortandad — al final
     const rodeosEngIdsLocal = new Set(rodeosEngFiltLocal.map(r=>String(r.rodeo_id)));
     const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIdsLocal.has(String(m.rodeo_id)));
@@ -5806,22 +5837,16 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCompras)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div style="flex:1"><div style="font-weight:600">🌾 Alimentación</div>
-            ${detalleAlimEng.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:3px">${detalleAlimEng.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fm(d.costo)}</td></tr>`).join('')}</table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos</div>`}
-          </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalAlim>0?fm(totalAlim):'—'}</div>
+          <div><div style="font-weight:600">🌾 Alimentación</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalAlim>0?fm(totalAlim):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div style="flex:1"><div style="font-weight:600">💉 Veterinaria</div>
-            ${detalleVetEng.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:3px">${detalleVetEng.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fm(d.costo)}</td></tr>`).join('')}</table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos</div>`}
-          </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalVeter>0?fm(totalVeter):'—'}</div>
+          <div><div style="font-weight:600">💉 Veterinaria</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalVeter>0?fm(totalVeter):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div style="flex:1"><div style="font-weight:600">📦 Otros insumos</div>
-            ${detalleOtrosEng.length?`<table style="width:100%;font-size:11px;color:var(--text2);margin-top:3px">${detalleOtrosEng.map(d=>`<tr><td style="padding:1px 0 1px 12px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:4px">${fn(d.cant)}</td><td style="text-align:right;font-weight:600">${fm(d.costo)}</td></tr>`).join('')}</table>`:`<div style="font-size:11px;color:var(--text3)">Sin consumos</div>`}
-          </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay);margin-left:16px">${totalOtros>0?fm(totalOtros):'—'}</div>
+          <div><div style="font-weight:600">📦 Otros insumos</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalOtros>0?fm(totalOtros):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">👤 Sueldos Engorde</div></div>
