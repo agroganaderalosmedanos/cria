@@ -4055,6 +4055,26 @@ function buildRecriaDashboard() {
     h += `</tbody></table></div></div>`;
   }
 
+  // ── Detalle Alimentación y Veterinaria ───────────────────────────────────
+  const buildInsumoTableRec_ = (filas, titulo) => {
+    if (!filas.length) return '';
+    let t = `<div class="panel"><div class="panel-title">${titulo}</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Producto</th><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+      </tr></thead><tbody>`;
+    let tot=0;
+    filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
+      tot+=d.costo;
+      t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
+        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fmM(d.costo)}</strong></td></tr>`;
+    });
+    t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmM(tot)}</td></tr>`;
+    return t+'</tbody></table></div></div>';
+  };
+  if (detalleAlim.length) h += buildInsumoTableRec_(detalleAlim, '🌿 Alimentación e insumos — detalle');
+  if (detalleVet.length)  h += buildInsumoTableRec_(detalleVet,  '💉 Veterinaria — detalle');
+
   // Mortandad — al final del dashboard, destacada en rojo
   if (mortTotal > 0) {
     h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
@@ -7975,18 +7995,16 @@ function calcMargenCria_(campana, desde, hasta) {
       (!desde||String(c.fecha)>=desde) && (!hasta||String(c.fecha)<=hasta))
     .reduce((s,c) => s+(Number(c.importe_total)||0), 0);
 
-  // Consumos campaña
-  const consumosFilt = consumos.filter(c =>
-    rodeosIds.has(String(c.rodeo_id)) && (!campana||c.campana===campana)
-  );
+  // Consumos — usar todos los rodeos de Recría (incluyendo los sin stock actual)
+  const consumosFilt = consumos.filter(c => rodeosIds.has(String(c.rodeo_id)));
   let egAlim=0, egVet=0;
   consumosFilt.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
-    const costo = (Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id);
+    const costo = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
     if (prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo;
   });
 
-  const egSueldos = sueldoTotalActividad_('cria');
+  const egSueldos = sueldoTotalActividad_('recria');
   const eg = ei + compras + egAlim + egVet + egSueldos;
   const margen = ing - eg;
 
