@@ -371,6 +371,8 @@ function rodeosTodos() {
 // Esto es una red de seguridad ante errores de carga en la planilla — la corrección
 // real es arreglar la columna "actividad" del rodeo en la pestaña Rodeos del Sheet.
 const CATS_NO_ENGORDE_ = ['ternero', 'ternera', 'vaca', 'vaca venta', 'toro', 'vaquillona', 'vaquillona proximo servicio', 'vaquilloncita'];
+function normAct_(s) { return String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+
 function rodeosEngordeValidos_() {
   const norm_ = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   return rodeosTodos().filter(r => {
@@ -2641,12 +2643,12 @@ function buildDestetes() {  const _criaTabs = [
       </label>
       <div id="de-traslado-wrap" class="fgrid" style="display:none">
         <div class="fg"><label>Campo destino</label>
-          <select id="de-trasl-campo" onchange="document.getElementById('de-trasl-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value).filter(r=>r.actividad==='Recría'))">
+          <select id="de-trasl-campo" onchange="document.getElementById('de-trasl-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value).filter(r=>normAct_(r.actividad)==='recria'))">
             ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
           </select>
         </div>
         <div class="fg"><label>Rodeo destino (Recría)</label>
-          <select id="de-trasl-rodeo">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id).filter(r=>r.actividad==='Recría'))}</select>
+          <select id="de-trasl-rodeo">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id).filter(r=>normAct_(r.actividad)==='recria'))}</select>
         </div>
       </div>
       <div style="font-size:11.5px;color:var(--text3);margin-top:4px">Una vez destetado, el ternero ya no está con la madre — biológicamente pasa a ser Recría. Si marcás esto, además del destete se registra automáticamente el Traslado al rodeo elegido.</div>
@@ -3716,7 +3718,7 @@ function buildRecriaDashboard() {
   const destetes   = (S.cache.destetes||[]);
   // Egresos: usar TODOS los rodeos de Recría del catálogo (no solo los con stock actual)
   // para capturar cesiones de rodeos que ya vaciaron su stock (como Novillitos 2025).
-  const todosRodeosRecria = rodeosAll.filter(r=>r.actividad==='Recría'&&
+  const todosRodeosRecria = rodeosAll.filter(r=>normAct_(r.actividad)==='recria'&&
     (!campSelec||String(r.campo_id)===String(campSelec)));
   const todosRodeosRecriaIds = new Set(todosRodeosRecria.map(r=>String(r.rodeo_id)));
   const egresos    = (S.cache.egresos_recria||[]).filter(e=>todosRodeosRecriaIds.has(String(e.rodeo_id)));
@@ -3770,7 +3772,7 @@ function buildRecriaDashboard() {
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or = rodeosAllMap[String(m.rodeo_origen_id)];
     const de = rodeosAllMap[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
+    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   }).forEach(m=>{
     const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
     const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
@@ -3936,7 +3938,7 @@ function buildRecriaDashboard() {
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or=rodeosAllMap[String(m.rodeo_origen_id)];
     const de=rodeosAllMap[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
+    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   });
   if (cesRecCria.length) {
     const pesadasAll = S.cache.pesadas||[];
@@ -4062,14 +4064,14 @@ function buildCesionesCria() {
   const rodeosCria = rodeos.filter(r=>r.actividad==='Cría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE')&&
     (r.categoria==='ternero'||r.categoria==='ternera'));
   // Rodeos de Recría como destino
-  const rodeosRec  = rodeos.filter(r=>r.actividad==='Recría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const rodeosRec  = rodeos.filter(r=>normAct_(r.actividad)==='recria'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
 
   // Cesiones existentes — traslados de Cría a Recría con precio cargado
   const cesiones = movs.filter(m=>{
     if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or = rodeosPorId[String(m.rodeo_origen_id)];
     const de = rodeosPorId[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&(de.actividad==='Recría');
+    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&(normAct_(de.actividad)==='recria');
   }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
 
   let h = `<div class="page-header">
@@ -4343,7 +4345,7 @@ function attachCesionesCriaEvents() {
 function buildCesionesRecria() {
   const rodeos    = (S.catalogs && S.catalogs.rodeos) || [];
   const campos    = (S.catalogs && S.catalogs.campos) || [];
-  const rodeosRec = rodeos.filter(r=>r.actividad==='Recría'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
+  const rodeosRec = rodeos.filter(r=>normAct_(r.actividad)==='recria'&&(r.activo===true||String(r.activo).toUpperCase()==='TRUE'));
   const rodeosEng = rodeosEngordeValidos_().filter(r=>r.activo===true||String(r.activo).toUpperCase()==='TRUE');
   const egresos   = (S.cache.egresos_recria||[])
     .filter(e=>e.destino==='Engorde')
@@ -4700,7 +4702,7 @@ function buildRecria() {
   const egresosR = S.cache.egresos_recria || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
-  const rodeosRecria = rodeosAll.filter(r => r.actividad === 'Recría');
+  const rodeosRecria = rodeosAll.filter(r => normAct_(r.actividad)==='recria');
 
   let h = '<div class="page-header"><div class="page-title">Recría</div><div class="page-sub">Pesadas, movimientos, ventas y egresos de animales en recría</div></div>';
   h += buildSueldoKpiPanel_('recria');
@@ -7851,7 +7853,7 @@ function calcMargenCria_(campana, desde, hasta) {
     if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or = rodeosPorId[String(m.rodeo_origen_id)];
     const de = rodeosPorId[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría' &&
+    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria' &&
       (!desde||String(m.fecha)>=desde) && (!hasta||String(m.fecha)<=hasta);
   });
   const pesadas = S.cache.pesadas||[];
@@ -7969,7 +7971,7 @@ function calcMargenRecria_(campana, desde, hasta) {
     const or = rodeosMap_[String(m.rodeo_origen_id)];
     const de = rodeosMap_[String(m.rodeo_destino_id)];
     if (!or || !de) return false;
-    if (!(or.actividad==='Recría') || !(de.actividad==='Engorde')) return false;
+    if (!(onormAct_(r.actividad)==='recria') || !(normAct_(de.actividad)==='engorde')) return false;
     if (desde && String(m.fecha) < desde) return false;
     if (hasta && String(m.fecha) > hasta) return false;
     // Excluir si ya tiene registro en egresos_recria para evitar doble conteo
@@ -8022,7 +8024,7 @@ function calcMargenRecria_(campana, desde, hasta) {
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or=rodeosPorId[String(m.rodeo_origen_id)];
     const de=rodeosPorId[String(m.rodeo_destino_id)];
-    return or&&(or.actividad==='Cría'||or.actividad==='Cria')&&de&&de.actividad==='Recría'&&
+    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria'&&
       (!desde||String(m.fecha)>=desde)&&(!hasta||String(m.fecha)<=hasta);
   }).forEach(m=>{
     const cant=Number(m.cantidad)||0;
