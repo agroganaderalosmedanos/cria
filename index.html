@@ -7995,7 +7995,7 @@ function calcMargenCria_(campana, desde, hasta) {
       (!desde||String(c.fecha)>=desde) && (!hasta||String(c.fecha)<=hasta))
     .reduce((s,c) => s+(Number(c.importe_total)||0), 0);
 
-  // Consumos — usar todos los rodeos de Recría (incluyendo los sin stock actual)
+  // Consumos de Cría
   const consumosFilt = consumos.filter(c => rodeosIds.has(String(c.rodeo_id)));
   let egAlim=0, egVet=0;
   consumosFilt.forEach(c => {
@@ -8004,7 +8004,7 @@ function calcMargenCria_(campana, desde, hasta) {
     if (prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo;
   });
 
-  const egSueldos = sueldoTotalActividad_('recria');
+  const egSueldos = sueldoTotalActividad_('cria');
   const eg = ei + compras + egAlim + egVet + egSueldos;
   const margen = ing - eg;
 
