@@ -1984,51 +1984,57 @@ function buildDashboard() {
   if (detalleAlimCria.length) h += buildInsumoTableCria_(detalleAlimCria, '🌿 Alimentación e insumos — detalle');
   if (detalleVetCria.length)  h += buildInsumoTableCria_(detalleVetCria,  '💉 Veterinaria — detalle');
 
-  // Mortandad — al final del dashboard, destacada en rojo
+  // Mortandad y Abortos — KPIs juntos al final del dashboard
   const mortandadCriaFilt = (S.cache.mortandad || []).filter(m => rodeosCriaIds.has(String(m.rodeo_id)));
   const mortCriaTotal = mortandadCriaFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
-  if (mortCriaTotal > 0) {
-    const mortCriaPorRodeo = {};
-    mortandadCriaFilt.forEach(m => { mortCriaPorRodeo[m.rodeo_id] = (mortCriaPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
-    h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
-      <div class="panel-title" style="color:var(--red)">💀 Mortandad en Cría</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
-    Object.entries(mortCriaPorRodeo).forEach(([rid,cant])=>{
-      const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
-      h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
-        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
-        <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
-      </div>`;
-    });
-    h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
-      <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
-      <div style="font-size:30px;font-weight:800;color:var(--red)">${mortCriaTotal} <span style="font-size:13px">bajas</span></div>
-    </div></div>
-      <div style="font-size:12px;color:var(--red)">⚠ La mortandad no se contabiliza como egreso — su impacto está reflejado en el menor stock al cierre.</div>
-    </div>`;
-  }
+  const abortosCriaFilt2 = (S.cache.abortos || []).filter(a => rodeosCriaIds.has(String(a.rodeo_id)));
+  const abortosCriaTotal2 = abortosCriaFilt2.length;
 
-  // Abortos — al final del dashboard, igual estilo que mortandad
-  const abortosCriaFilt = (S.cache.abortos || []).filter(a => rodeosCriaIds.has(String(a.rodeo_id)));
-  const abortosCriaTotal = abortosCriaFilt.length;
-  if (abortosCriaTotal > 0) {
-    const abortosPorRodeo = {};
-    abortosCriaFilt.forEach(a => { abortosPorRodeo[a.rodeo_id] = (abortosPorRodeo[a.rodeo_id]||0) + 1; });
-    h += `<div class="panel" style="border:2px solid var(--clay);background:rgba(180,100,30,0.06);margin-bottom:16px">
-      <div class="panel-title" style="color:var(--clay-text)">⊘ Abortos en Cría</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
-    Object.entries(abortosPorRodeo).forEach(([rid,cant])=>{
-      const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
-      h += `<div style="background:rgba(180,100,30,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--clay)">
-        <div style="font-size:11px;font-weight:700;color:var(--clay-text);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
-        <div style="font-size:26px;font-weight:800;color:var(--clay-text)">${cant} <span style="font-size:13px">aborto${cant>1?'s':''}</span></div>
+  if (mortCriaTotal > 0 || abortosCriaTotal2 > 0) {
+    h += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">`;
+
+    if (mortCriaTotal > 0) {
+      const mortCriaPorRodeo = {};
+      mortandadCriaFilt.forEach(m => { mortCriaPorRodeo[m.rodeo_id] = (mortCriaPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
+      h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);flex:1;min-width:280px">
+        <div class="panel-title" style="color:var(--red)">💀 Mortandad en Cría</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+      Object.entries(mortCriaPorRodeo).forEach(([rid,cant])=>{
+        const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
+        h += `<div style="background:rgba(200,50,50,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--red)">
+          <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+          <div style="font-size:26px;font-weight:800;color:var(--red)">${cant} <span style="font-size:13px">baja${cant>1?'s':''}</span></div>
+        </div>`;
+      });
+      h += `<div style="background:rgba(200,50,50,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--red)">
+        <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Total</div>
+        <div style="font-size:30px;font-weight:800;color:var(--red)">${mortCriaTotal} <span style="font-size:13px">bajas</span></div>
+      </div></div>
+      <div style="font-size:12px;color:var(--red)">⚠ Su impacto está reflejado en el menor stock al cierre.</div>
       </div>`;
-    });
-    h += `<div style="background:rgba(180,100,30,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--clay)">
-      <div style="font-size:11px;font-weight:700;color:var(--clay-text);text-transform:uppercase">Total</div>
-      <div style="font-size:30px;font-weight:800;color:var(--clay-text)">${abortosCriaTotal} <span style="font-size:13px">abortos</span></div>
-    </div></div>
-    </div>`;
+    }
+
+    if (abortosCriaTotal2 > 0) {
+      const abortosPorRodeo2 = {};
+      abortosCriaFilt2.forEach(a => { abortosPorRodeo2[a.rodeo_id] = (abortosPorRodeo2[a.rodeo_id]||0) + 1; });
+      h += `<div class="panel" style="border:2px solid var(--clay);background:rgba(180,100,30,0.06);flex:1;min-width:280px">
+        <div class="panel-title" style="color:var(--clay-text)">⊘ Abortos en Cría</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+      Object.entries(abortosPorRodeo2).forEach(([rid,cant])=>{
+        const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
+        h += `<div style="background:rgba(180,100,30,0.15);border-radius:8px;padding:10px 16px;border:1px solid var(--clay)">
+          <div style="font-size:11px;font-weight:700;color:var(--clay-text);text-transform:uppercase">${r?.nombre||'Rodeo '+rid}</div>
+          <div style="font-size:26px;font-weight:800;color:var(--clay-text)">${cant} <span style="font-size:13px">aborto${cant>1?'s':''}</span></div>
+        </div>`;
+      });
+      h += `<div style="background:rgba(180,100,30,0.25);border-radius:8px;padding:10px 16px;border:2px solid var(--clay)">
+        <div style="font-size:11px;font-weight:700;color:var(--clay-text);text-transform:uppercase">Total</div>
+        <div style="font-size:30px;font-weight:800;color:var(--clay-text)">${abortosCriaTotal2} <span style="font-size:13px">abortos</span></div>
+      </div></div>
+      </div>`;
+    }
+
+    h += `</div>`; // cierre del flex container
   }
 
   return h;
