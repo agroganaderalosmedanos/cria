@@ -3842,7 +3842,7 @@ function buildRecriaDashboard() {
 
   // 5. Stock inicial (EI) — saldos iniciales de rodeos de Recría
   const egEI = movs
-    .filter(m => m.tipo==='Saldo inicial' && rodeosIdsFilt.has(String(m.rodeo_destino_id)))
+    .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
     .reduce((s,m) => s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
 
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
@@ -3873,16 +3873,6 @@ function buildRecriaDashboard() {
       <table class="dt" style="margin-bottom:12px"><tbody>
         <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fmM(ingVentas)}</strong></td></tr>
         <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fmM(ingCesionEng)}</strong></td></tr>
-        ${detalleCesEng.length?`<tr><td colspan="2" style="padding:0">
-          <table style="width:100%;font-size:11px;color:var(--text2)">
-            ${detalleCesEng.map(e=>`<tr>
-              <td style="padding:3px 8px 3px 24px">${fd(e.fecha)} · ${e.rodeo}</td>
-              <td style="text-align:right;padding-right:8px">${fn(e.cant)} cab · ${fn(e.kg)} kg</td>
-              <td style="text-align:right;padding-right:8px">${e.sinPrecio?'<span style="color:var(--gold-text)">⚠ sin precio</span>':'$ '+fn(e.kg>0?Math.round(e.importe/e.kg):0)+'/kg'}</td>
-              <td style="text-align:right;padding-right:8px;font-weight:600">${fmM(e.importe)}</td>
-            </tr>`).join('')}
-          </table>
-        </td></tr>`:''}
         <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmM(stockValRecria)}</strong></td></tr>
         <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fmM(totalIngresos)}</strong></td></tr>
       </tbody></table>
@@ -3896,13 +3886,7 @@ function buildRecriaDashboard() {
         <tr><td>⬅ Cesión desde Cría</td><td class="tr"><strong>${fmM(egCesionCria)}</strong></td></tr>
         ${egCompraExterna>0?`<tr><td>🛒 Compra externa</td><td class="tr"><strong>${fmM(egCompraExterna)}</strong></td></tr>`:''}
         <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fmM(egAlim)}</strong></td></tr>
-        ${detalleAlim.length?`<tr><td colspan="2" style="padding:0"><table style="width:100%;font-size:11px;color:var(--text2)">
-          ${detalleAlim.map(d=>`<tr><td style="padding:2px 8px 2px 24px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:8px">${fn(d.cant)}</td><td style="text-align:right;padding-right:8px;font-weight:600">${fmM(d.costo)}</td></tr>`).join('')}
-        </table></td></tr>`:''}
         <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fmM(egVet)}</strong></td></tr>
-        ${detalleVet.length?`<tr><td colspan="2" style="padding:0"><table style="width:100%;font-size:11px;color:var(--text2)">
-          ${detalleVet.map(d=>`<tr><td style="padding:2px 8px 2px 24px">${fd(d.fecha)} · ${d.prod} · ${d.rodeo}</td><td style="text-align:right;padding-right:8px">${fn(d.cant)}</td><td style="text-align:right;padding-right:8px;font-weight:600">${fmM(d.costo)}</td></tr>`).join('')}
-        </table></td></tr>`:''}
         <tr><td>👷 Sueldos</td><td class="tr"><strong>${fmM(egSueldos)}</strong></td></tr>
         <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red);font-size:20px"><strong>${fmM(totalEgresos)}</strong></td></tr>
       </tbody></table>
@@ -5596,27 +5580,6 @@ function buildEngorde() {
     const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
     h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm);
 
-    // Detalle de insumos
-    const buildInsumoTableEng_ = (filas, titulo) => {
-      if (!filas.length) return '';
-      let t = `<div class="panel"><div class="panel-title">${titulo}</div>
-        <div class="tw"><table class="dt"><thead><tr>
-          <th>Fecha</th><th>Producto</th><th>Corral</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
-        </tr></thead><tbody>`;
-      let tot=0;
-      filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
-        tot+=d.costo;
-        t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
-          <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
-      });
-      t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
-        <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
-      return t+'</tbody></table></div></div>';
-    };
-    if (detalleAlimEng.length)  h += buildInsumoTableEng_(detalleAlimEng,  '🌾 Alimentación — detalle');
-    if (detalleVetEng.length)   h += buildInsumoTableEng_(detalleVetEng,   '💉 Veterinaria — detalle');
-    if (detalleOtrosEng.length) h += buildInsumoTableEng_(detalleOtrosEng, '📦 Otros insumos — detalle');
-
     // 6) Mortandad — al final
     const rodeosEngIdsLocal = new Set(rodeosEngFiltLocal.map(r=>String(r.rodeo_id)));
     const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIdsLocal.has(String(m.rodeo_id)));
@@ -5927,6 +5890,27 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <td></td><td></td><td class="tr"><strong>${fm(stockValEng)}</strong></td></tr>`;
     h += '</tbody></table></div></div>';
   }
+
+  // Paneles de detalle de insumos — se renderizan acá donde detalleAlimEng está definida
+  const buildInsumoTableEng_ = (filas, titulo) => {
+    if (!filas.length) return '';
+    let t = `<div class="panel"><div class="panel-title">${titulo}</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Producto</th><th>Corral</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+      </tr></thead><tbody>`;
+    let tot=0;
+    filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
+      tot+=d.costo;
+      t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
+        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
+    });
+    t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
+    return t+'</tbody></table></div></div>';
+  };
+  if (detalleAlimEng.length)  h += buildInsumoTableEng_(detalleAlimEng,  '🌾 Alimentación — detalle');
+  if (detalleVetEng.length)   h += buildInsumoTableEng_(detalleVetEng,   '💉 Veterinaria — detalle');
+  if (detalleOtrosEng.length) h += buildInsumoTableEng_(detalleOtrosEng, '📦 Otros insumos — detalle');
 
   // buildEngordeDashboard_ retorna acá — el resto (KPIs, tarjetas, mortandad)
   // se renderiza en el bloque page==='engorde' en el orden correcto:
