@@ -8403,20 +8403,18 @@ function buildVerificacionValuacion_(titulo, detalle, fmFn, idPrefix) {
 }
 
 function buildMargenBruto() {
-  const tabMB   = S.mbTab || 'resultado';
+  const tabMB   = S.mbTab   || 'resultado';
   const moneda  = S.margenBrutoMoneda || 'ARS';
-  const campanas = [...new Set([
-    ...(S.cache.ventas||[]).map(v=>v.campana),
-    ...(S.cache.consumos_insumos||[]).map(c=>c.campana),
-    ...(comprasHacGetAll_()).map(c=>c.campana),
-  ].filter(Boolean))].sort((a,b)=>b.localeCompare(a));
 
-  const campSelec = S.mbCampana !== undefined ? S.mbCampana : (campanas[0]||'');
-  const desde     = S.mbDesde || today().slice(0,4)+'-01-01';
-  const hasta     = S.mbHasta || today();
+  // Fecha de corte GLOBAL: se propaga a Cría, Recría y Terminación para que el
+  // consolidado sea coherente — las tres actividades cierran a la misma fecha.
+  // Antes acá había un filtro de "Campaña" y otro de "Período desde/hasta" que
+  // en realidad no se usaban en ningún cálculo (quedaron de una versión anterior) —
+  // se sacaron para no mostrar controles que no hacen nada.
+  const corteGlobal = S._corteGlobal || today();
 
   function fmMB(v) {
-    if (moneda==='USD'&&S.corralesTipoCambio) return 'U$D '+fn(convertirAMoneda_(v,today(),'USD'),2);
+    if (moneda==='USD') return 'U$D '+fn(convertirAMoneda_(v,corteGlobal,'USD'),2);
     return '$ '+fn(Math.round(v||0));
   }
 
@@ -8433,23 +8431,16 @@ function buildMargenBruto() {
     💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
   </button></div>`;
 
-  // Filtros
+  // Filtro: fecha de corte global (única, funcional)
   h += `<div class="panel" style="padding:14px 16px;margin-bottom:16px">
     <div class="fgrid" style="margin:0;align-items:flex-end">
       <div class="fg">
-        <label>Campaña <span style="font-size:11px;color:var(--text3)">(filtra consumos de insumos)</span></label>
-        <select id="mb-campana" onchange="S.mbCampana=this.value;render()">
-          <option value="">Todas las campañas</option>
-          ${campanas.map(c=>`<option value="${c}" ${c===campSelec?'selected':''}>${c}</option>`).join('')}
-        </select>
+        <label>Fecha de corte <span style="font-size:11px;color:var(--text3)">(aplica a Cría, Recría y Terminación por igual)</span></label>
+        <input type="date" id="mb-corte" value="${corteGlobal}"
+          onchange="S._corteGlobal=this.value;S._corteCria=this.value;S._corteRecria=this.value;S._corteEng=this.value;render()">
       </div>
-      <div class="fg">
-        <label>Período desde <span style="font-size:11px;color:var(--text3)">(ventas, compras, EI/EF)</span></label>
-        <input type="date" id="mb-desde" value="${desde}" onchange="S.mbDesde=this.value;render()">
-      </div>
-      <div class="fg"><label>Hasta</label>
-        <input type="date" id="mb-hasta" value="${hasta}" onchange="S.mbHasta=this.value;render()">
-      </div>
+      ${corteGlobal!==today()?`<div class="fg"><button class="btn btn-ghost btn-sm"
+          onclick="S._corteGlobal=null;S._corteCria=null;S._corteRecria=null;S._corteEng=null;render()">↺ Volver a hoy</button></div>`:''}
     </div>
   </div>`;
 
@@ -8458,13 +8449,20 @@ function buildMargenBruto() {
     return h;
   }
 
-  // Leer resultados directamente de los dashboards — son la única fuente de verdad.
-  // Si alguno no está calculado todavía, mostramos aviso.
+  // Recalcular las tres actividades con la fecha de corte global. Antes había que
+  // visitar cada dashboard a mano para que calculara S._resultCria/_resultRecria/
+  // _resultEng; ahora se llaman directamente acá (solo por su efecto de guardar esos
+  // resultados) y se descarta el HTML que devuelven — no hace falta navegar a cada uno.
+  buildDashboard();
+  buildRecriaDashboard();
+  buildEngordeDashboard_(rodeosEngordeValidos_(), p => egFmon_(p, S.engordeMoneda||'ARS'));
+
+  // Si igual falta alguno (ej. Cría sin ninguna campaña cargada todavía), avisamos.
   if (!S._resultCria || !S._resultRecria || !S._resultEng) {
     h += `<div class="panel" style="border:2px solid var(--gold);background:var(--gold-bg);padding:16px">
       <div style="font-weight:700;font-size:15px;color:var(--gold-text);margin-bottom:8px">⚠ Datos pendientes de cálculo</div>
       <div style="font-size:13px;color:var(--text2);margin-bottom:12px">
-        Para ver los resultados consolidados, primero visitá cada dashboard para que calcule sus totales:
+        Faltan datos para calcular alguna actividad a esta fecha de corte:
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${!S._resultCria?`<button class="btn btn-primary" onclick="goto('dashboard')">🐄 Ir a Dashboard Cría</button>`:'<span style="color:var(--green-text)">✓ Cría</span>'}
@@ -8555,7 +8553,7 @@ function buildMargenBruto() {
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
           <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto ganadero total</div>
-          <div style="font-size:12px;color:${mc};margin-top:2px">Campaña: ${campSelec||'todas'} · ${fd(desde)} al ${fd(hasta)}</div>
+          <div style="font-size:12px;color:${mc};margin-top:2px">Al ${fd(corteGlobal)}</div>
         </div>
         <div style="font-size:36px;font-weight:800;color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</div>
       </div>
