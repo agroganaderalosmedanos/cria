@@ -1586,7 +1586,7 @@ function buildDashboard() {
 
   // Campañas disponibles
   const _criaMoneda = S.criaMoneda || 'ARS';
-  const fmCria_ = p => egFmon_(p, _criaMoneda);
+  const fmCria_ = p => fmonACorte_(p, _criaMoneda, corteCria);
 
   // OJO: la lista de campañas se arma con los datos SIN filtrar por fecha de corte
   // (a propósito). Si se armara con `ventas`/`comprasH`/`consumos` ya filtrados,
@@ -3783,11 +3783,11 @@ function buildRecriaDashboard() {
 
   const campSelec  = S.rcDashCampo || '';
   const moneda     = S.rcDashMoneda || 'ARS';
-  const fmM = v => moneda === 'USD' ? 'U$S ' + fn(Math.round(convertirAMoneda_(v, today(), 'USD'))) : fm(v);
 
   // Fecha de corte: por defecto hoy. Ver nota en buildDashboard() (Cría) — evita que
   // datos cargados con fecha posterior contaminen el resultado del período analizado.
   const corteRecria = S._corteRecria || today();
+  const fmM = v => fmonACorte_(v, moneda, corteRecria);
   const stockACorteRecria = stockPorRodeoACorte_(corteRecria);
 
   // Mortandad
@@ -5811,6 +5811,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 
   // Fecha de corte: por defecto hoy. Ver nota en buildDashboard() (Cría).
   const corteEng = S._corteEng || today();
+  // A partir de acá, dentro de ESTE dashboard puntual, fm() convierte a la cotización
+  // de la fecha de corte en vez de la de hoy — no afecta a otras pestañas de Terminación
+  // (Costos, Comparación, Proyección), que reciben su propio `fm` (today()) sin tocar.
+  fm = p => fmonACorte_(p, moneda, corteEng);
   const stockACorteEng = stockPorRodeoACorte_(corteEng);
 
   // Ventas engorde campaña
