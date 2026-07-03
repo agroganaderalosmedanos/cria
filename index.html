@@ -6337,7 +6337,7 @@ function buildEngordeCostos_(rodeoId, fm) {
       <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
     </div>`;
     // KPIs productivos consolidados
-    let totKgI=0,totKgG=0,totKgV=0,totKgStk=0,totAn=0;
+    let totKgI=0,totKgG=0,totKgV=0,totKgStk=0,totAn=0,totCaHP=0;
     const gdpsTodos=[];
     rodeosEng.forEach(r=>{
       totKgI  += egKgIngresados_(r.rodeo_id);
@@ -6347,9 +6347,16 @@ function buildEngordeCostos_(rodeoId, fm) {
       totAn   += egStock_(r.rodeo_id);
       const gdp = egGanDiaria_(r.rodeo_id);
       if (gdp) gdpsTodos.push(gdp);
+      // Alimentación acotada a la ÚLTIMA PESADA de CADA corral (no a la fecha de
+      // corte) — mismo criterio que "Alim/kg ganado" en Comparación y en la ficha
+      // de un corral individual. Antes acá se usaba totalAlim (acotado al corte),
+      // mezclando dos fechas de corte distintas en la misma cuenta.
+      const pesR = egPesadas_(r.rodeo_id).filter(p=>(p.fecha||'')<=corteCostos);
+      const ultimaR = pesR.length ? pesR[pesR.length-1] : null;
+      totCaHP += egCostoAlim_(r.rodeo_id, ultimaR?.fecha) - egCostoAlim_(r.rodeo_id, ultimaR?.fecha, 'Veterinaria');
     });
     const gdpPromTodos = gdpsTodos.length ? gdpsTodos.reduce((s,v)=>s+v,0)/gdpsTodos.length : null;
-    const caXkgTodos = totKgG>0 ? totalAlim/totKgG : null;
+    const caXkgTodos = totKgG>0 ? totCaHP/totKgG : null;
 
     h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
       <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg ingresados</div><div style="font-size:18px;font-weight:700">${fn(totKgI)}</div></div>
@@ -6395,6 +6402,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const kgI = egKgIngresados_(rodeoId);
   const ca = egCostoAlim_(rodeoId, corteCostosUno);
   const caHP = egCostoAlim_(rodeoId, ultima?.fecha);
+  const caHPAlim = caHP - egCostoAlim_(rodeoId, ultima?.fecha, 'Veterinaria'); // sin veterinaria, para "Alim/kg ganado"
   const caVet  = egCostoAlim_(rodeoId, corteCostosUno, 'Veterinaria');
   const caAlim = ca - caVet; // costo alimentación total (sin veterinaria)
   const cc = egCostoCompra_(rodeoId);
@@ -6421,7 +6429,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const util = ivTotal - costoTotal;
   const dias = fi && ultima ? Math.round((new Date(ultima.fecha) - new Date(fi)) / 86400000) : null;
   const ganDiaria = dias && dias > 0 && kgIngProm > 0 ? (Number(ultima?.peso_prom_kg||0) - kgIngProm) / dias : null;
-  const caXkg = kgG > 0 ? caAlim / kgG : null;
+  const caXkg = kgG > 0 ? caHPAlim / kgG : null;
   const ccXkg = kgG > 0 ? cc / kgG : null;
   const precVentaProm = kgV > 0 ? iv / kgV : null;
   const totalAnim = (cantIng - stk) + stk;
@@ -7168,7 +7176,6 @@ function buildEngordeHistorial_(rodeosEng, fm) {
   return h;
 }
 
-window.egCambiarCorral = function(val) { S.engordeCorralId = val; render(); };
 function attachEngordeEvents_old_() {
   // Pesada
   const peSave = document.getElementById('eg-pe-save');
