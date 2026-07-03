@@ -5252,11 +5252,10 @@ function attachEngordeEvents() {
 
 // ── ENGORDE — funciones auxiliares ───────────────────────────────────────
 function egGetCorralId() {
-  return S.engordeCorralId || localStorage.getItem('eg_corral_sel') || '';
+  return S.engordeCorralId || '';
 }
 function egSetCorralId(val) {
   S.engordeCorralId = val;
-  localStorage.setItem('eg_corral_sel', val);
 }
 // Configuración por corral — persiste en Sheets (entidad config_corral), una fila por rodeo_id.
 // Se cachea en S.cache.config_corral igual que cualquier otra entidad (loadEntity).
@@ -6384,27 +6383,31 @@ function buildEngordeCostos_(rodeoId, fm) {
   }
   const r = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
   if (!r) return '';
+  // Misma fecha de corte que el Dashboard y el resumen de "todos los corrales" —
+  // antes esta ficha de un corral puntual no la tenía en cuenta para nada.
+  const corteCostosUno = S._corteEng || today();
   const cfg = egConfig_(rodeoId);
-  const stk = egStock_(rodeoId);
-  const pes = egPesadas_(rodeoId);
+  const stk = Math.max(0, (stockPorRodeoACorte_(corteCostosUno)[String(rodeoId)])||0);
+  const pes = egPesadas_(rodeoId).filter(p=>(p.fecha||'')<=corteCostosUno);
   const ultima = pes.length ? pes[pes.length-1] : null;
   const fi = egFechaIngreso_(rodeoId);
   const kgIngProm = egKgIngreso_(rodeoId);
   const cantIng = egCantIngresada_(rodeoId);
   const kgI = egKgIngresados_(rodeoId);
-  const ca = egCostoAlim_(rodeoId);
+  const ca = egCostoAlim_(rodeoId, corteCostosUno);
   const caHP = egCostoAlim_(rodeoId, ultima?.fecha);
-  const caVet  = egCostoAlim_(rodeoId, null, 'Veterinaria');
+  const caVet  = egCostoAlim_(rodeoId, corteCostosUno, 'Veterinaria');
   const caAlim = ca - caVet; // costo alimentación total (sin veterinaria)
   const cc = egCostoCompra_(rodeoId);
-  const iv = egIngVentas_(rodeoId);
+  const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoId)&&(v.fecha_salida||'')<=corteCostosUno)
+    .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
   const kgV = egKgVend_(rodeoId);
   const kgG = egKgGanadosHastaPesada_(rodeoId);
-  const kgStk = egKgStockEstimado_(rodeoId);
   // Stock valorizado usando precios de valorización (no precio manual)
   const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+  const kgStk = stk * (pesoUltima || kgIngProm || 0);
   const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
-  const ivStock = convertirAMoneda_(ivStockARS, today(), S.engordeMoneda||'ARS');
+  const ivStock = convertirAMoneda_(ivStockARS, corteCostosUno, S.engordeMoneda||'ARS');
   const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo
   const ivTotal = iv + ivStock;
   // Sueldos: se cargan por campo completo, no por corral individual. Para mostrar un
@@ -6428,6 +6431,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const margenVsBE = breakEven && precVentaProm ? precVentaProm - breakEven : null;
 
   let h = '';
+  h += `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">📅 Datos al ${fd(corteCostosUno)}${corteCostosUno!==today()?' — mismo corte que el Dashboard':''}</div>`;
 
   // Layout ingresos/egresos como el dashboard
   h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -6594,6 +6598,17 @@ async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo, btn) {
 function buildEngordeComparacion_(rodeosEng, fm) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
   const moneda = S.engordeMoneda || 'ARS';
+  // Fecha de corte: comparte S._corteEng con el Dashboard y Costos, para que las tres
+  // pantallas muestren lo mismo. Alimentación y Stock ya respetan esta fecha.
+  // OJO — límite conocido: "Costo de compra" todavía NO filtra por corte (sigue usando
+  // todo el historial). En la práctica casi nunca importa porque el costo de entrada es
+  // un evento único que ya pasó — pero si un corral tuvo VARIAS cesiones/traslados de
+  // entrada en fechas distintas, algunas después del corte, ese total podría incluir
+  // entradas que todavía "no deberían contar" a esa fecha. Es un caso poco común, pero
+  // te lo dejo anotado — arreglarlo bien requiere tocar egCostoCompra_(), que se usa
+  // en 6 pantallas distintas, así que preferí no apurarlo sin revisarlas todas.
+  const corteComp = S._corteEng || today();
+  const stockACorteComp = stockPorRodeoACorte_(corteComp);
   // BUG CORREGIDO: egCostoCompra_() devuelve el costo ya convertido a `moneda` (según
   // S.engordeMoneda) — pero acá abajo cada fila se mostraba con fm(), que vuelve a
   // convertir. En modo ARS no se notaba (convertir a ARS es no-operación), pero en
@@ -6612,17 +6627,18 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   };
   const rows = rodeosEng.map(r => {
     const rid = r.rodeo_id;
-    const stk = egStock_(rid);
+    const stk = Math.max(0, stockACorteComp[String(rid)]||0);
     const cantIng = egCantIngresada_(rid);
     const kgI = egKgIngresados_(rid);
     const kgV = egKgVend_(rid);
     const kgG = egKgGanadosHastaPesada_(rid);
-    const kgStk = egKgStockEstimado_(rid);
-    const ca = egCostoAlim_(rid);
+    const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
+    const ca = egCostoAlim_(rid, corteComp);
     const cc = aArs_(egCostoCompra_(rid));
-    const iv = egIngVentas_(rid);
+    const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
+      .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
     const fi = egFechaIngreso_(rid);
-    const pes = egPesadas_(rid);
+    const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp);
     const ultima = pes.length ? pes[pes.length-1] : null;
     const gd = egGanDiaria_(rid);
     const kgIng = egKgIngreso_(rid);
@@ -6631,7 +6647,9 @@ function buildEngordeComparacion_(rodeosEng, fm) {
     const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
     const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
     const util = iv + ivStock - ca - cc;
-    const dias = fi ? Math.round((new Date()-new Date(fi))/86400000) : null;
+    // Días: hasta la última pesada (no "hoy") — si todavía no hay pesada, no se puede
+    // saber el crecimiento real, así que no tiene sentido mostrar días transcurridos.
+    const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
     return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, util, gd, caXkg, ccXkg, dias, kgIng, ultima };
   });
 
@@ -6646,7 +6664,7 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>📦 Stock y movimiento</strong></td></tr>`;
   h += row('Animales ingresados', r=>r.cantIng, v=>fn(v,0));
   h += row('Stock actual', r=>r.stk, v=>fn(v,0)+' cab.');
-  h += row('Días en corral', r=>r.dias, v=>v+' días');
+  h += row('Días hasta última pesada', r=>r.dias, v=>v+' días');
   h += row('Kg prom. entrada', r=>r.kgIng, v=>fn(v,0)+' kg');
   h += row('Kg prom. última pesada', r=>r.ultima?Number(r.ultima.peso_prom_kg):null, v=>fn(v,0)+' kg');
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>⚖️ Kilos</strong></td></tr>`;
@@ -6664,6 +6682,7 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💰 Resultados</strong></td></tr>`;
   h += row('Ingreso ventas', r=>r.iv, fm);
   h += row('Stock valorizado', r=>r.ivStock>0?r.ivStock:null, fm);
+  h += row('(–) Costo total', r=>r.ca+r.cc, v=>'−'+fm(v));
   h += rowTag('Utilidad', r=>r.util, fm, bUtil);
   h += '</tbody></table></div>';
   h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales.</div>`;
