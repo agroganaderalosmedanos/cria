@@ -6558,6 +6558,23 @@ async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo, btn) {
 
 function buildEngordeComparacion_(rodeosEng, fm) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
+  const moneda = S.engordeMoneda || 'ARS';
+  // BUG CORREGIDO: egCostoCompra_() devuelve el costo ya convertido a `moneda` (según
+  // S.engordeMoneda) — pero acá abajo cada fila se mostraba con fm(), que vuelve a
+  // convertir. En modo ARS no se notaba (convertir a ARS es no-operación), pero en
+  // modo U$S esto dividía dos veces por la cotización, mostrando "Costo de compra",
+  // "Compra / kg ganado" y "Utilidad" con números mucho más chicos de lo real —
+  // y encima "Utilidad" mezclaba pesos (de Ingreso ventas/Alimentación, que SÍ
+  // estaban bien) con dólares (de Costo de compra/Stock, ya convertidos) en la
+  // misma resta. Acá se vuelve todo a pesos crudos una sola vez, y fm() hace la
+  // única conversión al mostrar — mismo criterio que ya usan Ingreso ventas y
+  // Costo alimentación, que nunca tuvieron este problema.
+  const aArs_ = v => {
+    if (moneda !== 'USD' || !v) return v || 0;
+    const tc = tipoCambioVigente_(today());
+    const val = tc ? Number(tc.valor || tc) : null;
+    return (val && val > 0) ? v * val : v;
+  };
   const rows = rodeosEng.map(r => {
     const rid = r.rodeo_id;
     const stk = egStock_(rid);
@@ -6567,7 +6584,7 @@ function buildEngordeComparacion_(rodeosEng, fm) {
     const kgG = egKgGanadosHastaPesada_(rid);
     const kgStk = egKgStockEstimado_(rid);
     const ca = egCostoAlim_(rid);
-    const cc = egCostoCompra_(rid);
+    const cc = aArs_(egCostoCompra_(rid));
     const iv = egIngVentas_(rid);
     const fi = egFechaIngreso_(rid);
     const pes = egPesadas_(rid);
@@ -6577,8 +6594,7 @@ function buildEngordeComparacion_(rodeosEng, fm) {
     const caXkg = kgG > 0 ? egCostoAlim_(rid, ultima?.fecha) / kgG : null;
     const ccXkg = kgG > 0 ? cc / kgG : null;
     const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
-    const ivStockARS2 = valorizarRodeo_(r, stk, pesoUltimaC);
-    const ivStock = convertirAMoneda_(ivStockARS2, today(), S.engordeMoneda||'ARS');
+    const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
     const util = iv + ivStock - ca - cc;
     const dias = fi ? Math.round((new Date()-new Date(fi))/86400000) : null;
     return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, util, gd, caXkg, ccXkg, dias, kgIng, ultima };
