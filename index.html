@@ -3873,12 +3873,31 @@ function buildRecriaDashboard() {
   });
 
   // 2. Cesiones a Terminación (egresos con destino Engorde, con precio_kg_cesion)
+  // Mismo respaldo de 3 niveles que ya usa "Cesión desde Cría" más abajo — antes
+  // acá, si faltaba precio_kg_cesion, el ingreso daba directamente $0 en vez de
+  // estimarlo. En la práctica el formulario de cesiones exige el precio, así que
+  // esto raramente se activa, pero cubre el caso de cesiones cargadas a mano por
+  // Movimientos (que no obliga precio).
   let ingCesionEng = 0;
   const detalleCesEng = [];
   egresos.filter(e=>e.destino==='Engorde').forEach(e=>{
-    const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
+    const cant=Number(e.cant_animales)||0;
+    let peso=Number(e.peso_prom_kg)||0;
+    const precioKg=Number(e.precio_kg_cesion)||0;
+    let imp=0;
+    if (precioKg&&peso) {
+      imp = cant*peso*precioKg;
+    } else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      imp = cant*peso*precioKg;
+    } else {
+      const origen = rodeosTodos().find(r=>String(r.rodeo_id)===String(e.rodeo_id));
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      imp = valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
+    }
     const kgTot = cant*peso;
-    const imp = kgTot*precioKg;
     ingCesionEng += imp;
     detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant, kg: kgTot, importe: imp, sinPrecio: !precioKg });
   });
