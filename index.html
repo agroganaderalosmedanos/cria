@@ -513,6 +513,13 @@ async function init() {
     Promise.all([
       loadDashboard().catch(()=>{}),
       loadStock().catch(()=>{}),
+      // compras_insumos y consumos_insumos van SUELTAS, fuera del paquete grande de
+      // abajo — son las que necesita la pantalla de Insumos y Veterinaria, y si van
+      // adentro del paquete de 14 entidades, Insumos queda esperando a que TODAS
+      // las demás (incluidas movimientos y ventas, que pueden ser grandes) terminen
+      // primero. Separadas acá, entran rápido por su cuenta.
+      loadEntity('compras_insumos').catch(()=>{}),
+      loadEntity('consumos_insumos').catch(()=>{}),
       // OPTIMIZACIÓN: antes acá había 16 llamadas sueltas (movimientos, ventas,
       // consumos_insumos, compras_insumos, pesadas, sueldos, mortandad, abortos,
       // destetes, pariciones, egresos_recria, precios_internos, campanas,
@@ -521,7 +528,8 @@ async function init() {
       // simultáneas, así que buena parte de esos pedidos se amontonaban haciendo
       // fila, sumando varios segundos de más a la carga inicial (confirmado con
       // las ejecuciones de Apps Script: varias llegaban con menos de 1 segundo
-      // de diferencia entre sí). Ahora se traen todas juntas, en una sola llamada.
+      // de diferencia entre sí). Ahora se traen las 14 restantes juntas, en una
+      // sola llamada — sin incluir compras_insumos/consumos_insumos (ver arriba).
       apiCall('initBundle').then(bundle => {
         Object.keys(bundle).forEach(k => {
           if (k === 'resumenRecria') { S.resumenRecria = bundle[k]; }
@@ -7810,6 +7818,10 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
   ];
 
   if (!filas.length) {
+    const todaviaCargando = S.cache.compras_insumos === undefined || S.cache.consumos_insumos === undefined;
+    if (todaviaCargando) {
+      return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Cargando datos…</div></div>';
+    }
     return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay registros. Cargá el primero arriba.</div></div>';
   }
 
