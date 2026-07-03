@@ -11007,7 +11007,7 @@ function buildABMCorrales_() {
 
         <div class="fg"><label style="font-size:11px">Fecha de inicio</label>
           <input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio"
-            value="${cfg.fechaInicio||''}" style="font-size:13px;padding:4px 6px">
+            value="${cfg.fechaInicio||fechaMov||''}" style="font-size:13px;padding:4px 6px">
           ${fechaMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fd(fechaMov)}</div>`:''}
         </div>
 
