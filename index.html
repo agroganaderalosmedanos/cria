@@ -6202,19 +6202,18 @@ function buildEngordeCostos_(rodeoId, fm) {
     // Mostrar resumen de todos los corrales
     const rodeosEngAll = rodeosEngordeValidos_();
     const campFiltro = S._engCampoFiltro || '';
-    const rodeosEngConCampo = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
-    if (!rodeosEngConCampo.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
+    const rodeosEng = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
+    if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
     // Fecha de corte: comparte S._corteEng con el Dashboard, para que ambos muestren
     // lo mismo. Antes esta pestaña ignoraba por completo la fecha de corte y siempre
     // calculaba con TODOS los datos hasta hoy, aunque el Dashboard estuviera mirando
     // un cierre anterior — eso generaba diferencias entre las dos pantallas.
+    // OJO: acá se incluyen TODOS los corrales, incluidos los que ya están en stock 0
+    // (vendidos del todo) — el total de esta pestaña tiene que coincidir siempre con
+    // el del Dashboard, que también suma todos. Los corrales en 0 se ven aparte en
+    // Historial, pero sin restarlos de este total.
     const corteCostos = S._corteEng || today();
     const stockACorteCostos = stockPorRodeoACorte_(corteCostos);
-    // Corrales con stock 0 (ya vendidos/vaciados del todo) no aportan nada a un
-    // análisis de costos vigente — se consideran "cerrados" y van al Historial,
-    // no acá.
-    const rodeosEng = rodeosEngConCampo.filter(r => (stockACorteCostos[String(r.rodeo_id)]||0) > 0);
-    if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">Todos los corrales${campFiltro ? ' de este campo' : ''} están en 0 — mirá el Historial para los cerrados.</div></div>`;
     let totalAlim=0,totalVeter=0;
     rodeosEng.forEach(r => {
       const cVet = egCostoAlim_(r.rodeo_id, corteCostos, 'Veterinaria');
