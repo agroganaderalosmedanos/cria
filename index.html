@@ -6754,7 +6754,13 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
 }
 
 function buildEngordeProyeccion_(rodeoId, fm) {
-  const rodeosEng = rodeosEngordeValidos_();
+  // Con "Todos los corrales" (sin rodeoId puntual), los cerrados (stock 0) no se
+  // muestran acá — no tiene sentido proyectar una fecha de salida para un corral
+  // que ya está vacío. Si entrás a uno puntual desde el selector, igual no debería
+  // pasar porque ya no aparece como opción — pero por las dudas se filtra acá también.
+  const corteProy = S._corteEng || today();
+  const stockProy = stockPorRodeoACorte_(corteProy);
+  const rodeosEng = rodeosEngordeValidos_().filter(r => (stockProy[String(r.rodeo_id)]||0) > 0);
   let h = '';
   (rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))] : rodeosEng).filter(Boolean).forEach(r => {
     const rid = r.rodeo_id;
@@ -6879,7 +6885,11 @@ function buildProyeccionInsumos_(rodeoId, diasRestantes, fm) {
 }
 
 function buildEngordeCierre_(rodeoId, fm) {
-  const rodeosEng = rodeosEngordeValidos_();
+  // Mismo criterio que Proyección de Salidas: los corrales cerrados (stock 0) no
+  // se muestran en "Todos los corrales" — van a Historial.
+  const corteCierre = S._corteEng || today();
+  const stockCierre = stockPorRodeoACorte_(corteCierre);
+  const rodeosEng = rodeosEngordeValidos_().filter(r => (stockCierre[String(r.rodeo_id)]||0) > 0);
   const campFiltro = S._engCampoFiltro || '';
   const rodeosEngFilt = campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(campFiltro)) : rodeosEng;
   const lista = rodeoId ? [rodeosTodos().find(r=>String(r.rodeo_id)===String(rodeoId))].filter(Boolean) : rodeosEngFilt;
