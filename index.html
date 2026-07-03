@@ -513,23 +513,22 @@ async function init() {
     Promise.all([
       loadDashboard().catch(()=>{}),
       loadStock().catch(()=>{}),
-      loadEntity('movimientos').catch(()=>{}),
-      loadEntity('ventas').catch(()=>{}),
-      loadEntity('consumos_insumos').catch(()=>{}),
-      loadEntity('compras_insumos').catch(()=>{}),
-      loadEntity('pesadas').catch(()=>{}),
-      loadEntity('sueldos').catch(()=>{}),
-      loadEntity('mortandad').catch(()=>{}),
-      loadEntity('abortos').catch(()=>{}),
-      loadEntity('destetes').catch(()=>{}),
-      loadEntity('pariciones').catch(()=>{}),
-      loadEntity('egresos_recria').catch(()=>{}),
-      loadEntity('precios_internos').catch(()=>{}),
-      loadEntity('campanas').catch(()=>{}),
-      loadEntity('rodeo_productos').catch(()=>{}),
-      loadEntity('config_corral').catch(()=>{}).then(migrarConfigCorralLegacy_),
-      loadEntity('engorde_lotes').catch(()=>{}),
-      apiCall('resumenRecria').then(d=>{ S.resumenRecria=d; }).catch(()=>{}),
+      // OPTIMIZACIÓN: antes acá había 16 llamadas sueltas (movimientos, ventas,
+      // consumos_insumos, compras_insumos, pesadas, sueldos, mortandad, abortos,
+      // destetes, pariciones, egresos_recria, precios_internos, campanas,
+      // rodeo_productos, config_corral, engorde_lotes) más resumenRecria, todas
+      // disparadas EN PARALELO — Apps Script tiene un límite de ejecuciones
+      // simultáneas, así que buena parte de esos pedidos se amontonaban haciendo
+      // fila, sumando varios segundos de más a la carga inicial (confirmado con
+      // las ejecuciones de Apps Script: varias llegaban con menos de 1 segundo
+      // de diferencia entre sí). Ahora se traen todas juntas, en una sola llamada.
+      apiCall('initBundle').then(bundle => {
+        Object.keys(bundle).forEach(k => {
+          if (k === 'resumenRecria') { S.resumenRecria = bundle[k]; }
+          else { S.cache[k] = bundle[k]; }
+        });
+        return migrarConfigCorralLegacy_();
+      }).catch(()=>{}),
       loadCorralesStock().catch(()=>{}),
     ]).then(()=>{ render(); });
   } catch (err) {
