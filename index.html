@@ -1796,6 +1796,7 @@ function buildDashboard() {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria,
     ei: totalSaldoInicial, compras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria,
+    cantVentas: ventasCria.length,
   };
 
   // ── RENDER ──────────────────────────────────────────────────────────
@@ -3953,7 +3954,7 @@ function buildRecriaDashboard() {
   S._resultRecria = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas, ingCesEng: ingCesionEng, ef: stockValRecria,
-    ei: egEI, egCesionCria, egAlim, egVet, egSueldos,
+    ei: egEI, egCesionCria, egCompraExt: egCompraExterna, egAlim, egVet, egSueldos,
   };
   const mc = margen>=0?'var(--green)':'var(--red)';
   const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
@@ -8549,8 +8550,8 @@ function buildMargenBruto() {
           <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(rRec.eg)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
           <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rEng.detalle.ei)}</td></tr>
-          <tr><td style="padding-left:16px">Cesión recibida de Recría</td><td class="tr">${fmMB(rEng.detalle.egCesionRec)}</td></tr>
-          <tr><td style="padding-left:16px">Compra de hacienda</td><td class="tr">${fmMB(rEng.detalle.egCompra)}</td></tr>
+          <tr><td style="padding-left:16px">Cesión recibida de Recría</td><td class="tr">${fmMB(rEng.detalle.egCesiones)}</td></tr>
+          <tr><td style="padding-left:16px">Compra de hacienda</td><td class="tr">${fmMB(rEng.detalle.egCompras)}</td></tr>
           <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rEng.detalle.egAlim)}</td></tr>
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rEng.detalle.egVet)}</td></tr>
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rEng.detalle.egSueldos)}</td></tr>
