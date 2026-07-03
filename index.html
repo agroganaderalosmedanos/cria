@@ -558,7 +558,7 @@ const NAV = [
     { k: 'engorde_cierre',       icon: 'ti-telescope',      label: 'Proyección de costos' },
     { k: 'engorde_historial',    icon: 'ti-history',        label: 'Historial de lotes' },
   ]},
-  { section: 'Resultados', icon: 'ti-report-analytics', defaultPage: 'margenbruto', items: [
+  { section: 'Margen Bruto Ganadero', icon: 'ti-report-analytics', defaultPage: 'margenbruto', items: [
     { k: 'margenbruto', icon: 'ti-chart-pie', label: 'Margen Bruto' },
     { k: 'ia',          icon: 'ti-sparkles',  label: 'Análisis IA' },
   ]},
@@ -802,7 +802,7 @@ function buildShell() {
           goto('${sec.defaultPage}');
         }
       ">
-      <span style="font-size:15px">${{'Cría':'🐄','Recría':'🌱','Terminación':'🏭','Resultados':'📊','Acciones Comunes':'📁','Configuración':'⚙️'}[sec.section]||''}</span>
+      <span style="font-size:15px">${{'Cría':'🐄','Recría':'🌱','Terminación':'🏭','Margen Bruto Ganadero':'📊','Acciones Comunes':'📁','Configuración':'⚙️'}[sec.section]||''}</span>
       <span>${sec.section}</span>
       <i class="ti ${isExpanded ? 'ti-chevron-down' : 'ti-chevron-right'}" style="margin-left:auto;font-size:12px;opacity:.6" aria-hidden="true"></i>
     </button>
@@ -8589,7 +8589,7 @@ function buildVerificacionValuacion_(titulo, detalle, fmFn, idPrefix) {
 }
 
 function buildMargenBruto() {
-  const tabMB   = S.mbTab   || 'resultado';
+  const tabMB   = S.mbTab   || 'reporte';
   const moneda  = S.margenBrutoMoneda || 'ARS';
 
   // Fecha de corte GLOBAL: se propaga a Cría, Recría y Terminación para que el
@@ -8609,7 +8609,7 @@ function buildMargenBruto() {
     <div class="page-sub">Resultado económico consolidado de las tres actividades</div>
   </div>`;
 
-  const tabs = [{ k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
+  const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
   h += `<button onclick="S.margenBrutoMoneda=S.margenBrutoMoneda==='USD'?'ARS':'USD';render()"
@@ -8681,6 +8681,125 @@ function buildMargenBruto() {
   const abortCria = abortos.filter(a=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(a.rodeo_id)); return r&&normAct_(r.actividad)==='cria'; }).length;
   const abortRec  = abortos.filter(a=>rodeosRec.has(String(a.rodeo_id))).length;
   const abortTot  = abortCria+abortRec;
+
+  if (tabMB === 'reporte') {
+    const acts = [
+      { nombre: 'Cría',        ing: rCria.ing, eg: rCria.eg, margen: rCria.margen, color: 'var(--green)', colorHex: getComputedStyle(document.documentElement).getPropertyValue('--green').trim()||'#2f6b3f', emoji: '🐄' },
+      { nombre: 'Recría',      ing: rRec.ing,  eg: rRec.eg,  margen: rRec.margen,  color: 'var(--gold)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--gold').trim()||'#b8860b', emoji: '🌱' },
+      { nombre: 'Terminación', ing: rEng.ing,  eg: rEng.eg,  margen: rEng.margen,  color: 'var(--clay)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--clay').trim()||'#a8512f', emoji: '🏭' },
+    ];
+    const margenPct = ingTotal>0 ? (marTotal/ingTotal*100) : 0;
+
+    // ── Gráfico de barras: Utilidad por actividad ──────────────────────────
+    const maxAbsMargen = Math.max(1, ...acts.map(a=>Math.abs(a.margen)));
+    const barW = 130, barGap = 55, chartH = 220, baseY = 240, chartW = acts.length*(barW+barGap)+barGap;
+    let barsSvg = `<svg viewBox="0 0 ${chartW} 300" style="width:100%;height:auto;max-width:520px">`;
+    barsSvg += `<line x1="0" y1="${baseY}" x2="${chartW}" y2="${baseY}" stroke="var(--border2)" stroke-width="1.5"/>`;
+    acts.forEach((a,i)=>{
+      const x = barGap + i*(barW+barGap);
+      const h = Math.round(Math.abs(a.margen)/maxAbsMargen*chartH);
+      const y = a.margen>=0 ? baseY-h : baseY;
+      const barColor = a.margen>=0 ? a.colorHex : '#b3261e';
+      barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="6" fill="${barColor}" opacity="0.92"/>`;
+      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-10:y+h+22}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</text>`;
+      barsSvg += `<text x="${x+barW/2}" y="${baseY+26}" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text2)">${a.emoji} ${a.nombre}</text>`;
+    });
+    barsSvg += `</svg>`;
+
+    // ── Gráfico de dona: participación de cada actividad en los ingresos ───
+    const totalIngDona = acts.reduce((s,a)=>s+Math.max(a.ing,0),0) || 1;
+    const cx=110, cy=110, rOut=95, rIn=58;
+    let anguloAcum = -90; // empezar arriba
+    let donaSvg = `<svg viewBox="0 0 220 220" style="width:100%;height:auto;max-width:230px">`;
+    acts.forEach(a=>{
+      const frac = Math.max(a.ing,0)/totalIngDona;
+      if (frac<=0) return;
+      const anguloIni = anguloAcum;
+      const anguloFin = anguloAcum + frac*360;
+      anguloAcum = anguloFin;
+      const rad = g => g*Math.PI/180;
+      const x1o=cx+rOut*Math.cos(rad(anguloIni)), y1o=cy+rOut*Math.sin(rad(anguloIni));
+      const x2o=cx+rOut*Math.cos(rad(anguloFin)), y2o=cy+rOut*Math.sin(rad(anguloFin));
+      const x1i=cx+rIn*Math.cos(rad(anguloFin)),  y1i=cy+rIn*Math.sin(rad(anguloFin));
+      const x2i=cx+rIn*Math.cos(rad(anguloIni)),  y2i=cy+rIn*Math.sin(rad(anguloIni));
+      const largeArc = (anguloFin-anguloIni)>180?1:0;
+      donaSvg += `<path d="M${x1o},${y1o} A${rOut},${rOut} 0 ${largeArc} 1 ${x2o},${y2o} L${x1i},${y1i} A${rIn},${rIn} 0 ${largeArc} 0 ${x2i},${y2i} Z" fill="${a.colorHex}" opacity="0.92"/>`;
+    });
+    donaSvg += `<text x="${cx}" y="${cy-6}" text-anchor="middle" font-size="12" fill="var(--text3)" font-weight="600">INGRESOS</text>`;
+    donaSvg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="15" fill="var(--text)" font-weight="800">${fmMB(ingTotal)}</text>`;
+    donaSvg += `</svg>`;
+
+    h += `<div style="background:linear-gradient(135deg,var(--sidebar-bg),#2d4020);border-radius:16px;padding:28px 32px;margin-bottom:20px;color:#f3efe6">
+      <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:0.75;margin-bottom:6px">Informe ejecutivo · Agroganadera Los Médanos</div>
+      <div style="font-size:22px;font-weight:800;margin-bottom:2px">Resultado consolidado al ${fd(corteGlobal)}</div>
+      <div style="font-size:13px;opacity:0.8">Cría · Recría · Terminación</div>
+    </div>`;
+
+    h += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px">
+      <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.04em">Ingresos totales</div>
+        <div style="font-size:22px;font-weight:800;color:var(--green-text);margin-top:6px">${fmMB(ingTotal)}</div>
+      </div>
+      <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.04em">Egresos totales</div>
+        <div style="font-size:22px;font-weight:800;color:var(--clay-text);margin-top:6px">${fmMB(egTotal)}</div>
+      </div>
+      <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px;background:${mb2};border:2px solid ${mc}">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:${mc};letter-spacing:.04em">Utilidad total</div>
+        <div style="font-size:22px;font-weight:800;color:${mc};margin-top:6px">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</div>
+      </div>
+      <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.04em">Margen s/ ingresos</div>
+        <div style="font-size:22px;font-weight:800;color:${mc};margin-top:6px">${margenPct.toFixed(1)}%</div>
+      </div>
+    </div>`;
+
+    h += `<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch">
+      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
+        <div class="panel-title">📊 Utilidad por actividad</div>
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;padding-top:8px">${barsSvg}</div>
+      </div>
+      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
+        <div class="panel-title">🥧 Participación en ingresos</div>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding-top:8px">
+          ${donaSvg}
+          <div style="display:flex;flex-direction:column;gap:6px;width:100%">
+            ${acts.map(a=>{ const pct = ingTotal>0?(Math.max(a.ing,0)/totalIngDona*100):0; return `
+            <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+              <span style="width:10px;height:10px;border-radius:3px;background:${a.colorHex};flex-shrink:0"></span>
+              <span style="color:var(--text2);flex:1">${a.emoji} ${a.nombre}</span>
+              <strong>${pct.toFixed(0)}%</strong>
+            </div>`; }).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+    h += `<div class="panel">
+      <div class="panel-title">📋 Resumen por actividad</div>
+      <table class="dt"><thead><tr><th>Actividad</th><th class="tc">Ingresos</th><th class="tc">Egresos</th><th class="tc">Utilidad</th><th class="tc">% Margen</th></tr></thead><tbody>
+        ${acts.map(a=>{
+          const pctA = a.ing>0?(a.margen/a.ing*100):0;
+          const colorA = a.margen>=0?'var(--green-text)':'var(--red-text)';
+          return `<tr>
+            <td style="font-weight:600">${a.emoji} ${a.nombre}</td>
+            <td class="tc">${fmMB(a.ing)}</td>
+            <td class="tc">${fmMB(a.eg)}</td>
+            <td class="tc" style="font-weight:700;color:${colorA}">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</td>
+            <td class="tc" style="color:${colorA}">${pctA.toFixed(1)}%</td>
+          </tr>`;
+        }).join('')}
+        <tr style="background:var(--bg2);font-weight:800">
+          <td>Total consolidado</td>
+          <td class="tc">${fmMB(ingTotal)}</td>
+          <td class="tc">${fmMB(egTotal)}</td>
+          <td class="tc" style="color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</td>
+          <td class="tc" style="color:${mc}">${margenPct.toFixed(1)}%</td>
+        </tr>
+      </tbody></table>
+    </div>`;
+    return h;
+  }
 
   if (tabMB === 'resultado') {
     h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
