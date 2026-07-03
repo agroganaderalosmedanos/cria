@@ -5163,14 +5163,8 @@ function attachEngordePesadasEvents() {
 window.egCambiarCorral = function(val) { egSetCorralId(val); window.render(); };
 
 function attachEngordeEvents() {
-  // Selector de corral
-  const sel = document.getElementById('eg-selector-corral');
-  if (sel) {
-    sel.addEventListener('change', function() {
-      egSetCorralId(this.value);
-      render();
-    });
-  }
+  // Selector de corral: ahora usa onchange inline en el <select> (ver buildEngorde()),
+  // no depende de este listener por separado.
   // Config corral (Costos)
   const cfgSave = document.getElementById('eg-cfg-save');
   if (cfgSave) cfgSave.onclick = async () => {
@@ -5617,6 +5611,7 @@ function buildEngorde() {
       <div style="display:flex;align-items:center;gap:8px">
         <label style="font-size:13px;font-weight:600;white-space:nowrap">Corral:</label>
         <select id="eg-selector-corral" data-action="cambiar-corral"
+          onchange="egCambiarCorral(this.value)"
           style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px">
           <option value="">— Todos los corrales —</option>
           ${rodeosEng.filter(r=>!S._engCampoFiltro||String(r.campo_id)===String(S._engCampoFiltro))
@@ -6600,8 +6595,8 @@ async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo, btn) {
   }
 }
 
-function buildEngordeComparacion_(rodeosEng, fm) {
-  if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
+function buildEngordeComparacion_(rodeosEngTodos, fm) {
+  if (!rodeosEngTodos.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
   const moneda = S.engordeMoneda || 'ARS';
   // Fecha de corte: comparte S._corteEng con el Dashboard y Costos, para que las tres
   // pantallas muestren lo mismo. Alimentación y Stock ya respetan esta fecha.
@@ -6614,6 +6609,10 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   // en 6 pantallas distintas, así que preferí no apurarlo sin revisarlas todas.
   const corteComp = S._corteEng || today();
   const stockACorteComp = stockPorRodeoACorte_(corteComp);
+  // Corrales ya vendidos del todo (stock 0) no aportan nada a esta comparación —
+  // van al Historial, igual que en Costos.
+  const rodeosEng = rodeosEngTodos.filter(r => (stockACorteComp[String(r.rodeo_id)]||0) > 0);
+  if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todos los corrales están en 0 — mirá el Historial para los cerrados.</div></div>';
   // BUG CORREGIDO: egCostoCompra_() devuelve el costo ya convertido a `moneda` (según
   // S.engordeMoneda) — pero acá abajo cada fila se mostraba con fm(), que vuelve a
   // convertir. En modo ARS no se notaba (convertir a ARS es no-operación), pero en
