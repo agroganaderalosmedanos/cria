@@ -6207,14 +6207,19 @@ function buildEngordeCostos_(rodeoId, fm) {
     // Mostrar resumen de todos los corrales
     const rodeosEngAll = rodeosEngordeValidos_();
     const campFiltro = S._engCampoFiltro || '';
-    const rodeosEng = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
-    if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
+    const rodeosEngConCampo = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
+    if (!rodeosEngConCampo.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
     // Fecha de corte: comparte S._corteEng con el Dashboard, para que ambos muestren
     // lo mismo. Antes esta pestaña ignoraba por completo la fecha de corte y siempre
     // calculaba con TODOS los datos hasta hoy, aunque el Dashboard estuviera mirando
     // un cierre anterior — eso generaba diferencias entre las dos pantallas.
     const corteCostos = S._corteEng || today();
     const stockACorteCostos = stockPorRodeoACorte_(corteCostos);
+    // Corrales con stock 0 (ya vendidos/vaciados del todo) no aportan nada a un
+    // análisis de costos vigente — se consideran "cerrados" y van al Historial,
+    // no acá.
+    const rodeosEng = rodeosEngConCampo.filter(r => (stockACorteCostos[String(r.rodeo_id)]||0) > 0);
+    if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">Todos los corrales${campFiltro ? ' de este campo' : ''} están en 0 — mirá el Historial para los cerrados.</div></div>`;
     let totalAlim=0,totalVeter=0;
     rodeosEng.forEach(r => {
       const cVet = egCostoAlim_(r.rodeo_id, corteCostos, 'Veterinaria');
@@ -6655,11 +6660,23 @@ function buildEngordeComparacion_(rodeosEng, fm) {
 
   const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
   const tag = (v, b, low=false) => (v!==null&&b!==null&&v===b)?` style="color:var(--green);font-weight:700"`:'' ;
-  const bGd = best(r=>r.gd); const bKgG=best(r=>r.kgG); const bUtil=best(r=>r.util); const bCaXkg=best(r=>r.caXkg,true);
+  const bGd = best(r=>r.gd); const bKgG=best(r=>r.kgG); const bCaXkg=best(r=>r.caXkg,true);
+  // Utilidad puede ser negativa (corral que da pérdida) — a diferencia de GDP/Kg ganados,
+  // acá "mejor" significa "el número más alto" sea positivo o negativo, así que el cálculo
+  // del mejor NO puede filtrar los valores ≤0 como hace best() para el resto.
+  const bUtil = rows.map(r=>r.util).filter(v=>v!==null).length ? Math.max(...rows.map(r=>r.util).filter(v=>v!==null)) : null;
 
   let h = '<div class="tw"><table class="dt"><thead><tr><th>Indicador</th>' + rows.map(r=>`<th class="tc">${r.r.nombre}</th>`).join('') + '</tr></thead><tbody>';
   const row = (lbl, fn, fmt) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);return`<td class="tc">${v!==null&&v!==undefined?fmt(v):'—'}</td>`;}).join('')}</tr>`;
   const rowTag = (lbl, fn, fmt, best, low=false) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);return`<td class="tc"${tag(v,best,low)}>${v!==null&&v>0?fmt(v):'—'}</td>`;}).join('')}</tr>`;
+  // Variante para valores que pueden ser negativos (ej. Utilidad) — antes rowTag()
+  // ocultaba cualquier valor ≤0 mostrando "—", así que un corral en pérdida real
+  // (Utilidad negativa) no mostraba el número, ni siquiera en rojo.
+  const rowTagSigned = (lbl, fn, fmt, best) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);
+    const esNeg = v!==null && v<0;
+    const style = esNeg ? ' style="color:var(--red);font-weight:700"' : tag(v,best);
+    return `<td class="tc"${style}>${v!==null?(esNeg?'−'+fmt(Math.abs(v)):fmt(v)):'—'}</td>`;
+  }).join('')}</tr>`;
 
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>📦 Stock y movimiento</strong></td></tr>`;
   h += row('Animales ingresados', r=>r.cantIng, v=>fn(v,0));
@@ -6671,21 +6688,20 @@ function buildEngordeComparacion_(rodeosEng, fm) {
   h += row('Kg ingresados', r=>r.kgI, v=>fn(v,0)+' kg');
   h += row('Kg vendidos', r=>r.kgV, v=>fn(v,0)+' kg');
   h += row('Kg en stock', r=>r.kgStk, v=>fn(v,0)+' kg');
-  h += rowTag('Kg ganados', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
+  h += rowTag('Kg ganados (última pesada)', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
   h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
   h += row('Costo de compra', r=>r.cc, fm);
   h += row('Costo alimentación', r=>r.ca, fm);
   h += row('Costo total', r=>r.ca+r.cc, fm);
   h += rowTag('Alim. / kg ganado', r=>r.caXkg, fm, bCaXkg, true);
-  h += rowTag('Compra / kg ganado', r=>r.ccXkg, fm, best(r=>r.ccXkg,true), true);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💰 Resultados</strong></td></tr>`;
   h += row('Ingreso ventas', r=>r.iv, fm);
   h += row('Stock valorizado', r=>r.ivStock>0?r.ivStock:null, fm);
   h += row('(–) Costo total', r=>r.ca+r.cc, v=>'−'+fm(v));
-  h += rowTag('Utilidad', r=>r.util, fm, bUtil);
+  h += rowTagSigned('Utilidad', r=>r.util, fm, bUtil);
   h += '</tbody></table></div>';
-  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales.</div>`;
+  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales. Los valores en <span style="color:var(--red);font-weight:700">rojo</span> son pérdida.</div>`;
   return h;
 }
 
