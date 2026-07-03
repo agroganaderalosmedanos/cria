@@ -7746,7 +7746,6 @@ function buildInsumos() {
     <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
   </div>
   </div>
-  <div id="in-stock-seleccionado">${buildStockSeleccionado_('')}</div>
   <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '')}</div>`;
 
   return h;
@@ -7977,8 +7976,10 @@ window.renderInsumosHistorialFiltrado = function() {
   const rodeoFiltro      = document.getElementById('in-hist-filtro-rodeo')?.value || '';
   const desde = document.getElementById('in-hist-desde')?.value || '';
   const hasta = document.getElementById('in-hist-hasta')?.value || '';
-  const stockEl = document.getElementById('in-stock-seleccionado');
-  if (stockEl) stockEl.innerHTML = buildStockSeleccionado_(productoFiltro, campoFiltro);
+  // La caja de "Stock actual de [producto]" se sacó — usaba una fuente de datos
+  // (S.stockProductos) que no siempre coincidía con el stock real mostrado más
+  // arriba en la pantalla, y generaba confusión. El stock general ya se ve bien
+  // en el bloque "Stock actual de insumos" de arriba, sin necesidad de este duplicado.
   const el = document.getElementById('in-historial-tabla');
   if (el) {
     if (productoFiltro) {
