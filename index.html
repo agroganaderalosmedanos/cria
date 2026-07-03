@@ -3089,6 +3089,13 @@ function buildMovimientos() {
           ${[...new Set(((S.catalogs && S.catalogs.rodeos) || []).map(r => r.categoria).filter(Boolean))].sort().map(c => `<option value="${c}">${c}</option>`).join('')}
         </select>
       </div>
+      <div class="fg"><label>Actividad</label>
+        <select id="mv-nr-actividad">
+          <option value="Cría">Cría</option>
+          <option value="Recría">Recría</option>
+          <option value="Engorde">Terminación</option>
+        </select>
+      </div>
     </div>
     <div class="fgrid" style="margin-top:8px">
       <div class="fg" id="mv-caravana-wrap" style="display:none"><label>Caravana</label><input type="text" id="mv-caravana" placeholder="Ej: 982000..."></div>
@@ -3716,7 +3723,12 @@ function attachMovimientosEvents() {
     if (rodeoDestinoId === '__nuevo__') {
       const nombre = document.getElementById('mv-nr-nombre').value.trim();
       const categoria = document.getElementById('mv-nr-categoria').value;
-      const actividad = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.campo_id) === String(campoDest))?.actividad || 'Cría';
+      // OJO: antes esto se adivinaba mirando la actividad de "el primer rodeo que
+      // aparezca" en el mismo campo — pero un campo puede tener rodeos de más de
+      // una actividad a la vez (ej. Recría y Terminación conviviendo en el mismo
+      // campo), y adivinar mal creaba un rodeo con la actividad equivocada, sin
+      // ningún aviso. Ahora se elige explícitamente en el formulario.
+      const actividad = document.getElementById('mv-nr-actividad')?.value || 'Cría';
       if (!nombre) { toast('Escribí el nombre del rodeo nuevo.', 'err'); return; }
       try {
         const resp = await apiCall('create', { body: { entity: 'rodeos', data: {
@@ -10977,8 +10989,9 @@ function buildABMCorrales_() {
 
   h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
     📋 Los valores que cargues acá en <strong>Config Corral</strong> tienen prioridad sobre los del movimiento de entrada (Saldo inicial / Traslado) para los cálculos del Dashboard de Terminación.
-    Útil para corregir un precio de cesión incorrecto, o cuando el corral se armó con un traslado interno sin precio.<br>
-    Los campos en gris claro muestran el valor que tiene el movimiento de entrada — si cargás algo acá, ese valor pisará al del movimiento.
+    Los campos en gris claro (🔒) muestran el valor que trae el movimiento — tocalos solo si necesitás una <strong>excepción a propósito</strong>; el sistema te va a pedir confirmación antes de guardar.<br>
+    <strong>Si el error está en la cesión o en el movimiento, corregilo ahí</strong> (Movimientos, o el editor de cesiones) en vez de tapar el dato acá — así el registro histórico queda bien y no depende para siempre de esta excepción.
+    Usá esta pantalla para: corrales sin ningún movimiento cargado (altas previas al sistema), Peso objetivo y $/kg estimado de venta (no tienen movimiento del que tomar el dato), o simplemente para ver de un vistazo qué está usando cada corral.
   </div>`;
 
   // Tabla de parámetros por corral
@@ -11806,4 +11819,3 @@ loginRequired(session => {
 </script>
 </body>
 </html>
-
