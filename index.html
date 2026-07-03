@@ -11006,27 +11006,43 @@ function buildABMCorrales_() {
       <div class="fgrid" style="gap:10px">
 
         <div class="fg"><label style="font-size:11px">Fecha de inicio</label>
-          <input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio"
-            value="${cfg.fechaInicio||fechaMov||''}" style="font-size:13px;padding:4px 6px">
-          ${fechaMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fd(fechaMov)}</div>`:''}
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio"
+              value="${cfg.fechaInicio||fechaMov||''}" ${(!cfg.fechaInicio && fechaMov)?'disabled':''} style="font-size:13px;padding:4px 6px">
+            ${(!cfg.fechaInicio && fechaMov)?`<button type="button" class="abm-corral-unlock" data-field="fechaInicio" title="Cargar una fecha manual distinta a la del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
+          </div>
+          ${fechaMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fd(fechaMov)}${(!cfg.fechaInicio)?' (en uso)':''}</div>`:''}
+          ${(cfg.fechaInicio && fechaMov && cfg.fechaInicio!==fechaMov)?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento (${fd(fechaMov)})</div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Cantidad ingresada</label>
-          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial"
-            value="${cfg.stockInicial||''}" placeholder="${cantMov||'—'}" style="font-size:13px;padding:4px 6px;width:90px">
-          ${cantMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(cantMov)} cab.</div>`:''}
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial"
+              value="${cfg.stockInicial||''}" placeholder="${cantMov||'—'}" ${(!cfg.stockInicial && cantMov)?'disabled':''} style="font-size:13px;padding:4px 6px;width:90px">
+            ${(!cfg.stockInicial && cantMov)?`<button type="button" class="abm-corral-unlock" data-field="stockInicial" title="Cargar una cantidad manual distinta a la del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
+          </div>
+          ${cantMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(cantMov)} cab.${(!cfg.stockInicial)?' (en uso)':''}</div>`:''}
+          ${(cfg.stockInicial && cantMov && Number(cfg.stockInicial)!==Number(cantMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento (${fn(cantMov)} cab.)</div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Kg prom. de ingreso</label>
-          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso"
-            value="${cfg.kgIngreso||''}" placeholder="${kgMov||'—'}" style="font-size:13px;padding:4px 6px;width:90px">
-          ${kgMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(kgMov)} kg</div>`:''}
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso"
+              value="${cfg.kgIngreso||''}" placeholder="${kgMov||'—'}" ${(!cfg.kgIngreso && kgMov)?'disabled':''} style="font-size:13px;padding:4px 6px;width:90px">
+            ${(!cfg.kgIngreso && kgMov)?`<button type="button" class="abm-corral-unlock" data-field="kgIngreso" title="Cargar un peso manual distinto al del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
+          </div>
+          ${kgMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(kgMov)} kg${(!cfg.kgIngreso)?' (en uso)':''}</div>`:''}
+          ${(cfg.kgIngreso && kgMov && Number(cfg.kgIngreso)!==Number(kgMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento (${fn(kgMov)} kg)</div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Precio entrada ($/cab.)</label>
-          <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra"
-            value="${cfg.precioCompra||''}" placeholder="${precioCabMov?fn(Math.round(precioCabMov)):'—'}" style="font-size:13px;padding:4px 6px;width:110px">
-          ${precioCabMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: $ ${fn(Math.round(precioCabMov))}/cab.</div>`:''}
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra"
+              value="${cfg.precioCompra||''}" placeholder="${precioCabMov?fn(Math.round(precioCabMov)):'—'}" ${(!cfg.precioCompra && precioCabMov)?'disabled':''} style="font-size:13px;padding:4px 6px;width:110px">
+            ${(!cfg.precioCompra && precioCabMov)?`<button type="button" class="abm-corral-unlock" data-field="precioCompra" title="Cargar un precio manual distinto al del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
+          </div>
+          ${precioCabMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: $ ${fn(Math.round(precioCabMov))}/cab.${(!cfg.precioCompra)?' (en uso)':''}</div>`:''}
+          ${(cfg.precioCompra && precioCabMov && Math.round(Number(cfg.precioCompra))!==Math.round(precioCabMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento ($ ${fn(Math.round(precioCabMov))}/cab.)</div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Peso objetivo (kg)</label>
