@@ -525,6 +525,7 @@ async function init() {
       loadEntity('campanas').catch(()=>{}),
       loadEntity('rodeo_productos').catch(()=>{}),
       loadEntity('config_corral').catch(()=>{}).then(migrarConfigCorralLegacy_),
+      loadEntity('engorde_lotes').catch(()=>{}),
       apiCall('resumenRecria').then(d=>{ S.resumenRecria=d; }).catch(()=>{}),
       loadCorralesStock().catch(()=>{}),
     ]).then(()=>{ render(); });
@@ -5210,34 +5211,49 @@ function attachEngordeEvents() {
     };
   });
 
-  // Cerrar lote (historial)
+  // Cerrar lote (historial) — ahora se guarda en Sheets (entidad engorde_lotes)
   document.querySelectorAll('[id^="eg-cerrar-"]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const rid = btn.dataset.rodeo;
       const r = rodeosTodos().find(x=>String(x.rodeo_id)===String(rid));
       if (!r) return;
       const fi = egFechaIngreso_(rid);
       const kgG = egKgGanadosHastaPesada_(rid);
       const gd = egGanDiaria_(rid);
-      const lote = {
-        id: Date.now().toString(36), rodeoId: String(rid), nombre: r.nombre,
-        fechaApertura: fi||today(), fechaCierre: today(),
-        animales: egCantIngresada_(rid), kgGanados: kgG, ganDiaria: gd,
-        costoAlim: egCostoAlim_(rid), costoCompra: egCostoCompra_(rid),
-        ingVentas: egIngVentas_(rid),
-      };
-      const lotes = egLotes_(); lotes.push(lote); egSaveLotes_(lotes);
-      toast('Lote guardado en historial','ok'); render();
+      btn.disabled = true; btn.textContent = '⏳ Guardando...';
+      try {
+        await apiCall('create', { body: { entity: 'engorde_lotes', data: {
+          rodeo_id: rid, nombre: r.nombre,
+          fecha_apertura: fi||today(), fecha_cierre: today(),
+          animales: egCantIngresada_(rid), kg_ganados: kgG, gan_diaria: gd||'',
+          costo_alim: egCostoAlim_(rid), costo_compra: egCostoCompra_(rid),
+          ing_ventas: egIngVentas_(rid),
+        }}});
+        invalidateCache('engorde_lotes');
+        await loadEntity('engorde_lotes', true);
+        toast('Lote guardado en historial','ok'); render();
+      } catch(err) {
+        btn.disabled = false; btn.textContent = '📋 Guardar en historial';
+        toast('Error al guardar: ' + err.message, 'err');
+      }
     };
   });
 
   // Eliminar lote
   document.querySelectorAll('[data-del-lote]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const id = btn.dataset.delLote;
       if (!confirm('¿Eliminar este lote del historial?')) return;
-      const lotes = egLotes_().filter(l=>l.id!==id); egSaveLotes_(lotes);
-      toast('Lote eliminado','ok'); render();
+      btn.disabled = true;
+      try {
+        await apiCall('delete', { body: { entity: 'engorde_lotes', id } });
+        invalidateCache('engorde_lotes');
+        await loadEntity('engorde_lotes', true);
+        toast('Lote eliminado','ok'); render();
+      } catch(err) {
+        btn.disabled = false;
+        toast('Error al eliminar: ' + err.message, 'err');
+      }
     };
   });
 
@@ -5317,8 +5333,20 @@ async function egSaveConfig_(rodeoId, cfg) {
     await loadEntity('config_corral', true); // revertir al estado real del servidor
   }
 }
-function egLotes_() { try { return JSON.parse(localStorage.getItem('eg_lotes') || '[]'); } catch(e) { return []; } }
-function egSaveLotes_(lotes) { try { localStorage.setItem('eg_lotes', JSON.stringify(lotes)); } catch(e) {} }
+// Lotes cerrados de Terminación (Historial) — ahora persisten en Sheets (entidad
+// engorde_lotes), ya no en localStorage del navegador. Se mapea de las columnas
+// snake_case de la hoja al mismo shape camelCase que ya usaba el resto del código,
+// para no tener que tocar buildEngordeHistorial_ ni el resto de las pantallas.
+function egLotes_() {
+  return (S.cache.engorde_lotes || []).map(l => ({
+    id: l.lote_id, rodeoId: String(l.rodeo_id), nombre: l.nombre,
+    fechaApertura: l.fecha_apertura, fechaCierre: l.fecha_cierre,
+    animales: Number(l.animales)||0, kgGanados: Number(l.kg_ganados)||0,
+    ganDiaria: (l.gan_diaria!==''&&l.gan_diaria!==undefined&&l.gan_diaria!==null) ? Number(l.gan_diaria) : null,
+    costoAlim: Number(l.costo_alim)||0, costoCompra: Number(l.costo_compra)||0,
+    ingVentas: Number(l.ing_ventas)||0,
+  }));
+}
 
 // Migración única: si hay configuraciones de corral guardadas en localStorage (eg_cfg)
 // de antes de que esto pasara a vivir en Sheets, las sube al servidor automáticamente
