@@ -5550,8 +5550,8 @@ function egKgStockEstimado_(rodeoId) {
   const kgIng = egKgIngreso_(rodeoId);
   return kgIng ? stk * kgIng : 0;
 }
-function egKgGanadosHastaPesada_(rodeoId) {
-  const pes = egPesadas_(rodeoId);
+function egKgGanadosHastaPesada_(rodeoId, corte) {
+  const pes = corte ? egPesadas_(rodeoId).filter(p=>(p.fecha||'')<=corte) : egPesadas_(rodeoId);
   if (!pes.length) return 0;
   const ultima = pes[pes.length-1];
   const kgVendHP = egVentas_(rodeoId)
@@ -6369,7 +6369,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     const gdpsTodos=[];
     rodeosEng.forEach(r=>{
       totKgI  += egKgIngresados_(r.rodeo_id);
-      totKgG  += egKgGanadosHastaPesada_(r.rodeo_id);
+      totKgG  += egKgGanadosHastaPesada_(r.rodeo_id, corteCostos);
       totKgV  += egKgVend_(r.rodeo_id);
       totKgStk+= egKgStockEstimado_(r.rodeo_id);
       totAn   += egStock_(r.rodeo_id);
@@ -6437,7 +6437,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoId)&&(v.fecha_salida||'')<=corteCostosUno)
     .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
   const kgV = egKgVend_(rodeoId);
-  const kgG = egKgGanadosHastaPesada_(rodeoId);
+  const kgG = egKgGanadosHastaPesada_(rodeoId, corteCostosUno);
   // Stock valorizado usando precios de valorización (no precio manual)
   const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
   const kgStk = stk * (pesoUltima || kgIngProm || 0);
@@ -6670,7 +6670,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     const cantIng = egCantIngresada_(rid);
     const kgI = egKgIngresados_(rid);
     const kgV = egKgVend_(rid);
-    const kgG = egKgGanadosHastaPesada_(rid);
+    const kgG = egKgGanadosHastaPesada_(rid, corteComp);
     const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
     const ca = egCostoAlim_(rid, corteComp);
     const cc = aArs_(egCostoCompra_(rid));
