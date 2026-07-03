@@ -7781,9 +7781,18 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
   let filas = [
     ...comprasF.map(c => {
       const p = productosMap[c.producto_id] || {};
-      const detalle = [c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
+      // Un registro con cantidad 0 no es una compra real — es solo un cambio de
+      // precio vigente desde una fecha (lo carga el botón "Actualizar" de la
+      // pantalla de Precios). Se etiqueta distinto para no confundirlo con una
+      // compra de verdad.
+      const esSoloPrecio = !(Number(c.cantidad) > 0);
+      const detalle = esSoloPrecio
+        ? 'Precio actualizado a $ ' + fn(Number(c.precio_unitario)||0) + ' desde esta fecha'
+        : [c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
       return {
-        fecha: c.fecha || '', tipoLabel: 'Compra', tipoClass: 'pill-green',
+        fecha: c.fecha || '',
+        tipoLabel: esSoloPrecio ? 'Cambio de precio' : 'Compra',
+        tipoClass: esSoloPrecio ? 'pill-gold' : 'pill-green',
         producto: p.nombre || '(producto eliminado)', campo: '—', rodeo: '—',
         cantidad: Number(c.cantidad) || 0, unidad: p.unidad || '', detalle,
         entity: 'compras_insumos', idCol: 'compra_id', id: c.compra_id,
@@ -8130,6 +8139,23 @@ function attachInsumosEvents() {
       const fecha = document.querySelector(`.pv-nueva-fecha[data-pid="${pid}"]`)?.value;
       if (!precio || precio <= 0) { toast('Ingresá el nuevo precio unitario.', 'err'); return; }
       if (!fecha) { toast('Ingresá la fecha desde la que rige este precio.', 'err'); return; }
+      // Si ya existe un registro de precio con fecha MÁS RECIENTE que la que estás
+      // por cargar, avisar antes de guardar — porque el sistema siempre usa el precio
+      // de la fecha más nueva, así que este precio nuevo (más viejo) no va a aparecer
+      // como "vigente" aunque se guarde bien. Esto es justo lo que confunde: el
+      // registro se crea, pero no se ve reflejado porque uno más reciente le gana.
+      const comprasExistentes = (S.cache.compras_insumos||[])
+        .filter(c => String(c.producto_id)===String(pid) && Number(c.precio_unitario)>0)
+        .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const masReciente = comprasExistentes[0];
+      if (masReciente && String(masReciente.fecha) > String(fecha)) {
+        const ok = confirm(
+          `Ya hay un precio cargado para "${nombre}" con fecha ${fd(masReciente.fecha)} ($ ${fn(Number(masReciente.precio_unitario))}), que es MÁS RECIENTE que ${fd(fecha)}.\n\n` +
+          `El sistema siempre usa el precio de la fecha más nueva — así que este precio que estás por cargar (con fecha anterior) NO va a mostrarse como el vigente, aunque se guarde igual.\n\n` +
+          `¿Igual querés guardarlo? (Sirve para completar el historial, pero no cambia el precio que se usa hoy.)`
+        );
+        if (!ok) return;
+      }
       btn.disabled = true; btn.textContent = '⏳...';
       try {
         // Registra una compra de 1 unidad con el nuevo precio — sirve como registro de precio vigente
