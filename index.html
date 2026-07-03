@@ -6210,24 +6210,33 @@ function buildEngordeCostos_(rodeoId, fm) {
     const campFiltro = S._engCampoFiltro || '';
     const rodeosEng = campFiltro ? rodeosEngAll.filter(r => String(r.campo_id) === String(campFiltro)) : rodeosEngAll;
     if (!rodeosEng.length) return `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde${campFiltro ? ' en este campo' : ''}.</div></div>`;
+    // Fecha de corte: comparte S._corteEng con el Dashboard, para que ambos muestren
+    // lo mismo. Antes esta pestaña ignoraba por completo la fecha de corte y siempre
+    // calculaba con TODOS los datos hasta hoy, aunque el Dashboard estuviera mirando
+    // un cierre anterior — eso generaba diferencias entre las dos pantallas.
+    const corteCostos = S._corteEng || today();
+    const stockACorteCostos = stockPorRodeoACorte_(corteCostos);
     let totalAlim=0,totalVeter=0;
     rodeosEng.forEach(r => {
-      const cVet = egCostoAlim_(r.rodeo_id, null, 'Veterinaria');
-      const cTot = egCostoAlim_(r.rodeo_id);
+      const cVet = egCostoAlim_(r.rodeo_id, corteCostos, 'Veterinaria');
+      const cTot = egCostoAlim_(r.rodeo_id, corteCostos);
       totalVeter += cVet;
       totalAlim  += cTot - cVet;
     });
     // Calcular ingresos consolidados
     let totalVentas=0, totalStock=0;
     rodeosEng.forEach(r => {
-      totalVentas += egIngVentas_(r.rodeo_id);
-      const pes = egPesadas_(r.rodeo_id);
-      const ultima = pes.length ? pes[pes.length-1] : null;
+      const ventasCorte = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(r.rodeo_id) && (v.fecha_salida||'')<=corteCostos);
+      totalVentas += ventasCorte.reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
+      const pesCorte = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(r.rodeo_id) && (p.fecha||'')<=corteCostos)
+        .sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+      const ultima = pesCorte.length ? pesCorte[pesCorte.length-1] : null;
       const pesoP = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
-      totalStock += valorizarRodeo_(r, egStock_(r.rodeo_id), pesoP);
+      const stockCorte = Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0);
+      totalStock += valorizarRodeo_(r, stockCorte, pesoP);
     });
     // Stock inicial y cesiones
-    const movsTodos = S.cache.movimientos || [];
+    const movsTodos = (S.cache.movimientos || []).filter(m=>(m.fecha||'')<=corteCostos);
     const rodeosEngIds2 = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
     const saldosIni2 = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
     const totalSaldoIni = saldosIni2.reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, S.engordeMoneda||'ARS'),0);
@@ -6236,7 +6245,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     // SIEMPRE por categoría/peso del rodeo de origen, ignorando el precio real que
     // se haya cargado en la cesión — por eso el número no coincidía con el Dashboard).
     const cesiones2 = movsTodos.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
-    const egresosRecRaw2 = S.cache.egresos_recria || [];
+    const egresosRecRaw2 = (S.cache.egresos_recria || []).filter(e=>(e.fecha||'')<=corteCostos);
     const cesionesRecLegacy2 = egresosRecRaw2.filter(e => {
       if (e.destino !== 'Engorde' || !rodeosEngIds2.has(String(e.rodeo_destino_id||''))) return false;
       const tieneTrasladoReal = cesiones2.some(m =>
@@ -6273,7 +6282,8 @@ function buildEngordeCostos_(rodeoId, fm) {
     const mc = margen>=0?'var(--green)':'var(--red)';
     const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
-    let h = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    let h = `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">📅 Datos al ${fd(corteCostos)}${corteCostos!==today()?' — mismo corte que el Dashboard':''}</div>`;
+    h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
       <div class="panel" style="margin-bottom:0">
         <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — todos los corrales</div>
         <div style="display:flex;flex-direction:column;gap:8px">
