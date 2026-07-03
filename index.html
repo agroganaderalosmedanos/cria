@@ -11007,7 +11007,7 @@ function buildABMCorrales_() {
 
         <div class="fg"><label style="font-size:11px">Fecha de inicio</label>
           <div style="display:flex;align-items:center;gap:4px">
-            <input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio"
+            <input type="date" class="abm-corral-input" data-rid="${rid}" data-field="fechaInicio" data-ref="${fechaMov||''}"
               value="${cfg.fechaInicio||fechaMov||''}" ${(!cfg.fechaInicio && fechaMov)?'disabled':''} style="font-size:13px;padding:4px 6px">
             ${(!cfg.fechaInicio && fechaMov)?`<button type="button" class="abm-corral-unlock" data-field="fechaInicio" title="Cargar una fecha manual distinta a la del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
@@ -11017,7 +11017,7 @@ function buildABMCorrales_() {
 
         <div class="fg"><label style="font-size:11px">Cantidad ingresada</label>
           <div style="display:flex;align-items:center;gap:4px">
-            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial"
+            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="stockInicial" data-ref="${cantMov||''}"
               value="${cfg.stockInicial||''}" placeholder="${cantMov||'—'}" ${(!cfg.stockInicial && cantMov)?'disabled':''} style="font-size:13px;padding:4px 6px;width:90px">
             ${(!cfg.stockInicial && cantMov)?`<button type="button" class="abm-corral-unlock" data-field="stockInicial" title="Cargar una cantidad manual distinta a la del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
@@ -11027,7 +11027,7 @@ function buildABMCorrales_() {
 
         <div class="fg"><label style="font-size:11px">Kg prom. de ingreso</label>
           <div style="display:flex;align-items:center;gap:4px">
-            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso"
+            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="kgIngreso" data-ref="${kgMov||''}"
               value="${cfg.kgIngreso||''}" placeholder="${kgMov||'—'}" ${(!cfg.kgIngreso && kgMov)?'disabled':''} style="font-size:13px;padding:4px 6px;width:90px">
             ${(!cfg.kgIngreso && kgMov)?`<button type="button" class="abm-corral-unlock" data-field="kgIngreso" title="Cargar un peso manual distinto al del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
@@ -11037,7 +11037,7 @@ function buildABMCorrales_() {
 
         <div class="fg"><label style="font-size:11px">Precio entrada ($/cab.)</label>
           <div style="display:flex;align-items:center;gap:4px">
-            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra"
+            <input type="number" class="abm-corral-input" data-rid="${rid}" data-field="precioCompra" data-ref="${precioCabMov?Math.round(precioCabMov):''}"
               value="${cfg.precioCompra||''}" placeholder="${precioCabMov?fn(Math.round(precioCabMov)):'—'}" ${(!cfg.precioCompra && precioCabMov)?'disabled':''} style="font-size:13px;padding:4px 6px;width:110px">
             ${(!cfg.precioCompra && precioCabMov)?`<button type="button" class="abm-corral-unlock" data-field="precioCompra" title="Cargar un precio manual distinto al del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
@@ -11089,7 +11089,26 @@ function attachABMCorralesEvents_() {
       const row = document.querySelector(`[data-corral-row="${rid}"]`);
       if (!row) return;
       const cfg = {};
-      row.querySelectorAll('.abm-corral-input').forEach(inp => { cfg[inp.dataset.field] = inp.value; });
+      const FIELD_LABELS_CORRAL_ = { fechaInicio: 'Fecha de inicio', stockInicial: 'Cantidad ingresada', kgIngreso: 'Kg prom. de ingreso', precioCompra: 'Precio entrada' };
+      const divergencias = [];
+      row.querySelectorAll('.abm-corral-input').forEach(inp => {
+        cfg[inp.dataset.field] = inp.value;
+        const ref = inp.dataset.ref;
+        // Si el campo tiene un valor Y ese valor difiere del que trae el movimiento/cesión
+        // (data-ref), es una excepción manual activa — se avisa antes de guardar.
+        if (inp.value && ref && String(inp.value) !== String(ref)) {
+          const refTxt = inp.type === 'date' ? fd(ref) : (inp.dataset.field==='precioCompra' ? '$ '+fn(ref) : fn(ref));
+          divergencias.push(`• ${FIELD_LABELS_CORRAL_[inp.dataset.field] || inp.dataset.field}: vas a guardar "${inp.value}" en vez de "${refTxt}" (el valor del movimiento/cesión)`);
+        }
+      });
+      if (divergencias.length) {
+        const ok = confirm(
+          `Estás por guardar valores manuales que reemplazan a los del movimiento/cesión:\n\n` +
+          divergencias.join('\n') +
+          `\n\nA partir de ahora, el sistema va a usar estos valores manuales en TODOS los cálculos de este corral (Dashboard, Costos, Comparación, Proyecciones), y no los del movimiento.\n\n¿Confirmás que querés guardar así?`
+        );
+        if (!ok) return;
+      }
       btn.disabled = true;
       btn.textContent = 'Guardando...';
       await egSaveConfig_(rid, cfg);
@@ -11787,3 +11806,4 @@ loginRequired(session => {
 </script>
 </body>
 </html>
+
