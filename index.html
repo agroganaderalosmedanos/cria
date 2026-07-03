@@ -7658,7 +7658,7 @@ function buildInsumos() {
       Para actualizar el precio a partir de hoy (o de otra fecha), registralo acá.
     </div>
     <div class="tw"><table class="dt"><thead><tr>
-      <th>Producto</th><th>Categoría</th><th class="tr">Último precio</th><th class="tr">Fecha compra</th>
+      <th>Producto</th><th>Categoría</th><th class="tr">Último precio</th><th class="tr">Vigente desde</th>
       <th style="min-width:220px">Nuevo precio desde</th>
     </tr></thead><tbody>`;
   productos.filter(p=>p.activo===true||String(p.activo).toUpperCase()==='TRUE').forEach(p => {
