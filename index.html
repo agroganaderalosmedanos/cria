@@ -6232,14 +6232,39 @@ function buildEngordeCostos_(rodeoId, fm) {
     const saldosIni2 = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
     const totalSaldoIni = saldosIni2.reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, S.engordeMoneda||'ARS'),0);
     const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
+    // MISMA fuente de verdad que usa el Dashboard (antes, acá se auto-valorizaba
+    // SIEMPRE por categoría/peso del rodeo de origen, ignorando el precio real que
+    // se haya cargado en la cesión — por eso el número no coincidía con el Dashboard).
     const cesiones2 = movsTodos.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
-    const totalCesiones2 = cesiones2.reduce((s,m)=>{
+    const egresosRecRaw2 = S.cache.egresos_recria || [];
+    const cesionesRecLegacy2 = egresosRecRaw2.filter(e => {
+      if (e.destino !== 'Engorde' || !rodeosEngIds2.has(String(e.rodeo_destino_id||''))) return false;
+      const tieneTrasladoReal = cesiones2.some(m =>
+        String(m.fecha) === String(e.fecha) &&
+        String(m.rodeo_origen_id) === String(e.rodeo_id) &&
+        String(m.rodeo_destino_id) === String(e.rodeo_destino_id) &&
+        Number(m.cantidad) === Number(e.cant_animales)
+      );
+      return !tieneTrasladoReal;
+    });
+    const totalCesiones2 = cesionesRecLegacy2.reduce((s,e)=>{
+      return s + convertirAMoneda_((Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0), e.fecha, S.engordeMoneda||'ARS');
+    },0) + cesiones2.reduce((s,m)=>{
       const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
       const cant = Number(m.cantidad)||0;
-      const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-      const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
-      return s+convertirAMoneda_(valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO),m.fecha,S.engordeMoneda||'ARS');
+      const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      const peso = Number(m.peso_prom_kg)||0;
+      let costoARS;
+      if (precioKg && peso) {
+        costoARS = cant*peso*precioKg;
+      } else {
+        const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
+        costoARS = valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
+      }
+      return s+convertirAMoneda_(costoARS,m.fecha,S.engordeMoneda||'ARS');
     },0);
+    const cantCesionesTotal2 = cesiones2.length + cesionesRecLegacy2.length;
 
     const totalIngresos = totalVentas + totalStock;
     const totalSueldosEngCostos = sueldoTotalActividad_('engorde', campFiltro ? s=>String(s.campo_id)===String(campFiltro) : null);
@@ -6274,7 +6299,7 @@ function buildEngordeCostos_(rodeoId, fm) {
             <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSaldoIni)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cesiones2.length} traslados</div></div>
+            <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cantCesionesTotal2} cesiones desde Recría</div></div>
             <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesiones2)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
