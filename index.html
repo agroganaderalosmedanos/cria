@@ -6278,12 +6278,19 @@ function buildEngordeCostos_(rodeoId, fm) {
     // Historial, pero sin restarlos de este total.
     const corteCostos = S._corteEng || today();
     const stockACorteCostos = stockPorRodeoACorte_(corteCostos);
-    let totalAlim=0,totalVeter=0;
+    let totalAlim=0,totalVeter=0,totCaHP=0;
     rodeosEng.forEach(r => {
       const cVet = egCostoAlim_(r.rodeo_id, corteCostos, 'Veterinaria');
       const cTot = egCostoAlim_(r.rodeo_id, corteCostos);
       totalVeter += cVet;
       totalAlim  += cTot - cVet;
+      // Alimentación acotada a la ÚLTIMA PESADA de CADA corral (no a la fecha de
+      // corte) — mismo criterio que "Alim/kg ganado" en Comparación y en la ficha
+      // de un corral individual. Se calcula acá, temprano, porque el resumen de
+      // "Alimentación" de más abajo ya la muestra como referencia.
+      const pesR = egPesadas_(r.rodeo_id).filter(p=>(p.fecha||'')<=corteCostos);
+      const ultimaR = pesR.length ? pesR[pesR.length-1] : null;
+      totCaHP += egCostoAlim_(r.rodeo_id, ultimaR?.fecha) - egCostoAlim_(r.rodeo_id, ultimaR?.fecha, 'Veterinaria');
     });
     // Calcular ingresos consolidados
     let totalVentas=0, totalStock=0;
@@ -6401,7 +6408,7 @@ function buildEngordeCostos_(rodeoId, fm) {
       <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
     </div>`;
     // KPIs productivos consolidados
-    let totKgI=0,totKgG=0,totKgV=0,totKgStk=0,totAn=0,totCaHP=0;
+    let totKgI=0,totKgG=0,totKgV=0,totKgStk=0,totAn=0;
     const gdpsTodos=[];
     rodeosEng.forEach(r=>{
       totKgI  += egKgIngresados_(r.rodeo_id);
@@ -6411,13 +6418,6 @@ function buildEngordeCostos_(rodeoId, fm) {
       totAn   += egStock_(r.rodeo_id);
       const gdp = egGanDiaria_(r.rodeo_id);
       if (gdp) gdpsTodos.push(gdp);
-      // Alimentación acotada a la ÚLTIMA PESADA de CADA corral (no a la fecha de
-      // corte) — mismo criterio que "Alim/kg ganado" en Comparación y en la ficha
-      // de un corral individual. Antes acá se usaba totalAlim (acotado al corte),
-      // mezclando dos fechas de corte distintas en la misma cuenta.
-      const pesR = egPesadas_(r.rodeo_id).filter(p=>(p.fecha||'')<=corteCostos);
-      const ultimaR = pesR.length ? pesR[pesR.length-1] : null;
-      totCaHP += egCostoAlim_(r.rodeo_id, ultimaR?.fecha) - egCostoAlim_(r.rodeo_id, ultimaR?.fecha, 'Veterinaria');
     });
     const gdpPromTodos = gdpsTodos.length ? gdpsTodos.reduce((s,v)=>s+v,0)/gdpsTodos.length : null;
     const caXkgTodos = totKgG>0 ? totCaHP/totKgG : null;
