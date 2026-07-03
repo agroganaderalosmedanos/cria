@@ -6339,7 +6339,7 @@ function buildEngordeCostos_(rodeoId, fm) {
             <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesiones2)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div style="font-weight:600">🌾 Alimentación</div>
+            <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostos)}) — suma de todos los corrales, cada uno hasta su última pesada: ${fm(totCaHP)}</div></div>
             <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -6495,11 +6495,11 @@ function buildEngordeCostos_(rodeoId, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${cc>0?fm(cc):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">costo total acumulado</div></div>
+          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostosUno)})${ultima?`<br>hasta última pesada (${fd(ultima.fecha)}): ${fm(caHPAlim)}`:''}</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caAlim)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">💉 Veterinaria</div><div style="font-size:11px;color:var(--text3)">costo total acumulado</div></div>
+          <div><div style="font-weight:600">💉 Veterinaria</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostosUno)})</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caVet)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
@@ -6726,9 +6726,9 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
   h += row('Costo de compra', r=>r.cc, fm);
-  h += row('Costo alimentación', r=>r.ca, fm);
+  h += row('Costo alimentación (hasta el corte)', r=>r.ca, fm);
   h += row('Costo total', r=>r.ca+r.cc, fm);
-  h += rowTag('Alim. / kg ganado', r=>r.caXkg, fm, bCaXkg, true);
+  h += rowTag('Alim. / kg ganado (hasta última pesada)', r=>r.caXkg, fm, bCaXkg, true);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💰 Resultados</strong></td></tr>`;
   h += row('Ingreso ventas', r=>r.iv, fm);
   h += row('Stock valorizado', r=>r.ivStock>0?r.ivStock:null, fm);
