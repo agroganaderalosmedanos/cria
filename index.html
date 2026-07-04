@@ -2653,6 +2653,7 @@ function attachParicionesEvents() {
       await loadEntity('pariciones', true);
       await loadEntity('movimientos', true);
       await loadCatalogs(); // recargar rodeos por si se creó uno nuevo
+      S.stock = null; await loadStock(); // el nacimiento crea un movimiento (Saldo inicial) — sin esto, "Stock de Hacienda" quedaba con el valor de antes de la parición
       S.dashboard = null; S._resultCria = null;
       const vivos = data.nacidos_vivos;
       if (result && result.rodeo_terneros) {
@@ -2716,6 +2717,7 @@ function attachMortandadEvents() {
       invalidateCache('mortandad');
       toast('Mortandad registrada', 'ok');
       await loadEntity('mortandad', true);
+      S.stock = null; await loadStock(); // la mortandad descuenta stock — sin esto, "Stock de Hacienda" no se enteraba
       S.dashboard = null; S._resultCria = null;
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
