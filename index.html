@@ -8044,6 +8044,28 @@ window.inActualizarTotalCompra_ = function() {
 };
 
 function attachInsumosEvents() {
+  // Autocorrección del selector de Campo del historial: después de una extensa
+  // investigación (probado en 3 navegadores y 2 PCs distintas) no se encontró
+  // la causa exacta de por qué a veces este selector termina con una opción
+  // corrompida (texto tipo "${r.nombre}" en vez de un nombre real de campo).
+  // Como no se pudo hallar el origen, se detecta y se repara acá directamente:
+  // si alguna opción no corresponde a un campo_id real, se reconstruye toda la
+  // lista de opciones desde el catálogo, que siempre está limpio.
+  (function repararSelectorCampoHistorial_() {
+    const sel = document.getElementById('in-hist-filtro-campo');
+    if (!sel) return;
+    const camposReales = (S.catalogs && S.catalogs.campos) || [];
+    const idsValidos = new Set(camposReales.map(c => String(c.campo_id)));
+    const opciones = [...sel.options];
+    const hayOpcionRota = opciones.some(o => o.value !== '' && !idsValidos.has(o.value));
+    if (hayOpcionRota) {
+      const valorPrevio = idsValidos.has(sel.value) ? sel.value : '';
+      sel.innerHTML = '<option value="">Todos los campos</option>' +
+        camposReales.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('');
+      sel.value = valorPrevio;
+    }
+  })();
+
   function applyInsumoTipoUI(tipo) {
     const esCompra = tipo === 'Compra';
     const cw = document.getElementById('in-costo-wrap'), pw = document.getElementById('in-proveedor-wrap');
