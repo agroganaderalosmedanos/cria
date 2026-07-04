@@ -217,11 +217,15 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 .mobile-menu-btn { display: none; background: none; border: none; font-size: 20px; cursor: pointer; padding: 4px 8px; }
 
 @media print {
-  .sidebar, .topbar, .btn { display: none !important; }
+  .sidebar, .topbar, .btn, .no-print { display: none !important; }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
   body { background: #fff !important; }
   .app-shell { display: block !important; }
+  .content { padding: 0 !important; }
+  .panel { box-shadow: none !important; border: 1px solid #ddd3c0 !important; page-break-inside: avoid; }
+  .print-cover { display: flex !important; }
 }
+.print-cover { display: none; }
 </style>
 </head>
 <body>
@@ -8694,21 +8698,21 @@ function buildMargenBruto() {
     return '$ '+fn(Math.round(v||0));
   }
 
-  let h = `<div class="page-header">
+  let h = `<div class="page-header no-print">
     <div class="page-title">📊 Margen Bruto Ganadero</div>
     <div class="page-sub">Resultado económico consolidado de las tres actividades</div>
   </div>`;
 
   const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
-  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
+  h += `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
-  h += `<button onclick="S.margenBrutoMoneda=S.margenBrutoMoneda==='USD'?'ARS':'USD';render()"
+  h += `<button class="no-print" onclick="S.margenBrutoMoneda=S.margenBrutoMoneda==='USD'?'ARS':'USD';render()"
     style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
     💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
   </button></div>`;
 
   // Filtro: fecha de corte global (única, funcional)
-  h += `<div class="panel" style="padding:14px 16px;margin-bottom:16px">
+  h += `<div class="panel no-print" style="padding:14px 16px;margin-bottom:16px">
     <div class="fgrid" style="margin:0;align-items:flex-end">
       <div class="fg">
         <label>Fecha de corte <span style="font-size:11px;color:var(--text3)">(aplica a Cría, Recría y Terminación por igual)</span></label>
@@ -8851,7 +8855,21 @@ function buildMargenBruto() {
     donaSvg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="15" fill="var(--text)" font-weight="800">${fmMB(ingTotal)}</text>`;
     donaSvg += `</svg>`;
 
-    h += `<div style="background:linear-gradient(135deg,var(--sidebar-bg),#2d4020);border-radius:16px;padding:28px 32px;margin-bottom:20px;color:#f3efe6;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap">
+    h += `<div class="print-cover" style="flex-direction:column;border-bottom:4px solid #2f6b3f;padding-bottom:22px;margin-bottom:26px;page-break-after:avoid">
+      <div style="display:flex;align-items:center;gap:18px;margin-bottom:14px">
+        <img src="https://agroganaderalosmedanos.github.io/isologo.png" style="width:64px;height:64px;object-fit:contain">
+        <div>
+          <div style="font-family:'Aptos','Calibri','Segoe UI',-apple-system,sans-serif;font-size:26px;font-weight:800;letter-spacing:.01em;color:#1f2a17">AGROGANADERA LOS MÉDANOS</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#b8860b;margin-top:2px">Margen Bruto Ganadero</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:#6b6357">
+        <span>Informe consolidado · Cría · Recría · Terminación</span>
+        <span>Resultado al <strong style="color:#2b261f">${fd(corteGlobal)}</strong> · Moneda: <strong style="color:#2b261f">${moneda}</strong></span>
+      </div>
+    </div>`;
+
+    h += `<div class="no-print" style="background:linear-gradient(135deg,var(--sidebar-bg),#2d4020);border-radius:16px;padding:28px 32px;margin-bottom:20px;color:#f3efe6;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap">
       <div>
         <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:0.75;margin-bottom:6px">Informe ejecutivo · Agroganadera Los Médanos</div>
         <div style="font-size:22px;font-weight:800;margin-bottom:2px">Resultado consolidado al ${fd(corteGlobal)}</div>
@@ -9035,6 +9053,10 @@ function buildMargenBruto() {
     h += `<div class="panel" style="background:linear-gradient(135deg,var(--bg2),var(--bg))">
       <div class="panel-title">🧭 Análisis</div>
       <div style="font-size:14px;line-height:1.7;color:var(--text2)">${narrativa}</div>
+    </div>`;
+
+    h += `<div class="print-cover" style="flex-direction:column;border-top:2px solid #ddd3c0;margin-top:24px;padding-top:12px;font-size:11px;color:#a39a89;text-align:center">
+      <div>Agroganadera Los Médanos · Informe generado el ${fd(today())} · Uso interno y para inversores</div>
     </div>`;
 
     return h;
