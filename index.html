@@ -7983,7 +7983,14 @@ window.actualizarFiltroCampoHistorial_ = function() {
 window.renderInsumosHistorialFiltrado = function() {
   const productoFiltro   = document.getElementById('in-hist-filtro-producto')?.value || '';
   const categoriaFiltro  = document.getElementById('in-hist-filtro-categoria')?.value || '';
-  const campoFiltro      = document.getElementById('in-hist-filtro-campo')?.value || '';
+  let campoFiltro = document.getElementById('in-hist-filtro-campo')?.value || '';
+  // Blindaje: si el valor del selector de Campo no corresponde a ningún campo_id
+  // real (por ejemplo, si el navegador mostró/guardó un valor corrompido en vez
+  // del esperado), no lo uses como filtro — de lo contrario, comparar contra un
+  // valor imposible vacía la tabla entera en silencio, sin ningún aviso.
+  if (campoFiltro && !((S.catalogs && S.catalogs.campos) || []).some(c => String(c.campo_id) === String(campoFiltro))) {
+    campoFiltro = '';
+  }
   const rodeoFiltro      = document.getElementById('in-hist-filtro-rodeo')?.value || '';
   const desde = document.getElementById('in-hist-desde')?.value || '';
   const hasta = document.getElementById('in-hist-hasta')?.value || '';
