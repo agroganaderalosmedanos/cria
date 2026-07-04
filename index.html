@@ -11901,6 +11901,14 @@ function attachTableDeleteEvents(entity, idCol) {
         const ENTIDADES_AFECTAN_DASHBOARD_ = ['servicios', 'tactos', 'pariciones', 'destetes', 'abortos', 'mortandad'];
         if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) { await loadDashboard(); }
         if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
+        if (entity === 'pariciones') {
+          // El backend borra en cascada el Movimiento (Saldo inicial) asociado a
+          // los terneros nacidos de esta parición — hay que refrescar movimientos
+          // y stock acá también, para que no quede desactualizado en el navegador.
+          invalidateCache('movimientos');
+          await loadEntity('movimientos', true);
+          S.stock = null; await loadStock();
+        }
         if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
         if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
         if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
