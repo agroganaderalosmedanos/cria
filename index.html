@@ -1802,12 +1802,18 @@ function buildDashboard() {
   const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
 
+  // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio,
+  // que muestra la Existencia tanto en cabezas como en importe.
+  const eiCabCria = saldosIniciales.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const efCabCria = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
+
   // Guardar resultados para que Resultados Económicos los lea directamente
   S._resultCria = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria,
     ei: totalSaldoInicial, compras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria,
     cantVentas: ventasCria.length,
+    eiCab: eiCabCria, efCab: efCabCria,
   };
 
   // ── RENDER ──────────────────────────────────────────────────────────
@@ -3994,11 +4000,18 @@ function buildRecriaDashboard() {
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
 
+  // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio.
+  const eiCabRecria = movs
+    .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
+    .reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const efCabRecria = stockDetalleRec_.reduce((s,r) => s+(Number(r.stock)||0), 0);
+
   // Guardar resultados para Resultados Económicos
   S._resultRecria = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas, ingCesEng: ingCesionEng, ef: stockValRecria,
     ei: egEI, egCesionCria, egCompraExt: egCompraExterna, egAlim, egVet, egSueldos,
+    eiCab: eiCabRecria, efCab: efCabRecria,
   };
   const mc = margen>=0?'var(--green)':'var(--red)';
   const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
@@ -5990,12 +6003,17 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalEgresos = totalSaldoIni + totalCesiones + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
   const margen = totalIngresos - totalEgresos;
 
+  // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio.
+  const eiCabEng = saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const efCabEng = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
+
   // Guardar resultados para Resultados Económicos
   S._resultEng = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas: totalVentas, ef: stockValEng,
     ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras,
     egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng,
+    eiCab: eiCabEng, efCab: efCabEng,
   };
   const margenColor = margen>=0 ? 'var(--green)' : 'var(--red)';
   const margenBg    = margen>=0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
@@ -8761,18 +8779,38 @@ function buildMargenBruto() {
       { nombre: 'Terminación', ing: rEng.ing,  eg: rEng.eg,  margen: rEng.margen,  color: 'var(--clay)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--clay').trim()||'#a8512f', emoji: '🏭' },
     ];
     const margenPct = ingTotal>0 ? (marTotal/ingTotal*100) : 0;
+    const uidCh = 'ch'+Math.random().toString(36).slice(2,8);
 
-    // ── Gráfico de barras: Utilidad por actividad ──────────────────────────
+    // ── Gráfico de barras: Utilidad por actividad (gradientes + grilla) ────
     const maxAbsMargen = Math.max(1, ...acts.map(a=>Math.abs(a.margen)));
     const barW = 130, barGap = 55, chartH = 220, baseY = 240, chartW = acts.length*(barW+barGap)+barGap;
     let barsSvg = `<svg viewBox="0 0 ${chartW} 300" style="width:100%;height:auto;max-width:520px">`;
+    barsSvg += `<defs>`;
+    acts.forEach((a,i)=>{
+      barsSvg += `<linearGradient id="gradBar${uidCh}${i}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${a.colorHex}" stop-opacity="1"/>
+        <stop offset="100%" stop-color="${a.colorHex}" stop-opacity="0.62"/>
+      </linearGradient>`;
+    });
+    barsSvg += `<linearGradient id="gradBarNeg${uidCh}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#c8433a" stop-opacity="0.78"/>
+        <stop offset="100%" stop-color="#b3261e" stop-opacity="1"/>
+      </linearGradient>
+      <filter id="softShadowBar${uidCh}" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.18"/>
+      </filter>
+    </defs>`;
+    for (let g=1; g<=3; g++) {
+      const gy = baseY - (chartH*g/3);
+      barsSvg += `<line x1="0" y1="${gy}" x2="${chartW}" y2="${gy}" stroke="var(--border2)" stroke-width="1" stroke-dasharray="3,4" opacity="0.5"/>`;
+    }
     barsSvg += `<line x1="0" y1="${baseY}" x2="${chartW}" y2="${baseY}" stroke="var(--border2)" stroke-width="1.5"/>`;
     acts.forEach((a,i)=>{
       const x = barGap + i*(barW+barGap);
       const h = Math.round(Math.abs(a.margen)/maxAbsMargen*chartH);
       const y = a.margen>=0 ? baseY-h : baseY;
-      const barColor = a.margen>=0 ? a.colorHex : '#b3261e';
-      barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="6" fill="${barColor}" opacity="0.92"/>`;
+      const fillUrl = a.margen>=0 ? `url(#gradBar${uidCh}${i})` : `url(#gradBarNeg${uidCh})`;
+      barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="8" fill="${fillUrl}" filter="url(#softShadowBar${uidCh})"/>`;
       barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-10:y+h+22}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</text>`;
       barsSvg += `<text x="${x+barW/2}" y="${baseY+26}" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text2)">${a.emoji} ${a.nombre}</text>`;
     });
@@ -8781,21 +8819,33 @@ function buildMargenBruto() {
     // ── Gráfico de dona: participación de cada actividad en los ingresos ───
     const totalIngDona = acts.reduce((s,a)=>s+Math.max(a.ing,0),0) || 1;
     const cx=110, cy=110, rOut=95, rIn=58;
+    const gapDeg = 3; // separación visual entre segmentos
     let anguloAcum = -90; // empezar arriba
     let donaSvg = `<svg viewBox="0 0 220 220" style="width:100%;height:auto;max-width:230px">`;
-    acts.forEach(a=>{
+    donaSvg += `<defs>`;
+    acts.forEach((a,i)=>{
+      donaSvg += `<linearGradient id="gradDona${uidCh}${i}" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="${a.colorHex}" stop-opacity="1"/>
+        <stop offset="100%" stop-color="${a.colorHex}" stop-opacity="0.7"/>
+      </linearGradient>`;
+    });
+    donaSvg += `<filter id="softShadowDona${uidCh}" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.15"/>
+      </filter>
+    </defs>`;
+    acts.forEach((a,i)=>{
       const frac = Math.max(a.ing,0)/totalIngDona;
       if (frac<=0) return;
-      const anguloIni = anguloAcum;
-      const anguloFin = anguloAcum + frac*360;
-      anguloAcum = anguloFin;
+      const anguloIni = anguloAcum + (frac*360>gapDeg ? gapDeg/2 : 0);
+      const anguloFin = anguloAcum + frac*360 - (frac*360>gapDeg ? gapDeg/2 : 0);
+      anguloAcum += frac*360;
       const rad = g => g*Math.PI/180;
       const x1o=cx+rOut*Math.cos(rad(anguloIni)), y1o=cy+rOut*Math.sin(rad(anguloIni));
       const x2o=cx+rOut*Math.cos(rad(anguloFin)), y2o=cy+rOut*Math.sin(rad(anguloFin));
       const x1i=cx+rIn*Math.cos(rad(anguloFin)),  y1i=cy+rIn*Math.sin(rad(anguloFin));
       const x2i=cx+rIn*Math.cos(rad(anguloIni)),  y2i=cy+rIn*Math.sin(rad(anguloIni));
       const largeArc = (anguloFin-anguloIni)>180?1:0;
-      donaSvg += `<path d="M${x1o},${y1o} A${rOut},${rOut} 0 ${largeArc} 1 ${x2o},${y2o} L${x1i},${y1i} A${rIn},${rIn} 0 ${largeArc} 0 ${x2i},${y2i} Z" fill="${a.colorHex}" opacity="0.92"/>`;
+      donaSvg += `<path d="M${x1o},${y1o} A${rOut},${rOut} 0 ${largeArc} 1 ${x2o},${y2o} L${x1i},${y1i} A${rIn},${rIn} 0 ${largeArc} 0 ${x2i},${y2i} Z" fill="url(#gradDona${uidCh}${i})" filter="url(#softShadowDona${uidCh})"/>`;
     });
     donaSvg += `<text x="${cx}" y="${cy-6}" text-anchor="middle" font-size="12" fill="var(--text3)" font-weight="600">INGRESOS</text>`;
     donaSvg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="15" fill="var(--text)" font-weight="800">${fmMB(ingTotal)}</text>`;
@@ -8876,6 +8926,117 @@ function buildMargenBruto() {
         </tr>
       </tbody></table>
     </div>`;
+
+    // ── EXISTENCIAS (EI/EF consolidado — cabezas e importe) ────────────────
+    const eiCabTotal = (rCria.detalle.eiCab||0) + (rRec.detalle.eiCab||0) + (rEng.detalle.eiCab||0);
+    const efCabTotal = (rCria.detalle.efCab||0) + (rRec.detalle.efCab||0) + (rEng.detalle.efCab||0);
+    const eiImpTotal = (rCria.detalle.ei||0) + (rRec.detalle.ei||0) + (rEng.detalle.ei||0);
+    const efImpTotal = (rCria.detalle.ef||0) + (rRec.detalle.ef||0) + (rEng.detalle.ef||0);
+    const deltaCab = efCabTotal - eiCabTotal;
+    const deltaCabPct = eiCabTotal>0 ? (deltaCab/eiCabTotal*100) : null;
+    const deltaImp = efImpTotal - eiImpTotal;
+    const deltaColor = deltaCab>=0 ? 'var(--green-text)' : 'var(--red-text)';
+    const uidChart = 'mb'+Math.random().toString(36).slice(2,8);
+
+    const maxCab = Math.max(1, eiCabTotal, efCabTotal);
+    const cbW=110, cbGap=70, cbH=170, cbBase=200, cbChartW = cbGap*3+cbW*2;
+    const hEI = Math.round(eiCabTotal/maxCab*cbH), hEF = Math.round(efCabTotal/maxCab*cbH);
+    const xEI = cbGap, xEF = cbGap*2+cbW;
+    let existSvg = `<svg viewBox="0 0 ${cbChartW} 240" style="width:100%;height:auto;max-width:300px">
+      <defs>
+        <linearGradient id="gradEI${uidChart}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--gold)" stop-opacity="1"/><stop offset="100%" stop-color="var(--gold)" stop-opacity="0.55"/>
+        </linearGradient>
+        <linearGradient id="gradEF${uidChart}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--green)" stop-opacity="1"/><stop offset="100%" stop-color="var(--green)" stop-opacity="0.55"/>
+        </linearGradient>
+        <filter id="softShadowEx${uidChart}" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.18"/>
+        </filter>
+      </defs>
+      <line x1="0" y1="${cbBase}" x2="${cbChartW}" y2="${cbBase}" stroke="var(--border2)" stroke-width="1.5"/>
+      <rect x="${xEI}" y="${cbBase-hEI}" width="${cbW}" height="${Math.max(hEI,2)}" rx="8" fill="url(#gradEI${uidChart})" filter="url(#softShadowEx${uidChart})"/>
+      <text x="${xEI+cbW/2}" y="${cbBase-hEI-12}" text-anchor="middle" font-size="18" font-weight="800" fill="var(--text)">${fn(eiCabTotal)}</text>
+      <text x="${xEI+cbW/2}" y="${cbBase+24}" text-anchor="middle" font-size="13" font-weight="600" fill="var(--text2)">Existencia inicial</text>
+      <rect x="${xEF}" y="${cbBase-hEF}" width="${cbW}" height="${Math.max(hEF,2)}" rx="8" fill="url(#gradEF${uidChart})" filter="url(#softShadowEx${uidChart})"/>
+      <text x="${xEF+cbW/2}" y="${cbBase-hEF-12}" text-anchor="middle" font-size="18" font-weight="800" fill="var(--text)">${fn(efCabTotal)}</text>
+      <text x="${xEF+cbW/2}" y="${cbBase+24}" text-anchor="middle" font-size="13" font-weight="600" fill="var(--text2)">Existencia final</text>
+    </svg>`;
+
+    h += `<div style="display:grid;grid-template-columns:1fr 1.2fr;gap:16px;margin-bottom:20px;align-items:stretch">
+      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
+        <div class="panel-title">🐄 Existencia — cabezas</div>
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;padding-top:4px">${existSvg}</div>
+        <div style="text-align:center;font-size:13px;color:${deltaColor};font-weight:700;margin-top:4px">
+          ${deltaCab>=0?'▲':'▼'} ${fn(Math.abs(deltaCab))} cabezas ${deltaCabPct!==null?`(${deltaCabPct>=0?'+':''}${deltaCabPct.toFixed(1)}%)`:''}
+        </div>
+      </div>
+      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column;justify-content:center">
+        <div class="panel-title">💰 Existencia — importe</div>
+        <table class="dt"><thead><tr><th></th><th class="tc">Cabezas</th><th class="tc">Importe</th></tr></thead><tbody>
+          <tr><td style="font-weight:600">Existencia inicial (EI)</td><td class="tc">${fn(eiCabTotal)}</td><td class="tc">${fmMB(eiImpTotal)}</td></tr>
+          <tr><td style="font-weight:600">Existencia final (EF)</td><td class="tc">${fn(efCabTotal)}</td><td class="tc">${fmMB(efImpTotal)}</td></tr>
+          <tr style="background:var(--bg2);font-weight:800">
+            <td>Variación</td>
+            <td class="tc" style="color:${deltaColor}">${deltaCab>=0?'+':''}${fn(deltaCab)}</td>
+            <td class="tc" style="color:${deltaColor}">${deltaImp>=0?'+':''}${fmMB(Math.abs(deltaImp))}</td>
+          </tr>
+        </tbody></table>
+      </div>
+    </div>`;
+
+    // ── INDICADORES PRODUCTIVOS Y SANITARIOS ───────────────────────────────
+    const pariciones = S.cache.pariciones || [];
+    const pariVivosTot = pariciones.reduce((s,p)=>s+(Number(p.nacidos_vivos)||0),0);
+    const pariMuertosTot = pariciones.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
+
+    const rodeosEngGDP = rodeosEngordeValidos_();
+    const gdpsRep = [];
+    rodeosEngGDP.forEach(r => { const g = egGanDiaria_(r.rodeo_id); if (g!==null && g!==undefined && !isNaN(g)) gdpsRep.push(g); });
+    const gdpPromRep = gdpsRep.length ? gdpsRep.reduce((s,v)=>s+v,0)/gdpsRep.length : null;
+    const efCabEng = rEng.detalle.efCab||0;
+
+    function tarjetaInd_(icono, label, valor, sub, color) {
+      return `<div style="background:var(--bg2);border-radius:10px;padding:14px 16px;flex:1;min-width:140px">
+        <div style="font-size:20px;margin-bottom:4px">${icono}</div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.03em">${label}</div>
+        <div style="font-size:20px;font-weight:800;margin-top:4px;color:${color||'var(--text)'}">${valor}</div>
+        ${sub?`<div style="font-size:11px;color:var(--text3);margin-top:2px">${sub}</div>`:''}
+      </div>`;
+    }
+
+    h += `<div class="panel">
+      <div class="panel-title">🩺 Indicadores productivos y sanitarios</div>
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        ${tarjetaInd_('✦','Pariciones (vivos)', fn(pariVivosTot), pariMuertosTot>0?`${fn(pariMuertosTot)} nacidos muertos`:'Sin nacidos muertos')}
+        ${tarjetaInd_('💀','Mortandad', fn(mortTot)+' cab.', mortTot>0?'Cría · Recría · Terminación':'Sin bajas registradas', mortTot>0?'var(--red-text)':'var(--green-text)')}
+        ${tarjetaInd_('⊘','Abortos', fn(abortTot), abortTot>0?'Cría · Recría':'Sin abortos registrados', abortTot>0?'var(--clay-text)':'var(--green-text)')}
+        ${tarjetaInd_('⚖','GDP Terminación', gdpPromRep!==null?fn(gdpPromRep,3)+' kg/día':'—', gdpPromRep!==null?`Promedio ${rodeosEngGDP.length} corrales`:'Sin pesadas suficientes')}
+        ${tarjetaInd_('🏭','Existencia en Terminación', fn(efCabEng)+' cab.', 'Al '+fd(corteGlobal))}
+      </div>
+    </div>`;
+
+    // ── ANÁLISIS ────────────────────────────────────────────────────────
+    const actsOrdenadas = acts.slice().sort((a,b)=>b.margen-a.margen);
+    const mejorAct = actsOrdenadas[0];
+    const peorAct  = actsOrdenadas[actsOrdenadas.length-1];
+    const tendenciaTxt = deltaCab>0
+      ? `la existencia total de hacienda creció ${fn(deltaCab)} cabezas (${deltaCabPct!==null?deltaCabPct.toFixed(1):'—'}%) respecto del inicio del período`
+      : deltaCab<0
+        ? `la existencia total de hacienda se redujo en ${fn(Math.abs(deltaCab))} cabezas (${deltaCabPct!==null?Math.abs(deltaCabPct).toFixed(1):'—'}%) respecto del inicio del período`
+        : `la existencia total de hacienda se mantuvo estable respecto del inicio del período`;
+    const sanidadTxt = (mortTot>0||abortTot>0)
+      ? `En materia sanitaria se registraron ${mortTot>0?fn(mortTot)+' bajas por mortandad':''}${mortTot>0&&abortTot>0?' y ':''}${abortTot>0?fn(abortTot)+' abortos':''}, un punto a monitorear de cerca.`
+      : `No se registraron pérdidas por mortandad ni abortos en el período, un resultado sanitario sólido.`;
+    const gdpTxt = gdpPromRep!==null ? ` En Terminación, la ganancia diaria de peso promedio fue de ${fn(gdpPromRep,3)} kg/día.` : '';
+
+    const narrativa = `Al ${fd(corteGlobal)}, el resultado consolidado de Agroganadera Los Médanos arroja una utilidad ${marTotal>=0?'':'negativa '}de ${fmMB(Math.abs(marTotal))} sobre ingresos totales de ${fmMB(ingTotal)}, equivalente a un margen del ${margenPct.toFixed(1)}% sobre ingresos. ${mejorAct.emoji} ${mejorAct.nombre} fue la actividad más rentable del período con ${fmMB(mejorAct.margen)}${peorAct.margen<0?`, mientras que ${peorAct.emoji} ${peorAct.nombre} cerró con un resultado negativo de ${fmMB(Math.abs(peorAct.margen))}`:''}. En cuanto a la hacienda, ${tendenciaTxt}, con ${fn(pariVivosTot)} nacimientos vivos registrados en el período${pariMuertosTot>0?` (y ${fn(pariMuertosTot)} nacidos muertos)`:''}. ${sanidadTxt}${gdpTxt}`;
+
+    h += `<div class="panel" style="background:linear-gradient(135deg,var(--bg2),var(--bg))">
+      <div class="panel-title">🧭 Análisis</div>
+      <div style="font-size:14px;line-height:1.7;color:var(--text2)">${narrativa}</div>
+    </div>`;
+
     return h;
   }
 
