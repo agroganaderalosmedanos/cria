@@ -2002,10 +2002,13 @@ function buildDashboard() {
     }
   });
 
-  // 4. Sueldos imputados a Cría (filtrado por campo si corresponde)
-  const totalSueldosCria = campSelecField
-    ? sueldoTotalActividad_('cria', s => String(s.campo_id) === String(campSelecField))
-    : sueldoTotalActividad_('cria');
+  // 4. Sueldos imputados a Cría (filtrado por campo si corresponde, y por fecha de
+  // corte — antes sumaba TODOS los sueldos cargados alguna vez, de cualquier mes
+  // o año, igual que Compras/Alimentación/Veterinaria deben respetar el corte).
+  const totalSueldosCria = sueldoTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) <= corteCria.slice(0,7)
+  );
 
   const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
@@ -4231,9 +4234,14 @@ function buildRecriaDashboard() {
     }
   });
 
-  // 4. Sueldos prorrateados a Recría
-  let egSueldos = 0;
-  (S.cache.sueldos||[]).forEach(s=>{ egSueldos += (Number(s.monto)||0)*(Number(s.dist_recria)||0)/100; });
+  // 4. Sueldos prorrateados a Recría — antes este cálculo solo miraba dist_recria
+  // cargado a mano en cada sueldo, ignorando la distribución base por campo cuando
+  // no había override, y sumaba TODOS los campos y TODOS los meses sin filtrar
+  // (mismo bug que tenía Cría, más este otro: no usaba el fallback a distEfectiva_).
+  const egSueldos = sueldoTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
+  );
 
   // 5. Stock inicial (EI) — saldos iniciales de rodeos de Recría
   const egEI = movs
@@ -6296,8 +6304,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     else                                                { totalOtros+=importe; detalleOtrosEng.push(row); }
   });
 
-  // Sueldos
-  const totalSueldosEng = sueldoTotalActividad_('engorde', campSelecField ? s=>String(s.campo_id)===String(campSelecField) : null);
+  // Sueldos (filtrado por campo si corresponde, y por fecha de corte — ver nota
+  // en Cría sobre el mismo bug: antes sumaba todos los sueldos de cualquier mes/año)
+  const totalSueldosEng = sueldoTotalActividad_('engorde', s =>
+    (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
+    String(s.periodo).slice(0,7) <= corteEng.slice(0,7)
+  );
 
   const totalEgresos = totalSaldoIni + totalCesiones + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
   const margen = totalIngresos - totalEgresos;
@@ -6684,7 +6696,10 @@ function buildEngordeCostos_(rodeoId, fm) {
     const cantCesionesTotal2 = cesiones2.length + cesionesRecLegacy2.length;
 
     const totalIngresos = totalVentas + totalStock;
-    const totalSueldosEngCostos = sueldoTotalActividad_('engorde', campFiltro ? s=>String(s.campo_id)===String(campFiltro) : null);
+    const totalSueldosEngCostos = sueldoTotalActividad_('engorde', s =>
+      (!campFiltro || String(s.campo_id)===String(campFiltro)) &&
+      String(s.periodo).slice(0,7) <= corteCostos.slice(0,7)
+    );
     const totalEgresos  = totalSaldoIni + totalCesiones2 + totalAlim + totalVeter + totalSueldosEngCostos;
     const margen = totalIngresos - totalEgresos;
     const mc = margen>=0?'var(--green)':'var(--red)';
@@ -6824,7 +6839,10 @@ function buildEngordeCostos_(rodeoId, fm) {
   // costo de sueldos en la ficha de ESTE corral, se prorratea el sueldo de Engorde
   // del campo según la proporción de animales ingresados de este corral sobre el total
   // de animales ingresados a Engorde en ese mismo campo (mismo criterio para todos los corrales).
-  const sueldoEngordeCampo = sueldoTotalActividad_('engorde', s => String(s.campo_id) === String(r.campo_id));
+  const sueldoEngordeCampo = sueldoTotalActividad_('engorde', s =>
+    String(s.campo_id) === String(r.campo_id) &&
+    String(s.periodo).slice(0,7) <= String(corteCostosUno).slice(0,7)
+  );
   const corralesDelMismoCampo = rodeosEngordeValidos_().filter(rr => String(rr.campo_id) === String(r.campo_id));
   const totalAnimEngCampo = corralesDelMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
   const sueldoProrrateado = totalAnimEngCampo > 0 ? sueldoEngordeCampo * (cantIng / totalAnimEngCampo) : 0;
@@ -8722,7 +8740,7 @@ function calcMargenCria_(campana, desde, hasta) {
     if (prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo;
   });
 
-  const egSueldos = sueldoTotalActividad_('cria');
+  const egSueldos = sueldoTotalActividad_('cria', s => !hasta || String(s.periodo).slice(0,7) <= String(hasta).slice(0,7));
   const eg = ei + compras + egAlim + egVet + egSueldos;
   const margen = ing - eg;
 
@@ -8856,7 +8874,7 @@ function calcMargenRecria_(campana, desde, hasta) {
     total: (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0),
   }));
 
-  const egSueldos=sueldoTotalActividad_('recria');
+  const egSueldos=sueldoTotalActividad_('recria', s => !hasta || String(s.periodo).slice(0,7) <= String(hasta).slice(0,7));
   const eg=ei+egCesionCria+egCompraExt+egAlim+egVet+egSueldos;
   return { ing, eg, margen: ing-eg, detalle: { ingVentas, ingCesEng, ef, ei, egCesionCria, egCompraExt, egAlim, egVet, egSueldos, filasEI: filasEI_R, filasEF: filasEF_R, filesCesRec: filasCesRec_R, filesCesEnv: filasCesEng_R } };
 }
@@ -8939,7 +8957,7 @@ function calcMargenTerminacion_(campana, desde, hasta) {
     if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo;
   });
 
-  const egSueldos=sueldoTotalActividad_('engorde');
+  const egSueldos=sueldoTotalActividad_('engorde', s => !hasta || String(s.periodo).slice(0,7) <= String(hasta).slice(0,7));
   const eg=ei+egCesionRec+egCompra+egAlim+egVet+egSueldos;
   return { ing, eg, margen: ing-eg, detalle: { ingVentas, ef, ei, egCesionRec, egCompra, egAlim, egVet, egSueldos, filasEI: filasEI_E, filasEF: filasEF_E, filesCesRec: filasCesRec_E } };
 }
