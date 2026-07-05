@@ -10088,7 +10088,11 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
         });
       }
     });
-    fila.sf = fila.si + fila.compras + fila.nacimientos + fila.traslados_e - fila.ventas - fila.muertes - fila.destetes - fila.traslados_s + fila.ajustes;
+    // Nota: los nacimientos NO se suman al stock final del rodeo donde se registró
+    // la parición (rodeo de la vaca) — los terneros nacidos ya se acreditan aparte,
+    // vía el "Saldo inicial" que registrarParicionConTerneros() crea en el rodeo de
+    // terneros. Sumarlos acá también duplicaba esas cabezas en el stock total.
+    fila.sf = fila.si + fila.compras + fila.traslados_e - fila.ventas - fila.muertes - fila.destetes - fila.traslados_s + fila.ajustes;
     result[cat] = fila;
   });
   return { filas: result, meses };
@@ -10117,7 +10121,7 @@ function buildStockHaciendaTable_(data, desde, hasta, campoLabel, mensual) {
       var stockAcum = f.si;
       meses.forEach(function(m){
         var mm = f.meses[m];
-        stockAcum += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+        stockAcum += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
         tbody += '<td class="tc" style="font-weight:600;color:var(--green-text)">' + fn(stockAcum,0) + '</td>';
       });
     } else {
@@ -10143,7 +10147,7 @@ function buildStockHaciendaTable_(data, desde, hasta, campoLabel, mensual) {
         var stockAcum = f.si;
         meses.slice(0, meses.indexOf(mes)+1).forEach(function(m) {
           var mm = f.meses[m];
-          stockAcum += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+          stockAcum += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
         });
         totalCierre += stockAcum;
       });
@@ -10188,7 +10192,7 @@ function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
         var stockAcumXlsx = f.si;
         meses.forEach(function(m){
           var mm = f.meses[m];
-          stockAcumXlsx += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+          stockAcumXlsx += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
           row.push(stockAcumXlsx);
         });
       } else {
@@ -10208,7 +10212,7 @@ function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
           var sa = f2.si;
           meses.slice(0, meses.indexOf(mes)+1).forEach(function(m) {
             var mm = f2.meses && f2.meses[m];
-            if (mm) sa += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+            if (mm) sa += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
           });
           totalCierreXlsx += sa;
         });
