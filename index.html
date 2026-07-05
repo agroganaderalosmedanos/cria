@@ -9022,11 +9022,11 @@ function buildMargenBruto() {
     const totPrenadas = kpiGeneral && kpiGeneral.servicio ? (kpiGeneral.servicio.total_prenadas||0) : 0;
 
     function tarjetaInd_(icono, label, valor, sub, color) {
-      return `<div style="background:var(--bg2);border-radius:10px;padding:14px 16px;flex:1;min-width:140px">
-        <div style="font-size:20px;margin-bottom:4px">${icono}</div>
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.03em">${label}</div>
-        <div style="font-size:20px;font-weight:800;margin-top:4px;color:${color||'var(--text)'}">${valor}</div>
-        ${sub?`<div style="font-size:11px;color:var(--text3);margin-top:2px">${sub}</div>`:''}
+      return `<div style="background:var(--bg2);border-radius:8px;padding:10px 12px;flex:1;min-width:120px">
+        <div style="font-size:15px;margin-bottom:2px">${icono}</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.03em">${label}</div>
+        <div style="font-size:16px;font-weight:800;margin-top:2px;color:${color||'var(--text)'}">${valor}</div>
+        ${sub?`<div style="font-size:10px;color:var(--text3);margin-top:2px;line-height:1.4">${sub}</div>`:''}
       </div>`;
     }
 
@@ -12428,4 +12428,3 @@ loginRequired(session => {
 </script>
 </body>
 </html>
-<!-- refresh -->
