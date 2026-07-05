@@ -9019,6 +9019,7 @@ function buildMargenBruto() {
 
     const kpiGeneral = S.dashboard && S.dashboard.general;
     const indicePrenez = kpiGeneral && kpiGeneral.servicio ? kpiGeneral.servicio.indice_prenez : null;
+    const totPrenadas = kpiGeneral && kpiGeneral.servicio ? (kpiGeneral.servicio.total_prenadas||0) : 0;
 
     function tarjetaInd_(icono, label, valor, sub, color) {
       return `<div style="background:var(--bg2);border-radius:10px;padding:14px 16px;flex:1;min-width:140px">
@@ -9034,8 +9035,14 @@ function buildMargenBruto() {
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         ${tarjetaInd_('🐮','Índice de preñez', indicePrenez!==null&&indicePrenez!==undefined?indicePrenez+'%':'—', 'Global de servicio')}
         ${tarjetaInd_('✦','Pariciones (vivos)', fn(pariVivosTot), pariMuertosTot>0?`${fn(pariMuertosTot)} nacidos muertos`:'Sin nacidos muertos')}
-        ${tarjetaInd_('💀','Mortandad', fn(mortTot)+' cab.', mortTot>0?'Cría · Recría · Terminación':'Sin bajas registradas', mortTot>0?'var(--red-text)':'var(--green-text)')}
-        ${tarjetaInd_('⊘','Abortos', fn(abortTot), abortTot>0?'Cría · Recría':'Sin abortos registrados', abortTot>0?'var(--clay-text)':'var(--green-text)')}
+        ${tarjetaInd_('💀','Mortandad', fn(mortTot)+' cab.',
+            (mortTot>0?'Cría · Recría · Terminación':'Sin bajas registradas') +
+            `<br><span style="font-size:10px;opacity:.8">sobre Exist. Final: ${fn(efCabTotal)} cab.</span>`,
+            mortTot>0?'var(--red-text)':'var(--green-text)')}
+        ${tarjetaInd_('⊘','Abortos', fn(abortTot),
+            (abortTot>0?'Cría · Recría':'Sin abortos registrados') +
+            (totPrenadas>0?`<br><span style="font-size:10px;opacity:.8">sobre ${fn(totPrenadas)} preñadas (vaca+vaquillona)</span>`:''),
+            abortTot>0?'var(--clay-text)':'var(--green-text)')}
         ${tarjetaInd_('⚖','GDP Terminación', gdpPromRep!==null?fn(gdpPromRep,3)+' kg/día':'—', gdpPromRep!==null?`Promedio ${rodeosEngGDP.length} corrales`:'Sin pesadas suficientes')}
         ${tarjetaInd_('🏭','Existencia en Terminación', fn(efCabEng)+' cab.', 'Al '+fd(corteGlobal))}
       </div>
@@ -9049,7 +9056,27 @@ function buildMargenBruto() {
     let ventasCatRows = [];
     try {
       const dataCat = calcStockHacienda_('2000-01-01', corteGlobal, null, false);
-      ventasCatRows = Object.values(dataCat.filas)
+      // Los rodeos "X venta" (ej. "Vaca venta") son un bucket logístico para
+      // hacienda que ya está separada para la venta — pertenecen a la misma
+      // categoría de origen (Vaca) y hay que sumarlos ahí, si no la Existencia
+      // Inicial de esa categoría queda artificialmente baja (esos rodeos casi
+      // no tienen Saldo Inicial propio, entran por traslado interno) y el %
+      // sobre EI sale disparatado (ej. mil %) o sin EI para asignar.
+      const CATSKNOWN = ['Toro','Vaca','Vaquillona','Vaquillona proximo servicio','Vaquilloncita','Novillito','Ternero','Ternera','Novillo'];
+      const mergedCat = {};
+      Object.values(dataCat.filas).forEach(f => {
+        let key = f.categoria;
+        const low = key.toLowerCase();
+        if (low.indexOf('venta') !== -1) {
+          const base = low.replace(/venta/g,'').trim();
+          const match = CATSKNOWN.find(c => c.toLowerCase() === base);
+          key = match || (base.charAt(0).toUpperCase()+base.slice(1));
+        }
+        if (!mergedCat[key]) mergedCat[key] = { categoria: key, ventas:0, si:0 };
+        mergedCat[key].ventas += f.ventas;
+        mergedCat[key].si += f.si;
+      });
+      ventasCatRows = Object.values(mergedCat)
         .filter(f => f.ventas > 0)
         .map(f => ({ categoria: f.categoria, ventas: f.ventas, si: f.si, pct: f.si>0 ? (f.ventas/f.si*100) : null }))
         .sort((a,b)=>b.ventas-a.ventas);
@@ -9074,6 +9101,7 @@ function buildMargenBruto() {
             <td class="tc">${totSICat>0?(totVentasCat/totSICat*100).toFixed(1)+'%':'—'}</td>
           </tr>
         </tbody></table>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px">Solo se listan categorías con al menos una venta en el período — por eso la Existencia Inicial de esta tabla (${fn(totSICat)}) es menor a la Existencia Inicial total del rodeo (${fn(eiCabTotal)}); la diferencia corresponde a categorías sin ventas registradas.</div>
       </div>`;
     }
 
