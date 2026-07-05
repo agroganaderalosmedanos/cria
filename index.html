@@ -8785,28 +8785,25 @@ function buildMargenBruto() {
     const margenPct = ingTotal>0 ? (marTotal/ingTotal*100) : 0;
     const uidCh = 'ch'+Math.random().toString(36).slice(2,8);
 
-    // ── Gráfico de barras: Utilidad por actividad (gradientes + grilla) ────
+    // ── Gráfico de barras: Utilidad por actividad (flat, sin sombras) ──────
     const maxAbsMargen = Math.max(1, ...acts.map(a=>Math.abs(a.margen)));
-    const barW = 130, barGap = 55, chartH = 220, baseY = 240, chartW = acts.length*(barW+barGap)+barGap;
-    let barsSvg = `<svg viewBox="0 0 ${chartW} 300" style="width:100%;height:auto;max-width:520px">`;
+    const barW = 120, barGap = 60, chartH = 210, baseY = 230, chartW = acts.length*(barW+barGap)+barGap;
+    let barsSvg = `<svg viewBox="0 0 ${chartW} 290" style="width:100%;height:auto;max-width:480px">`;
     barsSvg += `<defs>`;
     acts.forEach((a,i)=>{
       barsSvg += `<linearGradient id="gradBar${uidCh}${i}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${a.colorHex}" stop-opacity="1"/>
-        <stop offset="100%" stop-color="${a.colorHex}" stop-opacity="0.62"/>
+        <stop offset="0%" stop-color="${a.colorHex}"/>
+        <stop offset="100%" stop-color="${a.colorHex}" stop-opacity="0.78"/>
       </linearGradient>`;
     });
     barsSvg += `<linearGradient id="gradBarNeg${uidCh}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#c8433a" stop-opacity="0.78"/>
-        <stop offset="100%" stop-color="#b3261e" stop-opacity="1"/>
+        <stop offset="0%" stop-color="#b3261e"/>
+        <stop offset="100%" stop-color="#8c1d17"/>
       </linearGradient>
-      <filter id="softShadowBar${uidCh}" x="-30%" y="-30%" width="160%" height="160%">
-        <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.18"/>
-      </filter>
     </defs>`;
     for (let g=1; g<=3; g++) {
       const gy = baseY - (chartH*g/3);
-      barsSvg += `<line x1="0" y1="${gy}" x2="${chartW}" y2="${gy}" stroke="var(--border2)" stroke-width="1" stroke-dasharray="3,4" opacity="0.5"/>`;
+      barsSvg += `<line x1="0" y1="${gy}" x2="${chartW}" y2="${gy}" stroke="var(--border)" stroke-width="1"/>`;
     }
     barsSvg += `<line x1="0" y1="${baseY}" x2="${chartW}" y2="${baseY}" stroke="var(--border2)" stroke-width="1.5"/>`;
     acts.forEach((a,i)=>{
@@ -8814,8 +8811,8 @@ function buildMargenBruto() {
       const h = Math.round(Math.abs(a.margen)/maxAbsMargen*chartH);
       const y = a.margen>=0 ? baseY-h : baseY;
       const fillUrl = a.margen>=0 ? `url(#gradBar${uidCh}${i})` : `url(#gradBarNeg${uidCh})`;
-      barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="8" fill="${fillUrl}" filter="url(#softShadowBar${uidCh})"/>`;
-      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-10:y+h+22}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</text>`;
+      barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="6" fill="${fillUrl}" stroke="${a.margen>=0?a.colorHex:'#8c1d17'}" stroke-width="1"/>`;
+      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-11:y+h+24}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</text>`;
       barsSvg += `<text x="${x+barW/2}" y="${baseY+26}" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text2)">${a.emoji} ${a.nombre}</text>`;
     });
     barsSvg += `</svg>`;
@@ -8829,19 +8826,18 @@ function buildMargenBruto() {
     donaSvg += `<defs>`;
     acts.forEach((a,i)=>{
       donaSvg += `<linearGradient id="gradDona${uidCh}${i}" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="${a.colorHex}" stop-opacity="1"/>
-        <stop offset="100%" stop-color="${a.colorHex}" stop-opacity="0.7"/>
+        <stop offset="0%" stop-color="${a.colorHex}"/>
+        <stop offset="100%" stop-color="${a.colorHex}" stop-opacity="0.82"/>
       </linearGradient>`;
     });
-    donaSvg += `<filter id="softShadowDona${uidCh}" x="-30%" y="-30%" width="160%" height="160%">
-        <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.15"/>
-      </filter>
-    </defs>`;
+    donaSvg += `</defs>`;
+    const etiquetasDona = [];
     acts.forEach((a,i)=>{
       const frac = Math.max(a.ing,0)/totalIngDona;
       if (frac<=0) return;
       const anguloIni = anguloAcum + (frac*360>gapDeg ? gapDeg/2 : 0);
       const anguloFin = anguloAcum + frac*360 - (frac*360>gapDeg ? gapDeg/2 : 0);
+      const anguloMed = (anguloIni+anguloFin)/2;
       anguloAcum += frac*360;
       const rad = g => g*Math.PI/180;
       const x1o=cx+rOut*Math.cos(rad(anguloIni)), y1o=cy+rOut*Math.sin(rad(anguloIni));
@@ -8849,8 +8845,15 @@ function buildMargenBruto() {
       const x1i=cx+rIn*Math.cos(rad(anguloFin)),  y1i=cy+rIn*Math.sin(rad(anguloFin));
       const x2i=cx+rIn*Math.cos(rad(anguloIni)),  y2i=cy+rIn*Math.sin(rad(anguloIni));
       const largeArc = (anguloFin-anguloIni)>180?1:0;
-      donaSvg += `<path d="M${x1o},${y1o} A${rOut},${rOut} 0 ${largeArc} 1 ${x2o},${y2o} L${x1i},${y1i} A${rIn},${rIn} 0 ${largeArc} 0 ${x2i},${y2i} Z" fill="url(#gradDona${uidCh}${i})" filter="url(#softShadowDona${uidCh})"/>`;
+      donaSvg += `<path d="M${x1o},${y1o} A${rOut},${rOut} 0 ${largeArc} 1 ${x2o},${y2o} L${x1i},${y1i} A${rIn},${rIn} 0 ${largeArc} 0 ${x2i},${y2i} Z" fill="url(#gradDona${uidCh}${i})" stroke="#fff" stroke-width="1.5"/>`;
+      if (frac>=0.08) {
+        const rMid = (rOut+rIn)/2;
+        const xL=cx+rMid*Math.cos(rad(anguloMed)), yL=cy+rMid*Math.sin(rad(anguloMed));
+        etiquetasDona.push(`<text x="${xL}" y="${yL+4}" text-anchor="middle" font-size="13" font-weight="800" fill="#fff">${Math.round(frac*100)}%</text>`);
+      }
     });
+    donaSvg += etiquetasDona.join('');
+    donaSvg += `<circle cx="${cx}" cy="${cy}" r="${rIn-3}" fill="var(--bg)"/>`;
     donaSvg += `<text x="${cx}" y="${cy-6}" text-anchor="middle" font-size="12" fill="var(--text3)" font-weight="600">INGRESOS</text>`;
     donaSvg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="15" fill="var(--text)" font-weight="800">${fmMB(ingTotal)}</text>`;
     donaSvg += `</svg>`;
@@ -9014,6 +9017,9 @@ function buildMargenBruto() {
     const gdpPromRep = gdpsRep.length ? gdpsRep.reduce((s,v)=>s+v,0)/gdpsRep.length : null;
     const efCabEng = rEng.detalle.efCab||0;
 
+    const kpiGeneral = S.dashboard && S.dashboard.general;
+    const indicePrenez = kpiGeneral && kpiGeneral.servicio ? kpiGeneral.servicio.indice_prenez : null;
+
     function tarjetaInd_(icono, label, valor, sub, color) {
       return `<div style="background:var(--bg2);border-radius:10px;padding:14px 16px;flex:1;min-width:140px">
         <div style="font-size:20px;margin-bottom:4px">${icono}</div>
@@ -9026,6 +9032,7 @@ function buildMargenBruto() {
     h += `<div class="panel">
       <div class="panel-title">🩺 Indicadores productivos y sanitarios</div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
+        ${tarjetaInd_('🐮','Índice de preñez', indicePrenez!==null&&indicePrenez!==undefined?indicePrenez+'%':'—', 'Global de servicio')}
         ${tarjetaInd_('✦','Pariciones (vivos)', fn(pariVivosTot), pariMuertosTot>0?`${fn(pariMuertosTot)} nacidos muertos`:'Sin nacidos muertos')}
         ${tarjetaInd_('💀','Mortandad', fn(mortTot)+' cab.', mortTot>0?'Cría · Recría · Terminación':'Sin bajas registradas', mortTot>0?'var(--red-text)':'var(--green-text)')}
         ${tarjetaInd_('⊘','Abortos', fn(abortTot), abortTot>0?'Cría · Recría':'Sin abortos registrados', abortTot>0?'var(--clay-text)':'var(--green-text)')}
@@ -9033,6 +9040,42 @@ function buildMargenBruto() {
         ${tarjetaInd_('🏭','Existencia en Terminación', fn(efCabEng)+' cab.', 'Al '+fd(corteGlobal))}
       </div>
     </div>`;
+
+    // ── VENTAS POR CATEGORÍA vs EXISTENCIA INICIAL ──────────────────────────
+    // Se reutiliza calcStockHacienda_ (misma lógica que Stock de Hacienda) con
+    // "desde" muy anterior a cualquier registro real, para que la Existencia
+    // Inicial calculada coincida con la suma de Saldos Iniciales (mismo criterio
+    // que el resto del Reporte Directorio), y "hasta" = fecha de corte global.
+    let ventasCatRows = [];
+    try {
+      const dataCat = calcStockHacienda_('2000-01-01', corteGlobal, null, false);
+      ventasCatRows = Object.values(dataCat.filas)
+        .filter(f => f.ventas > 0)
+        .map(f => ({ categoria: f.categoria, ventas: f.ventas, si: f.si, pct: f.si>0 ? (f.ventas/f.si*100) : null }))
+        .sort((a,b)=>b.ventas-a.ventas);
+    } catch (err) { ventasCatRows = []; }
+
+    if (ventasCatRows.length) {
+      const totVentasCat = ventasCatRows.reduce((s,r)=>s+r.ventas,0);
+      const totSICat = ventasCatRows.reduce((s,r)=>s+r.si,0);
+      h += `<div class="panel">
+        <div class="panel-title">🐄 Ventas por categoría — cabezas y % sobre Existencia Inicial</div>
+        <table class="dt"><thead><tr><th>Categoría</th><th class="tc">Cabezas vendidas</th><th class="tc">Existencia Inicial</th><th class="tc">% de la EI</th></tr></thead><tbody>
+          ${ventasCatRows.map(r=>`<tr>
+            <td style="font-weight:600">${r.categoria}</td>
+            <td class="tc">${fn(r.ventas)}</td>
+            <td class="tc">${fn(r.si)}</td>
+            <td class="tc">${r.pct!==null?r.pct.toFixed(1)+'%':'—'}</td>
+          </tr>`).join('')}
+          <tr style="background:var(--bg2);font-weight:800">
+            <td>Total</td>
+            <td class="tc">${fn(totVentasCat)}</td>
+            <td class="tc">${fn(totSICat)}</td>
+            <td class="tc">${totSICat>0?(totVentasCat/totSICat*100).toFixed(1)+'%':'—'}</td>
+          </tr>
+        </tbody></table>
+      </div>`;
+    }
 
     // ── ANÁLISIS ────────────────────────────────────────────────────────
     const actsOrdenadas = acts.slice().sort((a,b)=>b.margen-a.margen);
@@ -9053,10 +9096,6 @@ function buildMargenBruto() {
     h += `<div class="panel" style="background:linear-gradient(135deg,var(--bg2),var(--bg))">
       <div class="panel-title">🧭 Análisis</div>
       <div style="font-size:14px;line-height:1.7;color:var(--text2)">${narrativa}</div>
-    </div>`;
-
-    h += `<div class="print-cover" style="flex-direction:column;border-top:2px solid #ddd3c0;margin-top:24px;padding-top:12px;font-size:11px;color:#a39a89;text-align:center">
-      <div>Agroganadera Los Médanos · Informe generado el ${fd(today())} · Uso interno y para inversores</div>
     </div>`;
 
     return h;
