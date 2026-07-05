@@ -423,6 +423,18 @@ function rodeosTodos() {
 const CATS_NO_ENGORDE_ = ['ternero', 'ternera', 'vaca', 'vaca venta', 'toro', 'vaquillona', 'vaquillona proximo servicio', 'vaquilloncita'];
 function normAct_(s) { return String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 
+// Un movimiento "Saldo inicial" puede ser carga real de stock inicial, o puede
+// haber sido creado automáticamente por registrarParicionConTerneros() para dar
+// de alta los terneros nacidos. Ambos suman al stock de la misma forma — la
+// diferencia es solo de ETIQUETA para que los reportes de Existencia (EI/EF)
+// muestren "Nacimientos" como línea aparte en vez de esconderlos dentro del EI,
+// que es lo que confundía la lectura del informe para quien no conoce el sistema.
+// Se identifican por el tag '[pid:<id>]' que ese registro siempre graba en
+// observaciones (el mismo que usa el backend para el borrado en cascada).
+function esAltaPorParicion_(m) {
+  return m && m.tipo === 'Saldo inicial' && /\[pid:\d+\]/.test(String(m.observaciones || ''));
+}
+
 function rodeosEngordeValidos_() {
   const norm_ = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   return rodeosTodos().filter(r => {
@@ -1768,13 +1780,29 @@ function buildDashboard() {
 
   // ── EGRESOS ─────────────────────────────────────────────────────────
   // 1. Stock inicial (saldos iniciales de rodeos Cría, filtrado por campo)
+  // Se excluyen acá los "Saldo inicial" que en realidad son altas por Parición
+  // (identificados por el tag [pid:...] en observaciones) — esos no son carga
+  // inicial de stock, son nacimientos del período, y se muestran aparte más
+  // abajo para que el Existencia (EI + Nacimientos − Ventas − Mortandad = EF)
+  // cierre de forma intuitiva en los reportes.
   const saldosIniciales = movs.filter(m => {
     if (m.tipo !== 'Saldo inicial') return false;
+    if (esAltaPorParicion_(m)) return false;
     if (!rodeosCriaIds.has(String(m.rodeo_destino_id))) return false;
     if (campSelecField && String(m.campo_destino_id) !== String(campSelecField)) return false;
     return true;
   });
   const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+
+  // Altas por Parición (nacimientos) del período — mismo universo de rodeos/campo
+  // que saldosIniciales, pero solo los que tienen el tag [pid:...].
+  const altasParicionCria = movs.filter(m => {
+    if (!esAltaPorParicion_(m)) return false;
+    if (!rodeosCriaIds.has(String(m.rodeo_destino_id))) return false;
+    if (campSelecField && String(m.campo_destino_id) !== String(campSelecField)) return false;
+    return true;
+  });
+  const nacCabCria = altasParicionCria.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
 
   // 2. Compras hacienda de la campaña (rodeos Cría)
   const comprasCria = comprasH.filter(c => c.campana===campSelec && (!campSelecField || String(c.campo_id)===String(campSelecField)));
@@ -1817,7 +1845,7 @@ function buildDashboard() {
     ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria,
     ei: totalSaldoInicial, compras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria,
     cantVentas: ventasCria.length,
-    eiCab: eiCabCria, efCab: efCabCria,
+    eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria,
   };
 
   // ── RENDER ──────────────────────────────────────────────────────────
@@ -4015,7 +4043,7 @@ function buildRecriaDashboard() {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas, ingCesEng: ingCesionEng, ef: stockValRecria,
     ei: egEI, egCesionCria, egCompraExt: egCompraExterna, egAlim, egVet, egSueldos,
-    eiCab: eiCabRecria, efCab: efCabRecria,
+    eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0,
   };
   const mc = margen>=0?'var(--green)':'var(--red)';
   const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
@@ -6017,7 +6045,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     ingVentas: totalVentas, ef: stockValEng,
     ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras,
     egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng,
-    eiCab: eiCabEng, efCab: efCabEng,
+    eiCab: eiCabEng, efCab: efCabEng, nacCab: 0,
   };
   const margenColor = margen>=0 ? 'var(--green)' : 'var(--red)';
   const margenBg    = margen>=0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
@@ -8954,8 +8982,14 @@ function buildMargenBruto() {
     </div>`;
 
     // ── EXISTENCIAS (EI/EF consolidado — cabezas e importe) ────────────────
+    // EI ya NO incluye los nacimientos del período (antes quedaban escondidos
+    // adentro del "Saldo inicial" que se crea automáticamente al registrar una
+    // Parición, lo que hacía que EI + Ventas + Mortandad no cerrara contra EF
+    // para quien mira el informe desde afuera). Se muestran aparte, como una
+    // línea propia, para que la cuenta cierre de forma intuitiva.
     const eiCabTotal = (rCria.detalle.eiCab||0) + (rRec.detalle.eiCab||0) + (rEng.detalle.eiCab||0);
     const efCabTotal = (rCria.detalle.efCab||0) + (rRec.detalle.efCab||0) + (rEng.detalle.efCab||0);
+    const nacCabTotal = (rCria.detalle.nacCab||0) + (rRec.detalle.nacCab||0) + (rEng.detalle.nacCab||0);
     const eiImpTotal = (rCria.detalle.ei||0) + (rRec.detalle.ei||0) + (rEng.detalle.ei||0);
     const efImpTotal = (rCria.detalle.ef||0) + (rRec.detalle.ef||0) + (rEng.detalle.ef||0);
     const deltaCab = efCabTotal - eiCabTotal;
@@ -9001,6 +9035,7 @@ function buildMargenBruto() {
         <div class="panel-title">💰 Existencia — importe</div>
         <table class="dt"><thead><tr><th></th><th class="tc">Cabezas</th><th class="tc">Importe</th></tr></thead><tbody>
           <tr><td style="font-weight:600">Existencia inicial (EI)</td><td class="tc">${fn(eiCabTotal)}</td><td class="tc">${fmMB(eiImpTotal)}</td></tr>
+          ${nacCabTotal>0?`<tr><td style="padding-left:16px;color:var(--text2)">+ Nacimientos del período</td><td class="tc">${fn(nacCabTotal)}</td><td class="tc">—</td></tr>`:''}
           <tr><td style="font-weight:600">Existencia final (EF)</td><td class="tc">${fn(efCabTotal)}</td><td class="tc">${fmMB(efImpTotal)}</td></tr>
           <tr style="background:var(--bg2);font-weight:800">
             <td>Variación</td>
@@ -10007,13 +10042,22 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
   // Calcular stock inicial de cada rodeo (movs con fecha < desde)
   function stockInicial(rodeoId) {
     // El Saldo inicial es el punto de partida del sistema — no tiene fecha historica real.
-    // Existencia inicial = suma de todos los Saldos iniciales del rodeo
+    // Existencia inicial = suma de todos los Saldos iniciales "reales" del rodeo
+    //   + altas por Parición (nacimientos) ANTERIORES a "desde" — ya son parte
+    //     del stock con el que arranca el período, así que van al mismo bucket
     //   + movimientos de entrada ANTES de "desde" (excepto Saldo inicial)
     //   - movimientos de salida ANTES de "desde"
-    //   + nacimientos antes de "desde"
     //   - ventas/muertes/destetes antes de "desde"
+    // Nota: antes acá también se sumaban los nacidos_vivos de la hoja Pariciones
+    // directamente sobre el rodeo de la VACA (donde se registra la parición) —
+    // eso duplicaba los terneros nacidos, porque el alta real de esas cabezas
+    // ya se acredita, aparte, en el rodeo de terneros vía su propio Saldo inicial
+    // (con el tag [pid:...]). Se saca esa suma de acá y se maneja más abajo,
+    // atribuida al rodeo que realmente corresponde.
     var saldoBase = 0;
-    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(rodeoId); })
+    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(rodeoId) && !esAltaPorParicion_(m); })
+      .forEach(function(m){ saldoBase += Number(m.cantidad) || 0; });
+    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(rodeoId) && esAltaPorParicion_(m) && m.fecha < desde; })
       .forEach(function(m){ saldoBase += Number(m.cantidad) || 0; });
 
     var ajuste = 0;
@@ -10023,8 +10067,6 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     });
     ventas.filter(function(v){ return v.fecha_salida < desde && String(v.rodeo_id) === String(rodeoId); })
       .forEach(function(v){ ajuste -= Number(v.cant_animales) || 0; });
-    pariciones.filter(function(p){ return p.fecha < desde && String(p.rodeo_id) === String(rodeoId); })
-      .forEach(function(p){ ajuste += Number(p.nacidos_vivos) || 0; });
     mortandad.filter(function(m){ return m.fecha < desde && String(m.rodeo_id) === String(rodeoId); })
       .forEach(function(m){ ajuste -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return d.fecha < desde && String(d.rodeo_id) === String(rodeoId); })
@@ -10036,7 +10078,13 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     var compras=0, ventas_=0, nacimientos=0, muertes=0, destetar=0, traslados_e=0, traslados_s=0, ajustes=0;
     movs.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta; }).forEach(function(m) {
       const cant = Number(m.cantidad) || 0;
-      if (m.tipo === 'Saldo inicial') return;
+      if (m.tipo === 'Saldo inicial') {
+        // Altas por Parición ocurridas DENTRO del período: se acreditan como
+        // "Nacimientos" del rodeo que las recibió (el rodeo de terneros), no
+        // como Saldo inicial. Las anteriores a "desde" ya se sumaron en stockInicial().
+        if (esAltaPorParicion_(m) && String(m.rodeo_destino_id) === String(rodeoId)) nacimientos += cant;
+        return;
+      }
       if (String(m.rodeo_destino_id) === String(rodeoId)) {
         if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') traslados_e += cant;
         else compras += cant;
@@ -10048,8 +10096,6 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     });
     ventas.filter(function(v){ return v.fecha_salida >= fDesde && v.fecha_salida <= fHasta && String(v.rodeo_id) === String(rodeoId); })
       .forEach(function(v){ ventas_ += Number(v.cant_animales) || 0; });
-    pariciones.filter(function(p){ return p.fecha >= fDesde && p.fecha <= fHasta && String(p.rodeo_id) === String(rodeoId); })
-      .forEach(function(p){ nacimientos += Number(p.nacidos_vivos) || 0; });
     mortandad.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta && String(m.rodeo_id) === String(rodeoId); })
       .forEach(function(m){ muertes += Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return d.fecha >= fDesde && d.fecha <= fHasta && String(d.rodeo_id) === String(rodeoId); })
@@ -10092,7 +10138,7 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     // la parición (rodeo de la vaca) — los terneros nacidos ya se acreditan aparte,
     // vía el "Saldo inicial" que registrarParicionConTerneros() crea en el rodeo de
     // terneros. Sumarlos acá también duplicaba esas cabezas en el stock total.
-    fila.sf = fila.si + fila.compras + fila.traslados_e - fila.ventas - fila.muertes - fila.destetes - fila.traslados_s + fila.ajustes;
+    fila.sf = fila.si + fila.compras + fila.nacimientos + fila.traslados_e - fila.ventas - fila.muertes - fila.destetes - fila.traslados_s + fila.ajustes;
     result[cat] = fila;
   });
   return { filas: result, meses };
@@ -10121,7 +10167,7 @@ function buildStockHaciendaTable_(data, desde, hasta, campoLabel, mensual) {
       var stockAcum = f.si;
       meses.forEach(function(m){
         var mm = f.meses[m];
-        stockAcum += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+        stockAcum += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
         tbody += '<td class="tc" style="font-weight:600;color:var(--green-text)">' + fn(stockAcum,0) + '</td>';
       });
     } else {
@@ -10147,7 +10193,7 @@ function buildStockHaciendaTable_(data, desde, hasta, campoLabel, mensual) {
         var stockAcum = f.si;
         meses.slice(0, meses.indexOf(mes)+1).forEach(function(m) {
           var mm = f.meses[m];
-          stockAcum += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+          stockAcum += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
         });
         totalCierre += stockAcum;
       });
@@ -10192,7 +10238,7 @@ function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
         var stockAcumXlsx = f.si;
         meses.forEach(function(m){
           var mm = f.meses[m];
-          stockAcumXlsx += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+          stockAcumXlsx += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
           row.push(stockAcumXlsx);
         });
       } else {
@@ -10212,7 +10258,7 @@ function exportStockHaciendaXLSX_(data, desde, hasta, campoLabel, mensual) {
           var sa = f2.si;
           meses.slice(0, meses.indexOf(mes)+1).forEach(function(m) {
             var mm = f2.meses && f2.meses[m];
-            if (mm) sa += mm.compras + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
+            if (mm) sa += mm.compras + mm.nacimientos + mm.traslados_e - mm.ventas - mm.muertes - mm.destetes - mm.traslados_s;
           });
           totalCierreXlsx += sa;
         });
