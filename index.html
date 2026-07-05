@@ -1416,6 +1416,52 @@ function buildComprasHacienda() {
   return h;
 }
 
+// Mantiene sincronizado el Movimiento de stock vinculado a una Compra de Hacienda.
+// Antes, "Compras de Hacienda" solo quedaba como un registro económico ($) — la
+// cantidad comprada nunca sumaba al stock/EF de ningún rodeo porque no existía
+// ningún Movimiento asociado. Se identifica el vínculo con el tag [cid:<compra_id>]
+// en observaciones, mismo patrón que ya usa el sistema para Pariciones ([pid:...]).
+// Se registra como 'Traslado en bloque' SIN rodeo de origen (entrada real desde
+// afuera del sistema) — así el stock lo toma exactamente igual que un Saldo inicial
+// o una cesión, en todos los cálculos existentes (dashboards, Stock Hacienda, etc.).
+async function sincronizarMovimientoCompra_(compraId, c) {
+  if (!compraId) return;
+  const tag = '[cid:' + compraId + ']';
+  await loadEntity('movimientos', true);
+  const existente = (S.cache.movimientos || []).find(m => String(m.observaciones || '').indexOf(tag) !== -1);
+
+  if (!c.rodeo_id) {
+    // Sin rodeo asignado no hay dónde sumar el stock — si había un vínculo de una
+    // edición anterior (se le sacó el rodeo), se borra para no dejar stock fantasma.
+    if (existente) {
+      try { await apiCall('delete', { body: { entity: 'movimientos', id: existente.movimiento_id } }); } catch (e) {}
+    }
+    return;
+  }
+
+  const rodeo = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(c.rodeo_id));
+  const movData = {
+    tipo: 'Traslado en bloque',
+    fecha: c.fecha,
+    rodeo_origen_id: '',
+    campo_origen_id: '',
+    rodeo_destino_id: c.rodeo_id,
+    campo_destino_id: rodeo ? rodeo.campo_id : (c.campo_id || ''),
+    cantidad: c.cantidad,
+    precio_cabeza: c.precio_cabeza,
+    observaciones: 'Compra de hacienda' + (c.vendedor ? ' — ' + c.vendedor : '') + ' ' + tag,
+  };
+  try {
+    if (existente) {
+      await apiCall('update', { body: { entity: 'movimientos', id: existente.movimiento_id, data: movData } });
+    } else {
+      await apiCall('create', { body: { entity: 'movimientos', data: movData } });
+    }
+  } catch (err) {
+    toast('La compra se guardó, pero no se pudo sincronizar el movimiento de stock: ' + err.message, 'err');
+  }
+}
+
 function attachComprasHaciendaEvents() {
 
   window.chCatChange_ = function() {
@@ -1509,16 +1555,24 @@ function attachComprasHaciendaEvents() {
 
     try {
       const editando = S._compraEditando;
+      let compraId;
       if (editando) {
         await apiCall('update', { body: { entity: 'compras_hacienda', id: editando.compra_id, data: { ...editando, ...data } } });
+        compraId = editando.compra_id;
         S._compraEditando = null;
         toast('Compra actualizada', 'ok');
       } else {
-        await apiCall('create', { body: { entity: 'compras_hacienda', data } });
+        const result = await apiCall('create', { body: { entity: 'compras_hacienda', data } });
+        compraId = result && result.id;
         toast('Compra registrada — ' + fn(cantidad) + ' ' + categoria + ' · $ ' + fn(cantidad*precio), 'ok');
       }
+      await sincronizarMovimientoCompra_(compraId, { fecha, rodeo_id, campo_id, cantidad, precio_cabeza: precio, vendedor });
       invalidateCache('compras_hacienda');
+      invalidateCache('movimientos');
       await loadEntity('compras_hacienda', true);
+      await loadEntity('movimientos', true);
+      S.stock = null; await loadStock();
+      S.dashboard = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; S.margenBruto = null;
       if(msg) { msg.textContent='✅ Guardado'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
       render();
     } catch(err) {
@@ -1540,11 +1594,21 @@ function attachComprasHaciendaEvents() {
   };
 
   window.compraHacEliminar_ = async function(compra_id) {
-    if (!confirm('¿Eliminar esta compra?')) return;
+    if (!confirm('¿Eliminar esta compra? También se borra el movimiento de stock vinculado, si existe.')) return;
     try {
+      await loadEntity('movimientos', true);
+      const tag = '[cid:' + compra_id + ']';
+      const vinculado = (S.cache.movimientos || []).find(m => String(m.observaciones || '').indexOf(tag) !== -1);
+      if (vinculado) {
+        try { await apiCall('delete', { body: { entity: 'movimientos', id: vinculado.movimiento_id } }); } catch (e) {}
+      }
       await apiCall('delete', { body: { entity: 'compras_hacienda', id: compra_id } });
       invalidateCache('compras_hacienda');
+      invalidateCache('movimientos');
       await loadEntity('compras_hacienda', true);
+      await loadEntity('movimientos', true);
+      S.stock = null; await loadStock();
+      S.dashboard = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; S.margenBruto = null;
       toast('Registro eliminado', 'ok');
       render();
     } catch(err) { toast('Error: '+err.message, 'err'); }
@@ -4998,6 +5062,7 @@ function buildRecria() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
   const rodeosRecria = rodeosAll.filter(r => normAct_(r.actividad)==='recria');
+  const rodeosCriaTodas = rodeosAll.filter(r => normAct_(r.actividad)==='cria');
 
   let h = '<div class="page-header"><div class="page-title">Recría</div><div class="page-sub">Pesadas, movimientos, ventas y egresos de animales en recría</div></div>';
   h += buildSueldoKpiPanel_('recria');
@@ -5065,10 +5130,17 @@ function buildRecria() {
     <div class="fg"><label>Fecha</label><input type="date" id="rc-eg-fecha" value="${today()}"></div>
     <div class="fg"><label>Rodeo de origen</label><select id="rc-eg-rodeo">${rodeoOpts}</select></div>
     <div class="fg"><label>Destino</label>
-      <select id="rc-eg-destino">
+      <select id="rc-eg-destino" onchange="document.getElementById('rc-eg-rodeo-destino-wrap').style.display = this.value==='Reposición' ? 'flex' : 'none'">
         <option value="Engorde">Engorde (Corrales)</option>
         <option value="Reposición">Reposición de vientres (vuelve a Cría)</option>
       </select></div>
+    <div class="fg" id="rc-eg-rodeo-destino-wrap" style="display:none">
+      <label>Rodeo de Cría destino</label>
+      <select id="rc-eg-rodeo-destino">
+        <option value="">— Elegí un rodeo —</option>
+        ${rodeosCriaTodas.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+      </select>
+    </div>
     <div class="fg"><label>Cantidad</label><input type="number" id="rc-eg-cantidad" placeholder="Ej: 30" min="1"></div>
     <div class="fg"><label>Peso promedio (kg)</label><input type="number" id="rc-eg-peso" placeholder="Ej: 280" min="0" step="0.1"></div>
     <div class="fg"><label>Observación</label><input type="text" id="rc-eg-obs" placeholder="Opcional"></div>
@@ -5208,17 +5280,43 @@ function attachRecriaEvents() {
     const fecha = document.getElementById('rc-eg-fecha').value;
     const rodeoId = document.getElementById('rc-eg-rodeo').value;
     const destino = document.getElementById('rc-eg-destino').value;
+    const rodeoDestinoCria = document.getElementById('rc-eg-rodeo-destino')?.value || '';
     const cantidad = Number(document.getElementById('rc-eg-cantidad').value) || 0;
     const peso = Number(document.getElementById('rc-eg-peso').value) || '';
     if (!fecha || !rodeoId || !cantidad) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
+    if (destino === 'Reposición' && !rodeoDestinoCria) { toast('Elegí a qué rodeo de Cría vuelven estos animales.', 'err'); return; }
     const rodeo = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(rodeoId));
     egSave.disabled = true;
     try {
-      await apiCall('create', { body: { entity: 'egresos_recria', data: {
+      const result = await apiCall('create', { body: { entity: 'egresos_recria', data: {
         fecha, rodeo_id: rodeoId, campo_id: rodeo?.campo_id || '',
-        destino, cant_animales: cantidad, peso_prom_kg: peso,
+        destino, rodeo_destino_id: destino === 'Reposición' ? rodeoDestinoCria : '',
+        cant_animales: cantidad, peso_prom_kg: peso,
         observaciones: document.getElementById('rc-eg-obs').value.trim(),
       }}});
+      // La Reposición de vientres antes solo quedaba anotada acá, sin mover el
+      // stock real — ahora también genera el Traslado correspondiente en
+      // Movimientos, que es lo que efectivamente saca el animal de Recría y lo
+      // suma como "Cesión recibida" en el rodeo de Cría elegido.
+      if (destino === 'Reposición' && rodeoDestinoCria) {
+        const rodeoDest = ((S.catalogs && S.catalogs.rodeos) || []).find(r => String(r.rodeo_id) === String(rodeoDestinoCria));
+        const egresoId = result && result.id;
+        await apiCall('create', { body: { entity: 'movimientos', data: {
+          tipo: 'Traslado en bloque',
+          fecha,
+          rodeo_origen_id: rodeoId,
+          campo_origen_id: rodeo?.campo_id || '',
+          rodeo_destino_id: rodeoDestinoCria,
+          campo_destino_id: rodeoDest?.campo_id || '',
+          cantidad,
+          peso_prom_kg: peso,
+          observaciones: 'Reposición de vientres — vuelve a Cría' + (egresoId ? ' [erid:' + egresoId + ']' : ''),
+        }}});
+        invalidateCache('movimientos');
+        await loadEntity('movimientos', true);
+        S.stock = null; await loadStock();
+        S.dashboard = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; S.margenBruto = null;
+      }
       invalidateCache('egresos_recria'); S.resumenRecria = null;
       await loadEntity('egresos_recria', true);
       S.resumenRecria = await apiCall('resumenRecria');
