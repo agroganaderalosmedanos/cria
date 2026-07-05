@@ -413,6 +413,18 @@ function ternerosDisponiblesParaDestete_(rodeoId) {
   const yaDestetados = destetesYa.reduce((s, d) => s + (Number(d.total) || 0), 0);
   return { nacidos, yaDestetados, disponibles: Math.max(0, nacidos - yaDestetados) };
 }
+// Vacas preñadas (según Tactos) que todavía no parieron, para un rodeo puntual.
+// Es una aproximación (igual que el índice de parición general): se asume ~1 cría
+// por vaca preñada, y se cuenta "ya parió" como nacidos_vivos + nacidos_muertos
+// (la vaca dio a luz, sea el resultado vivo o muerto). Sirve para saber cuántas
+// vacas de ese rodeo faltarían parir todavía — no reemplaza un control por caravana.
+function vacasPendientesDeParir_(rodeoId) {
+  const tactos = (S.cache.tactos || []).filter(t => String(t.rodeo_id) === String(rodeoId));
+  const prenadas = tactos.reduce((s, t) => s + (Number(t.prenadas) || 0), 0);
+  const pariciones = (S.cache.pariciones || []).filter(p => String(p.rodeo_id) === String(rodeoId));
+  const yaParieron = pariciones.reduce((s, p) => s + (Number(p.nacidos_vivos) || 0) + (Number(p.nacidos_muertos) || 0), 0);
+  return { prenadas, yaParieron, pendientes: Math.max(0, prenadas - yaParieron) };
+}
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
 }
@@ -621,8 +633,9 @@ async function goto(page) {
   if ((page === 'tactos' || page === 'abortos' || page === 'pariciones') && !S.cache.servicios) {
     try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
   }
-  // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas
-  if (page === 'destetes' && !S.cache.tactos) {
+  // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
+  // Pariciones también la necesita ahora, para el aviso de "cuántas vacas faltan parir".
+  if ((page === 'destetes' || page === 'pariciones') && !S.cache.tactos) {
     try { await loadEntity('tactos'); } catch (err) { /* silencioso */ }
   }
   // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
@@ -2651,16 +2664,17 @@ function buildPariciones() {  const _criaTabs = [
     ${rodeosConServicio().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
     <div class="fgrid">
       <div class="fg"><label>Campo</label>
-        <select id="pa-campo" onchange="document.getElementById('pa-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="pa-campo" onchange="document.getElementById('pa-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value)); window.paActualizarAvisoPendientes_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="pa-fecha" value="${today()}"></div>
       <div class="fg"><label>Rodeo</label>
-        <select id="pa-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
+        <select id="pa-rodeo" onchange="window.paActualizarAvisoPendientes_()">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg"><label>Nacidos vivos</label><input type="number" id="pa-vivos" placeholder="Ej: 12" min="0"></div>
       <div class="fg"><label>Nacidos muertos</label><input type="number" id="pa-muertos" placeholder="Ej: 0" min="0" value="0"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="pa-obs" placeholder="Opcional"></div>
     </div>
+    <div id="pa-aviso-pendientes" style="margin-top:10px"></div>
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
   </div>`;
   h += buildEntityTable(items, [
@@ -2672,7 +2686,27 @@ function buildPariciones() {  const _criaTabs = [
   ], 'pariciones', 'paricion_id');
   return h;
 }
+window.paActualizarAvisoPendientes_ = function() {
+  const aviso = document.getElementById('pa-aviso-pendientes');
+  if (!aviso) return;
+  const rodeoId = document.getElementById('pa-rodeo')?.value;
+  if (!rodeoId) { aviso.innerHTML = ''; return; }
+  const { prenadas, yaParieron, pendientes } = vacasPendientesDeParir_(rodeoId);
+  if (prenadas === 0) {
+    aviso.innerHTML = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600">
+      ⚠ Este rodeo no tiene vacas preñadas confirmadas por Tacto todavía — no vamos a poder calcular cuántas faltan parir.
+    </div>`;
+  } else {
+    aviso.innerHTML = `<div style="background:var(--bg2);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--text2)">
+      🐮 <strong>${fn(prenadas)}</strong> vacas preñadas confirmadas · <strong>${fn(yaParieron)}</strong> ya parieron ·
+      <strong style="color:var(--gold-text)">${fn(pendientes)} aprox. quedarían por parir</strong>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">Estimado — asume ~1 cría por vaca preñada, no identifica cuál vaca parió cada ternero.</div>
+    </div>`;
+  }
+};
+
 function attachParicionesEvents() {
+  paActualizarAvisoPendientes_();
   const save = document.getElementById('pa-save');
   if (save) save.onclick = async () => {
     const data = {
