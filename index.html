@@ -9032,7 +9032,7 @@ function buildMargenBruto() {
 
     h += `<div class="panel">
       <div class="panel-title">🩺 Indicadores productivos y sanitarios</div>
-      <div style="display:flex;flex-wrap:wrap;gap:12px">
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px">
         ${tarjetaInd_('🐮','Índice de preñez', indicePrenez!==null&&indicePrenez!==undefined?indicePrenez+'%':'—', 'Global de servicio')}
         ${tarjetaInd_('✦','Pariciones (vivos)', fn(pariVivosTot), pariMuertosTot>0?`${fn(pariMuertosTot)} nacidos muertos`:'Sin nacidos muertos')}
         ${tarjetaInd_('💀','Mortandad', fn(mortTot)+' cab.',
