@@ -443,8 +443,20 @@ function normAct_(s) { return String(s||'').trim().toLowerCase().normalize('NFD'
 // que es lo que confundía la lectura del informe para quien no conoce el sistema.
 // Se identifican por el tag '[pid:<id>]' que ese registro siempre graba en
 // observaciones (el mismo que usa el backend para el borrado en cascada).
+// Un movimiento "Saldo inicial" puede ser carga real de stock inicial, o puede
+// haber sido creado automáticamente por registrarParicionConTerneros() para dar
+// de alta los terneros nacidos. Ambos suman al stock de la misma forma — la
+// diferencia es solo de ETIQUETA para que los reportes de Existencia (EI/EF)
+// muestren "Nacimientos" como línea aparte en vez de esconderlos dentro del EI,
+// que es lo que confundía la lectura del informe para quien no conoce el sistema.
+// Se identifican de dos formas: el tag '[pid:<id>]' que graba desde hace poco
+// (el mismo que usa el backend para el borrado en cascada), o — para Pariciones
+// cargadas ANTES de que ese tag existiera — el texto fijo "Nacimiento — parición"
+// que registrarParicionConTerneros() siempre puso al principio de observaciones.
 function esAltaPorParicion_(m) {
-  return m && m.tipo === 'Saldo inicial' && /\[pid:\d+\]/.test(String(m.observaciones || ''));
+  if (!m || m.tipo !== 'Saldo inicial') return false;
+  const obs = String(m.observaciones || '');
+  return /\[pid:\d+\]/.test(obs) || /^Nacimiento\s*—\s*parici[oó]n/i.test(obs);
 }
 
 // Valoriza un movimiento de Saldo inicial (o cualquier movimiento de entrada) para
