@@ -8714,12 +8714,12 @@ function buildMargenBruto() {
   // Filtro: fecha de corte global (única, funcional)
   h += `<div class="panel no-print" style="padding:14px 16px;margin-bottom:16px">
     <div class="fgrid" style="margin:0;align-items:flex-end">
-      <div class="fg">
+      <div class="fg" style="max-width:220px;min-width:0;flex:0 0 auto">
         <label>Fecha de corte <span style="font-size:11px;color:var(--text3)">(aplica a Cría, Recría y Terminación por igual)</span></label>
-        <input type="date" id="mb-corte" value="${corteGlobal}"
+        <input type="date" id="mb-corte" value="${corteGlobal}" style="max-width:220px"
           onchange="S._corteGlobal=this.value;S._corteCria=this.value;S._corteRecria=this.value;S._corteEng=this.value;render()">
       </div>
-      ${corteGlobal!==today()?`<div class="fg"><button class="btn btn-ghost btn-sm"
+      ${corteGlobal!==today()?`<div class="fg" style="flex:0 0 auto"><button class="btn btn-ghost btn-sm"
           onclick="S._corteGlobal=null;S._corteCria=null;S._corteRecria=null;S._corteEng=null;render()">↺ Volver a hoy</button></div>`:''}
     </div>
   </div>`;
