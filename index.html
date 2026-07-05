@@ -459,6 +459,65 @@ function esAltaPorParicion_(m) {
   return /\[pid:\d+\]/.test(obs) || /^Nacimiento\s*—\s*parici[oó]n/i.test(obs);
 }
 
+// Clasifica los Traslados que entran/salen de un conjunto de rodeos (una actividad)
+// en tres baldes: Compras (sin rodeo de origen — entrada real desde afuera del
+// sistema), Cesiones recibidas (origen es un rodeo que NO pertenece a esta
+// actividad) y Cesiones enviadas (destino no pertenece a esta actividad). Un
+// Traslado entre dos rodeos DE LA MISMA actividad es un movimiento interno — se
+// cancela solo (resta de un lado, suma del otro, ambos dentro del mismo total) y
+// no debe contarse en ninguno de los tres baldes.
+function clasificarTrasladosActividad_(rodeoIdsSet, movs) {
+  let compras = 0, cesionesRecibidas = 0, cesionesEnviadas = 0;
+  movs.forEach(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return;
+    const cant = Number(m.cantidad) || 0;
+    const destinoAqui = rodeoIdsSet.has(String(m.rodeo_destino_id));
+    const origenAqui = rodeoIdsSet.has(String(m.rodeo_origen_id));
+    if (destinoAqui && !origenAqui) {
+      if (!m.rodeo_origen_id) compras += cant;
+      else cesionesRecibidas += cant;
+    }
+    if (origenAqui && !destinoAqui) {
+      cesionesEnviadas += cant;
+    }
+  });
+  return { compras, cesionesRecibidas, cesionesEnviadas };
+}
+
+// Panel de conciliación de Existencia en cabezas: EI + Compras + Cesiones
+// recibidas + Nacimientos − Cesiones enviadas − Ventas − Mortandad = EF.
+// Muestra el cálculo término a término y lo compara contra el EF real (el que
+// sale de sumar el stock rodeo por rodeo) — si no coincide, lo marca en rojo
+// para que salte a la vista en vez de quedar escondido.
+function buildConciliacionCabezas_(titulo, t, efReal) {
+  const efCalc = (t.ei||0) + (t.compras||0) + (t.cesionesRecibidas||0) + (t.nacimientos||0)
+               - (t.cesionesEnviadas||0) - (t.ventas||0) - (t.mortandad||0);
+  const diff = Math.round((efReal||0) - efCalc);
+  const ok = diff === 0;
+  const filas = [
+    { label: 'Existencia inicial (EI)', val: t.ei||0, signo: '' },
+    { label: '+ Compras', val: t.compras||0, signo: '+' },
+    { label: '+ Cesiones recibidas', val: t.cesionesRecibidas||0, signo: '+' },
+    { label: '+ Nacimientos', val: t.nacimientos||0, signo: '+' },
+    { label: '− Cesiones enviadas', val: t.cesionesEnviadas||0, signo: '−' },
+    { label: '− Ventas', val: t.ventas||0, signo: '−' },
+    { label: '− Mortandad', val: t.mortandad||0, signo: '−' },
+  ].filter(f => f.val !== 0 || f.signo === '');
+  let h = `<div class="panel" style="border:1px solid var(--border2)">
+    <div class="panel-title">🧮 ${titulo} — Conciliación de Existencia (cabezas)</div>
+    <table class="dt"><tbody>
+      ${filas.map(f => `<tr><td>${f.label}</td><td class="tr">${fn(f.val)}</td></tr>`).join('')}
+      <tr style="background:var(--bg2);font-weight:800"><td>= EF calculado</td><td class="tr">${fn(efCalc)}</td></tr>
+      <tr><td>EF real (stock por rodeo)</td><td class="tr">${fn(efReal||0)}</td></tr>
+    </tbody></table>
+    ${ok
+      ? `<div style="font-size:12.5px;color:var(--green-text);font-weight:600;margin-top:6px">✓ Cierra — el calculado coincide con el real.</div>`
+      : `<div style="font-size:12.5px;color:var(--red-text);font-weight:700;margin-top:6px">⚠ No cierra — diferencia de ${fn(Math.abs(diff))} cabezas (${diff>0?'el real tiene más':'el real tiene menos'} de lo que explican estos términos). Puede haber un movimiento mal clasificado o un rodeo excluido de este cálculo.</div>`
+    }
+  </div>`;
+  return h;
+}
+
 // Valoriza un movimiento de Saldo inicial (o cualquier movimiento de entrada) para
 // mostrar el precio/total en los paneles de EI. Antes solo se miraba precio_cabeza,
 // lo que hacía aparecer "sin precio" en rodeos que en realidad estaban cargados
@@ -1910,6 +1969,16 @@ function buildDashboard() {
     return true;
   });
   const nacCabCria = altasParicionCria.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  // Valor de esos nacimientos — se valorizan igual que el stock (Precios de
+  // Valorización del rodeo de terneros/as que los recibió), no a precio de
+  // costo (que es 0, un ternero recién nacido no tiene "precio de compra").
+  const nacImpCria = altasParicionCria.reduce((s,m) => {
+    const rodeoDest = rodeosPorId[String(m.rodeo_destino_id)];
+    if (!rodeoDest) return s;
+    const pesadasDest = pesadas.filter(p=>String(p.rodeo_id)===String(rodeoDest.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoDest = pesadasDest[0] ? Number(pesadasDest[0].peso_prom_kg)||0 : 0;
+    return s + valorizarRodeo_(rodeoDest, Number(m.cantidad)||0, pesoDest);
+  }, 0);
 
   // 2. Compras hacienda de la campaña (rodeos Cría)
   const comprasCria = comprasH.filter(c => c.campana===campSelec && (!campSelecField || String(c.campo_id)===String(campSelecField)));
@@ -1946,13 +2015,23 @@ function buildDashboard() {
   const eiCabCria = saldosIniciales.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
   const efCabCria = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
 
+  // Términos en cabezas para la Conciliación de Existencia (EI+Compras+Cesiones
+  // recibidas+Nacimientos-Cesiones enviadas-Ventas-Mortandad=EF) — se calculan
+  // acá para poder guardarlos y reutilizarlos también en el control consolidado
+  // del Margen Bruto, sin recalcular todo de nuevo ahí.
+  const clasCria = clasificarTrasladosActividad_(rodeosCriaIds, movs);
+  const ventasCabCria = ventasCria.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
+  const mortCabCria = mortandadCria.filter(m => rodeosCriaIds.has(String(m.rodeo_id))).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+
   // Guardar resultados para que Resultados Económicos los lea directamente
   S._resultCria = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria,
     ei: totalSaldoInicial, compras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria,
     cantVentas: ventasCria.length,
-    eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria,
+    eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: nacImpCria,
+    comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
+    ventasCab: ventasCabCria, mortCab: mortCabCria,
   };
 
   // ── RENDER ──────────────────────────────────────────────────────────
@@ -2073,7 +2152,12 @@ function buildDashboard() {
     h += '</tbody></table></div></div>';
   }
 
-  // ── Detalle Saldo Inicial (EI) ─────────────────────────────────────────
+  // ── Conciliación de Existencia (cabezas) — control cruzado EI/EF ────────
+  h += buildConciliacionCabezas_('Cría', {
+    ei: eiCabCria, compras: clasCria.compras, cesionesRecibidas: clasCria.cesionesRecibidas,
+    nacimientos: nacCabCria, cesionesEnviadas: clasCria.cesionesEnviadas,
+    ventas: ventasCabCria, mortandad: mortCabCria,
+  }, efCabCria);
   if (saldosIniciales.length) {
     h += `<div class="panel">
       <div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
@@ -4165,12 +4249,18 @@ function buildRecriaDashboard() {
     .reduce((s,m) => s+(Number(m.cantidad)||0), 0);
   const efCabRecria = stockDetalleRec_.reduce((s,r) => s+(Number(r.stock)||0), 0);
 
+  const clasRec = clasificarTrasladosActividad_(todosRodeosRecriaIds, movs);
+  const ventasCabRecria = ventas.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
+  const mortCabRecria = mortandad.filter(m => todosRodeosRecriaIds.has(String(m.rodeo_id))).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+
   // Guardar resultados para Resultados Económicos
   S._resultRecria = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas, ingCesEng: ingCesionEng, ef: stockValRecria,
     ei: egEI, egCesionCria, egCompraExt: egCompraExterna, egAlim, egVet, egSueldos,
-    eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0,
+    eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0, nacImp: 0,
+    comprasCab: clasRec.compras, cesRecCab: clasRec.cesionesRecibidas, cesEnvCab: clasRec.cesionesEnviadas,
+    ventasCab: ventasCabRecria, mortCab: mortCabRecria,
   };
   const mc = margen>=0?'var(--green)':'var(--red)';
   const mb = margen>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
@@ -4261,6 +4351,13 @@ function buildRecriaDashboard() {
       <td class="tr" style="color:var(--green-text);font-size:15px">${fmonACorte_(stockValRecria, moneda, corteRecria)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
+
+  // ── Conciliación de Existencia (cabezas) — control cruzado EI/EF ────────
+  h += buildConciliacionCabezas_('Recría', {
+    ei: eiCabRecria, compras: clasRec.compras, cesionesRecibidas: clasRec.cesionesRecibidas,
+    nacimientos: 0, cesionesEnviadas: clasRec.cesionesEnviadas,
+    ventas: ventasCabRecria, mortandad: mortCabRecria,
+  }, efCabRecria);
 
   // ── Detalle EI (Saldo inicial) ────────────────────────────────────────────
   const saldosInicRec = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIdsFilt.has(String(m.rodeo_destino_id)));
@@ -6201,13 +6298,19 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const eiCabEng = saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
   const efCabEng = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
 
+  const clasEng = clasificarTrasladosActividad_(rodeosEngIds, movs);
+  const ventasCabEng = ventasEng.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
+  const mortCabEng = (S.cache.mortandad||[]).filter(m => rodeosEngIds.has(String(m.rodeo_id)) && (m.fecha||'') <= corteEng).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+
   // Guardar resultados para Resultados Económicos
   S._resultEng = {
     ing: totalIngresos, eg: totalEgresos, margen,
     ingVentas: totalVentas, ef: stockValEng,
     ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras,
     egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng,
-    eiCab: eiCabEng, efCab: efCabEng, nacCab: 0,
+    eiCab: eiCabEng, efCab: efCabEng, nacCab: 0, nacImp: 0,
+    comprasCab: clasEng.compras, cesRecCab: clasEng.cesionesRecibidas, cesEnvCab: clasEng.cesionesEnviadas,
+    ventasCab: ventasCabEng, mortCab: mortCabEng,
   };
   const margenColor = margen>=0 ? 'var(--green)' : 'var(--red)';
   const margenBg    = margen>=0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
@@ -6342,6 +6445,13 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <td></td><td></td><td class="tr"><strong>${fmonACorte_(stockValEng, moneda, corteEng)}</strong></td></tr>`;
     h += '</tbody></table></div></div>';
   }
+
+  // ── Conciliación de Existencia (cabezas) — control cruzado EI/EF ────────
+  h += buildConciliacionCabezas_('Terminación', {
+    ei: eiCabEng, compras: clasEng.compras, cesionesRecibidas: clasEng.cesionesRecibidas,
+    nacimientos: 0, cesionesEnviadas: clasEng.cesionesEnviadas,
+    ventas: ventasCabEng, mortandad: mortCabEng,
+  }, efCabEng);
 
   // Paneles de detalle de insumos — se renderizan acá donde detalleAlimEng está definida
   const buildInsumoTableEng_ = (filas, titulo) => {
@@ -9157,6 +9267,7 @@ function buildMargenBruto() {
     const eiCabTotal = (rCria.detalle.eiCab||0) + (rRec.detalle.eiCab||0) + (rEng.detalle.eiCab||0);
     const efCabTotal = (rCria.detalle.efCab||0) + (rRec.detalle.efCab||0) + (rEng.detalle.efCab||0);
     const nacCabTotal = (rCria.detalle.nacCab||0) + (rRec.detalle.nacCab||0) + (rEng.detalle.nacCab||0);
+    const nacImpTotal = (rCria.detalle.nacImp||0) + (rRec.detalle.nacImp||0) + (rEng.detalle.nacImp||0);
     const eiImpTotal = (rCria.detalle.ei||0) + (rRec.detalle.ei||0) + (rEng.detalle.ei||0);
     const efImpTotal = (rCria.detalle.ef||0) + (rRec.detalle.ef||0) + (rEng.detalle.ef||0);
     const deltaCab = efCabTotal - eiCabTotal;
@@ -9202,7 +9313,7 @@ function buildMargenBruto() {
         <div class="panel-title">💰 Existencia — importe</div>
         <table class="dt"><thead><tr><th></th><th class="tc">Cabezas</th><th class="tc">Importe</th></tr></thead><tbody>
           <tr><td style="font-weight:600">Existencia inicial (EI)</td><td class="tc">${fn(eiCabTotal)}</td><td class="tc">${fmMB(eiImpTotal)}</td></tr>
-          ${nacCabTotal>0?`<tr><td style="padding-left:16px;color:var(--text2)">+ Nacimientos del período</td><td class="tc">${fn(nacCabTotal)}</td><td class="tc">—</td></tr>`:''}
+          ${nacCabTotal>0?`<tr><td style="padding-left:16px;color:var(--text2)">+ Nacimientos del período</td><td class="tc">${fn(nacCabTotal)}</td><td class="tc">${nacImpTotal ? fmMB(nacImpTotal) : '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td></tr>`:''}
           <tr><td style="font-weight:600">Existencia final (EF)</td><td class="tc">${fn(efCabTotal)}</td><td class="tc">${fmMB(efImpTotal)}</td></tr>
           <tr style="background:var(--bg2);font-weight:800">
             <td>Variación</td>
@@ -9212,6 +9323,22 @@ function buildMargenBruto() {
         </tbody></table>
       </div>
     </div>`;
+
+    // ── Conciliación de Existencia consolidada (cabezas) ────────────────────
+    // Las cesiones entre Cría/Recría/Terminación deberían cancelarse entre sí acá
+    // (lo que una envía, otra la recibe) — si no cancelan del todo, es señal de que
+    // alguna cesión fue a parar a un rodeo que ninguna de las tres actividades
+    // reconoce como propio.
+    h += buildConciliacionCabezas_('Consolidado (Cría + Recría + Terminación)', {
+      ei: eiCabTotal,
+      compras: (rCria.detalle.comprasCab||0) + (rRec.detalle.comprasCab||0) + (rEng.detalle.comprasCab||0),
+      cesionesRecibidas: (rCria.detalle.cesRecCab||0) + (rRec.detalle.cesRecCab||0) + (rEng.detalle.cesRecCab||0),
+      nacimientos: nacCabTotal,
+      cesionesEnviadas: (rCria.detalle.cesEnvCab||0) + (rRec.detalle.cesEnvCab||0) + (rEng.detalle.cesEnvCab||0),
+      ventas: (rCria.detalle.ventasCab||0) + (rRec.detalle.ventasCab||0) + (rEng.detalle.ventasCab||0),
+      mortandad: (rCria.detalle.mortCab||0) + (rRec.detalle.mortCab||0) + (rEng.detalle.mortCab||0),
+    }, efCabTotal);
+
 
     // ── INDICADORES PRODUCTIVOS Y SANITARIOS ───────────────────────────────
     const pariciones = S.cache.pariciones || [];
@@ -12675,4 +12802,3 @@ loginRequired(session => {
 </script>
 </body>
 </html>
-<!-- refresh -->
