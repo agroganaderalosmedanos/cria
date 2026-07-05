@@ -9048,14 +9048,16 @@ function buildMargenBruto() {
       </div>
     </div>`;
 
-    // ── VENTAS POR CATEGORÍA ────────────────────────────────────────────────
+    // ── VENTAS Y STOCK POR CATEGORÍA ─────────────────────────────────────────
     // Se reutiliza calcStockHacienda_ (misma lógica que Stock de Hacienda) solo
-    // para obtener las ventas agrupadas por categoría en el período. No se
-    // compara contra la Existencia Inicial: un animal puede cambiar de
-    // categoría entre el inicio del período y el momento de la venta (ternero
-    // → novillito → novillo), así que "% sobre EI" distorsiona — lo que sí es
-    // comparable es la participación de cada categoría sobre el total vendido.
+    // para obtener ventas y stock final agrupados por categoría. No se compara
+    // ventas contra la Existencia Inicial: un animal puede cambiar de categoría
+    // entre el inicio del período y el momento de la venta (ternero → novillito
+    // → novillo), así que "% sobre EI" distorsiona — lo que sí es comparable es
+    // la participación de cada categoría sobre el total vendido o sobre el
+    // stock actual.
     let ventasCatRows = [];
+    let stockCatRows = [];
     try {
       const dataCat = calcStockHacienda_('2000-01-01', corteGlobal, null, false);
       // Los rodeos "X venta" (ej. "Vaca venta") son un bucket logístico para
@@ -9070,13 +9072,36 @@ function buildMargenBruto() {
           const match = CATSKNOWN.find(c => c.toLowerCase() === base);
           key = match || (base.charAt(0).toUpperCase()+base.slice(1));
         }
-        if (!mergedCat[key]) mergedCat[key] = { categoria: key, ventas:0 };
+        if (!mergedCat[key]) mergedCat[key] = { categoria: key, ventas:0, sf:0 };
         mergedCat[key].ventas += f.ventas;
+        mergedCat[key].sf += f.sf;
       });
       ventasCatRows = Object.values(mergedCat)
         .filter(f => f.ventas > 0)
         .sort((a,b)=>b.ventas-a.ventas);
-    } catch (err) { ventasCatRows = []; }
+      stockCatRows = Object.values(mergedCat)
+        .filter(f => f.sf > 0)
+        .sort((a,b)=>b.sf-a.sf);
+    } catch (err) { ventasCatRows = []; stockCatRows = []; }
+
+    if (stockCatRows.length) {
+      const totStockCat = stockCatRows.reduce((s,r)=>s+r.sf,0);
+      h += `<div class="panel">
+        <div class="panel-title">📦 Stock por categoría — al ${fd(corteGlobal)}</div>
+        <table class="dt"><thead><tr><th>Categoría</th><th class="tc">Cabezas</th><th class="tc">% del stock total</th></tr></thead><tbody>
+          ${stockCatRows.map(r=>`<tr>
+            <td style="font-weight:600">${r.categoria}</td>
+            <td class="tc">${fn(r.sf)}</td>
+            <td class="tc">${(r.sf/totStockCat*100).toFixed(1)}%</td>
+          </tr>`).join('')}
+          <tr style="background:var(--bg2);font-weight:800">
+            <td>Total</td>
+            <td class="tc">${fn(totStockCat)}</td>
+            <td class="tc">100.0%</td>
+          </tr>
+        </tbody></table>
+      </div>`;
+    }
 
     if (ventasCatRows.length) {
       const totVentasCat = ventasCatRows.reduce((s,r)=>s+r.ventas,0);
