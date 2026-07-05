@@ -9048,20 +9048,18 @@ function buildMargenBruto() {
       </div>
     </div>`;
 
-    // ── VENTAS POR CATEGORÍA vs EXISTENCIA INICIAL ──────────────────────────
-    // Se reutiliza calcStockHacienda_ (misma lógica que Stock de Hacienda) con
-    // "desde" muy anterior a cualquier registro real, para que la Existencia
-    // Inicial calculada coincida con la suma de Saldos Iniciales (mismo criterio
-    // que el resto del Reporte Directorio), y "hasta" = fecha de corte global.
+    // ── VENTAS POR CATEGORÍA ────────────────────────────────────────────────
+    // Se reutiliza calcStockHacienda_ (misma lógica que Stock de Hacienda) solo
+    // para obtener las ventas agrupadas por categoría en el período. No se
+    // compara contra la Existencia Inicial: un animal puede cambiar de
+    // categoría entre el inicio del período y el momento de la venta (ternero
+    // → novillito → novillo), así que "% sobre EI" distorsiona — lo que sí es
+    // comparable es la participación de cada categoría sobre el total vendido.
     let ventasCatRows = [];
     try {
       const dataCat = calcStockHacienda_('2000-01-01', corteGlobal, null, false);
       // Los rodeos "X venta" (ej. "Vaca venta") son un bucket logístico para
-      // hacienda que ya está separada para la venta — pertenecen a la misma
-      // categoría de origen (Vaca) y hay que sumarlos ahí, si no la Existencia
-      // Inicial de esa categoría queda artificialmente baja (esos rodeos casi
-      // no tienen Saldo Inicial propio, entran por traslado interno) y el %
-      // sobre EI sale disparatado (ej. mil %) o sin EI para asignar.
+      // hacienda ya apartada para la venta — se agrupan con su categoría base.
       const CATSKNOWN = ['Toro','Vaca','Vaquillona','Vaquillona proximo servicio','Vaquilloncita','Novillito','Ternero','Ternera','Novillo'];
       const mergedCat = {};
       Object.values(dataCat.filas).forEach(f => {
@@ -9072,36 +9070,30 @@ function buildMargenBruto() {
           const match = CATSKNOWN.find(c => c.toLowerCase() === base);
           key = match || (base.charAt(0).toUpperCase()+base.slice(1));
         }
-        if (!mergedCat[key]) mergedCat[key] = { categoria: key, ventas:0, si:0 };
+        if (!mergedCat[key]) mergedCat[key] = { categoria: key, ventas:0 };
         mergedCat[key].ventas += f.ventas;
-        mergedCat[key].si += f.si;
       });
       ventasCatRows = Object.values(mergedCat)
         .filter(f => f.ventas > 0)
-        .map(f => ({ categoria: f.categoria, ventas: f.ventas, si: f.si, pct: f.si>0 ? (f.ventas/f.si*100) : null }))
         .sort((a,b)=>b.ventas-a.ventas);
     } catch (err) { ventasCatRows = []; }
 
     if (ventasCatRows.length) {
       const totVentasCat = ventasCatRows.reduce((s,r)=>s+r.ventas,0);
-      const totSICat = ventasCatRows.reduce((s,r)=>s+r.si,0);
       h += `<div class="panel">
-        <div class="panel-title">🐄 Ventas por categoría — cabezas y % sobre Existencia Inicial</div>
-        <table class="dt"><thead><tr><th>Categoría</th><th class="tc">Cabezas vendidas</th><th class="tc">Existencia Inicial</th><th class="tc">% de la EI</th></tr></thead><tbody>
+        <div class="panel-title">🐄 Ventas por categoría</div>
+        <table class="dt"><thead><tr><th>Categoría</th><th class="tc">Cabezas vendidas</th><th class="tc">% del total vendido</th></tr></thead><tbody>
           ${ventasCatRows.map(r=>`<tr>
             <td style="font-weight:600">${r.categoria}</td>
             <td class="tc">${fn(r.ventas)}</td>
-            <td class="tc">${fn(r.si)}</td>
-            <td class="tc">${r.pct!==null?r.pct.toFixed(1)+'%':'—'}</td>
+            <td class="tc">${(r.ventas/totVentasCat*100).toFixed(1)}%</td>
           </tr>`).join('')}
           <tr style="background:var(--bg2);font-weight:800">
             <td>Total</td>
             <td class="tc">${fn(totVentasCat)}</td>
-            <td class="tc">${fn(totSICat)}</td>
-            <td class="tc">${totSICat>0?(totVentasCat/totSICat*100).toFixed(1)+'%':'—'}</td>
+            <td class="tc">100.0%</td>
           </tr>
         </tbody></table>
-        <div style="font-size:11px;color:var(--text3);margin-top:8px">Solo se listan categorías con al menos una venta en el período — por eso la Existencia Inicial de esta tabla (${fn(totSICat)}) es menor a la Existencia Inicial total del rodeo (${fn(eiCabTotal)}); la diferencia corresponde a categorías sin ventas registradas.</div>
       </div>`;
     }
 
@@ -12436,4 +12428,3 @@ loginRequired(session => {
 </script>
 </body>
 </html>
-!-- refresh --
