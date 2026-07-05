@@ -447,6 +447,24 @@ function esAltaPorParicion_(m) {
   return m && m.tipo === 'Saldo inicial' && /\[pid:\d+\]/.test(String(m.observaciones || ''));
 }
 
+// Valoriza un movimiento de Saldo inicial (o cualquier movimiento de entrada) para
+// mostrar el precio/total en los paneles de EI. Antes solo se miraba precio_cabeza,
+// lo que hacía aparecer "sin precio" en rodeos que en realidad estaban cargados
+// con precio_kg + peso_prom_kg (ej: terneros valorizados por kg a mano).
+function valorMovimientoEntrada_(m) {
+  const cant = Number(m.cantidad) || 0;
+  const precioCabeza = Number(m.precio_cabeza) || 0;
+  const precioKg = Number(m.precio_kg) || 0;
+  const peso = Number(m.peso_prom_kg) || 0;
+  if (precioCabeza > 0) {
+    return { total: cant * precioCabeza, precioLabel: '$ ' + fn(precioCabeza), metodo: 'por cabeza' };
+  }
+  if (precioKg > 0 && peso > 0) {
+    return { total: cant * peso * precioKg, precioLabel: '$ ' + fn(precioKg) + '/kg (' + fn(peso) + ' kg)', metodo: 'por kg' };
+  }
+  return { total: 0, precioLabel: null, metodo: null };
+}
+
 function rodeosEngordeValidos_() {
   const norm_ = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   return rodeosTodos().filter(r => {
@@ -1805,7 +1823,7 @@ function buildDashboard() {
     if (campSelecField && String(m.campo_destino_id) !== String(campSelecField)) return false;
     return true;
   });
-  const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+  const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + valorMovimientoEntrada_(m).total, 0);
 
   // Altas por Parición (nacimientos) del período — mismo universo de rodeos/campo
   // que saldosIniciales, pero solo los que tienen el tag [pid:...].
@@ -1985,20 +2003,19 @@ function buildDashboard() {
       <div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th>
-        <th class="tr">Precio/cab.</th><th class="tr">Total</th>
+        <th class="tr">Precio</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totEI = 0;
     saldosIniciales.forEach(m => {
       const cant = Number(m.cantidad)||0;
-      const precio = Number(m.precio_cabeza)||0;
-      const total = cant * precio;
+      const { total, precioLabel } = valorMovimientoEntrada_(m);
       totEI += total;
       const rodeo = rodeosPorId[String(m.rodeo_destino_id)];
       h += `<tr>
         <td>${fd(m.fecha)}</td>
         <td><strong>${rodeo?.nombre||'—'}</strong></td>
         <td class="tc">${fn(cant)}</td>
-        <td class="tr">${precio ? '$ '+fn(precio) : '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
+        <td class="tr">${precioLabel || '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
         <td class="tr"><strong>${total ? fmCria_(total) : '—'}</strong></td>
       </tr>`;
     });
@@ -4061,7 +4078,7 @@ function buildRecriaDashboard() {
   // 5. Stock inicial (EI) — saldos iniciales de rodeos de Recría
   const egEI = movs
     .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
-    .reduce((s,m) => s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+    .reduce((s,m) => s+valorMovimientoEntrada_(m).total, 0);
 
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
@@ -4174,15 +4191,16 @@ function buildRecriaDashboard() {
   if (saldosInicRec.length) {
     h += `<div class="panel"><div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
       <div class="tw"><table class="dt"><thead><tr>
-        <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Precio/cab.</th><th class="tr">Total</th>
+        <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Precio</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totEI=0;
     saldosInicRec.forEach(m=>{
-      const cant=Number(m.cantidad)||0, precio=Number(m.precio_cabeza)||0, total=cant*precio;
+      const cant=Number(m.cantidad)||0;
+      const { total, precioLabel } = valorMovimientoEntrada_(m);
       totEI+=total;
       h += `<tr><td>${fd(m.fecha)}</td><td><strong>${rodeoNombre(m.rodeo_destino_id)}</strong></td>
         <td class="tc">${fn(cant)}</td>
-        <td class="tr">${precio?'$ '+fn(precio):'<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
+        <td class="tr">${precioLabel || '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
         <td class="tr"><strong>${total?fmM(total):'—'}</strong></td></tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL EI</td>
@@ -6018,7 +6036,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     );
     return !tieneTrasladoReal;
   });
-  const totalSaldoIni = saldosIni.reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0),0);
+  const totalSaldoIni = saldosIni.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
   // Egresos legacy (sin Traslado real) + Traslados reales (incluye los nuevos generados
   // por el formulario de Cesiones Recría→Terminación, y los traslados directos legacy)
   const totalCesiones = cesionesRec.reduce((s,e)=>{
@@ -6163,21 +6181,21 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <div class="panel-title">📥 Existencia Inicial</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Rodeo</th><th>Campo</th><th>Categoría</th>
-        <th class="tc">Cabezas</th><th class="tr">$/cab</th><th class="tr">Valor</th>
+        <th class="tc">Cabezas</th><th class="tr">Precio</th><th class="tr">Valor</th>
       </tr></thead><tbody>`;
     let totCabIni=0, totValIni=0;
     saldosEngIni.forEach(m => {
       const rod = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
       const cant = Number(m.cantidad)||0;
-      const precio = Number(m.precio_cabeza)||0;
-      const val = convertirAMoneda_(cant*precio, m.fecha, moneda);
+      const { total, precioLabel } = valorMovimientoEntrada_(m);
+      const val = convertirAMoneda_(total, m.fecha, moneda);
       totCabIni += cant; totValIni += val;
       h += `<tr>
         <td>${rod?.nombre||'—'}</td>
         <td>${campoNombre(rod?.campo_id)}</td>
         <td>${rod?.categoria||'—'}</td>
         <td class="tc">${fn(cant)}</td>
-        <td class="tr">${precio ? fm(precio) : '—'}</td>
+        <td class="tr">${precioLabel || '—'}</td>
         <td class="tr"><strong>${fm(val)}</strong></td>
       </tr>`;
     });
@@ -6401,7 +6419,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     const movsTodos = (S.cache.movimientos || []).filter(m=>(m.fecha||'')<=corteCostos);
     const rodeosEngIds2 = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
     const saldosIni2 = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
-    const totalSaldoIni = saldosIni2.reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, S.engordeMoneda||'ARS'),0);
+    const totalSaldoIni = saldosIni2.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, S.engordeMoneda||'ARS'),0);
     const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
     // MISMA fuente de verdad que usa el Dashboard (antes, acá se auto-valorizaba
     // SIEMPRE por categoría/peso del rodeo de origen, ignorando el precio real que
@@ -8454,8 +8472,9 @@ function calcMargenCria_(campana, desde, hasta) {
   // EI — saldos iniciales
   const movEI = movs.filter(m => m.tipo==='Saldo inicial' && rodeosIds.has(String(m.rodeo_destino_id)));
   const ei = movEI.reduce((s,m) => {
-    const cant = Number(m.cantidad)||0, precio = Number(m.precio_cabeza)||0;
-    const total = cant*precio;
+    const cant = Number(m.cantidad)||0;
+    const { total, precioLabel } = valorMovimientoEntrada_(m);
+    const precio = cant ? total/cant : 0;
     filasEI.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, precio, total });
     return s + total;
   }, 0);
@@ -8555,7 +8574,9 @@ function calcMargenRecria_(campana, desde, hasta) {
   // EI — saldos iniciales de recría
   const filasEI_R = [];
   const ei = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id))).reduce((s,m)=>{
-    const cant=Number(m.cantidad)||0, precio=Number(m.precio_cabeza)||0, total=cant*precio;
+    const cant=Number(m.cantidad)||0;
+    const { total } = valorMovimientoEntrada_(m);
+    const precio = cant ? total/cant : 0;
     const rd=rodeosAll.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
     filasEI_R.push({ fecha: m.fecha, rodeo: rd?.nombre||'—', cant, precio, total });
     return s+total;
@@ -8650,7 +8671,9 @@ function calcMargenTerminacion_(campana, desde, hasta) {
   const filasEI_E = [];
   const ei=movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIds.has(String(m.rodeo_destino_id)))
     .reduce((s,m)=>{
-      const cant=Number(m.cantidad)||0, precio=Number(m.precio_cabeza)||0, total=cant*precio;
+      const cant=Number(m.cantidad)||0;
+      const { total } = valorMovimientoEntrada_(m);
+      const precio = cant ? total/cant : 0;
       const rd=rodeosEng.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
       filasEI_E.push({ fecha: m.fecha, rodeo: rd?.nombre||'—', cant, precio, total });
       return s+total;
