@@ -8551,7 +8551,12 @@ function calcMargenRecria_(campana, desde, hasta) {
 }
 
 function calcMargenTerminacion_(campana, desde, hasta) {
-  const rodeosEng = rodeosEngordeValidos_().filter(r=>r.activo===true||String(r.activo).toUpperCase()==='TRUE');
+  // Antes se excluían acá los corrales con activo=false, lo que dejaba afuera
+  // hacienda que sigue con stock cargado en corrales ya desactivados —
+  // generando una Existencia Final más baja que la de Stock de Hacienda
+  // (que sí cuenta todos los rodeos, activos e inactivos). Se saca ese filtro
+  // para que ambos módulos coincidan; Cría y Recría tampoco filtran por activo.
+  const rodeosEng = rodeosEngordeValidos_();
   const rodeosIds = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
   const movs      = S.cache.movimientos||[];
   const productos = (S.catalogs&&S.catalogs.productos)||[];
