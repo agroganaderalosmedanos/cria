@@ -9809,32 +9809,46 @@ function attachMargenBrutoEvents() {
   });
 }
 
-async function exportarStockExcel_() {
+async function exportarStockExcel_(campoId) {
   toast('Generando Excel... puede tardar unos segundos', 'ok');
   try {
-    // Cargar SheetJS si no está disponible
-    if (!window.XLSX) {
+    // Cargar SheetJS si no está disponible — usamos "xlsx-js-style", un fork
+    // compatible con la librería community que SÍ escribe estilos de celda
+    // (colores, negrita, bordes) en el .xlsx. La librería original que se usaba
+    // acá (cdnjs xlsx.full.min.js) ignora los estilos al guardar — por eso la
+    // planilla salía sin formato aunque el código ya definía los colores.
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        s.onload = resolve;
-        s.onerror = () => reject(new Error('No se pudo cargar SheetJS'));
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
         document.head.appendChild(s);
       });
     }
     const XLSX = window.XLSX;
+
+    const rodeosTodosLista = (S.catalogs && S.catalogs.rodeos) || [];
+    const rodeosMap = Object.fromEntries(rodeosTodosLista.map(r=>[String(r.rodeo_id), r]));
+    // Si se eligió un campo puntual, todo el reporte se acota a los rodeos de
+    // ESE campo — categorías, stock y movimientos. rodeosMap se mantiene con
+    // TODOS los rodeos (para poder resolver la categoría de cualquier rodeo de
+    // origen/destino), pero "rodeos" (de acá en más) sí queda filtrado.
+    const rodeos = campoId ? rodeosTodosLista.filter(r => String(r.campo_id) === String(campoId)) : rodeosTodosLista;
+    const rodeoIdsSet = new Set(rodeos.map(r => String(r.rodeo_id)));
+    const campoNombreSel = campoId ? (((S.catalogs&&S.catalogs.campos)||[]).find(c=>String(c.campo_id)===String(campoId))?.nombre || 'Campo') : 'Todos los campos';
 
     const movs     = S.cache.movimientos     || [];
     const ventas   = S.cache.ventas          || [];
     const pariciones = S.cache.pariciones    || [];
     const abortos  = S.cache.abortos         || [];
     const mortandad = S.cache.mortandad      || [];
-    const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
-    const rodeosMap = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id), r]));
 
-    // Categorías únicas (columnas)
+    // Categorías únicas (columnas) — solo las que existen en el campo elegido
     const cats = [...new Set(rodeos.map(r=>(r.categoria||'').toLowerCase()).filter(Boolean))].sort();
-    // Función para obtener categoría de un rodeo_id
+    // Función para obtener categoría de un rodeo_id (mira TODOS los rodeos, no
+    // solo los del campo elegido, porque necesitamos poder identificar de dónde
+    // viene o hacia dónde va un traslado aunque el otro extremo esté afuera)
     const cat_ = id => (rodeosMap[String(id)]?.categoria||'').toLowerCase();
 
     // Determinar rango de meses desde el primer movimiento hasta hoy
@@ -9909,10 +9923,10 @@ async function exportarStockExcel_() {
       movs.forEach(m => {
         if (!inRange(m.fecha)) return;
         const cant = Number(m.cantidad)||0;
-        const cIn  = cat_(m.rodeo_destino_id);
-        const cOut = cat_(m.rodeo_origen_id);
-        const orAct  = rodeosMap[String(m.rodeo_origen_id)]?.actividad;
-        const deAct  = rodeosMap[String(m.rodeo_destino_id)]?.actividad;
+        const destinoEnCampo = rodeoIdsSet.has(String(m.rodeo_destino_id));
+        const origenEnCampo  = rodeoIdsSet.has(String(m.rodeo_origen_id));
+        const cIn  = destinoEnCampo ? cat_(m.rodeo_destino_id) : '';
+        const cOut = origenEnCampo  ? cat_(m.rodeo_origen_id)  : '';
 
         if (m.tipo === 'Saldo inicial') {
           if (cIn) r.carga_inicial[cIn] = (r.carga_inicial[cIn]||0) + cant;
@@ -9933,38 +9947,51 @@ async function exportarStockExcel_() {
         }
       });
       ventas.forEach(v => {
-        if (!inRange(v.fecha_salida)) return;
+        if (!inRange(v.fecha_salida) || !rodeoIdsSet.has(String(v.rodeo_id))) return;
         const c=cat_(v.rodeo_id); if(c) r.venta[c]=(r.venta[c]||0)+(Number(v.cant_animales)||0);
       });
       pariciones.forEach(p => {
-        if (!inRange(p.fecha)) return;
+        if (!inRange(p.fecha) || !rodeoIdsSet.has(String(p.rodeo_id))) return;
         const rodeo = rodeosMap[String(p.rodeo_id)];
         const c = rodeo?.categoria?.toLowerCase() === 'ternero' || rodeo?.categoria?.toLowerCase() === 'ternera'
           ? rodeo.categoria.toLowerCase() : 'ternero';
         r.nacimiento[c] = (r.nacimiento[c]||0) + (Number(p.nacidos_vivos)||0);
       });
       mortandad.forEach(m => {
-        if (!inRange(m.fecha)) return;
+        if (!inRange(m.fecha) || !rodeoIdsSet.has(String(m.rodeo_id))) return;
         const c=cat_(m.rodeo_id); if(c) r.muerte[c]=(r.muerte[c]||0)+(Number(m.cantidad)||1);
       });
       abortos.forEach(a => {
-        if (!inRange(a.fecha)) return;
+        if (!inRange(a.fecha) || !rodeoIdsSet.has(String(a.rodeo_id))) return;
         const c=cat_(a.rodeo_id); if(c) r.aborto[c]=(r.aborto[c]||0)+1;
       });
       return r;
     }
 
-    // Estilos
-    const HDR_DARK  = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F4E2B'}}, alignment:{horizontal:'center'} };
-    const HDR_MED   = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'2E7D32'}}, alignment:{horizontal:'center'} };
-    const ENTRADA   = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'2E7D32'}} };
-    const SALIDA    = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'C62828'}} };
-    const TOT_IN    = { font:{bold:true}, fill:{fgColor:{rgb:'C8E6C9'}}, alignment:{horizontal:'center'} };
-    const TOT_OUT   = { font:{bold:true}, fill:{fgColor:{rgb:'FFCDD2'}}, alignment:{horizontal:'center'} };
-    const TOT_FINAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1565C0'}}, alignment:{horizontal:'center'} };
-    const EX_ANT    = { font:{bold:true}, fill:{fgColor:{rgb:'E8F5E9'}}, alignment:{horizontal:'center'} };
-    const NUM       = { alignment:{horizontal:'center'} };
-    const SUBROW    = { fill:{fgColor:{rgb:'F5F5F5'}} };
+    // Estilos — colores calcados de la planilla de referencia
+    const BORDE_FINA = { style:'thin', color:{rgb:'D9D9D9'} };
+    const BORDES     = { top:BORDE_FINA, bottom:BORDE_FINA, left:BORDE_FINA, right:BORDE_FINA };
+    const ST_TITULO      = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:BORDES };
+    const ST_LABEL_FECHA = { font:{bold:false}, border:BORDES };
+    const ST_CATEGORIAS  = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center'}, border:BORDES };
+    const ST_EXIS_ANT    = { font:{bold:true,color:{rgb:'006100'}}, fill:{fgColor:{rgb:'C6EFCE'}}, alignment:{horizontal:'center'}, border:BORDES };
+    const ST_ENTRADAS    = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'548235'}}, border:BORDES };
+    const ST_SUBFILA     = { font:{bold:false}, alignment:{horizontal:'center'}, border:BORDES };
+    const ST_SUBFILA_LBL = { font:{bold:false}, border:BORDES };
+    const ST_TOT_ENTRADAS= { font:{bold:true}, fill:{fgColor:{rgb:'C6EFCE'}}, alignment:{horizontal:'center'}, border:BORDES };
+    const ST_SALIDAS     = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'C00000'}}, border:BORDES };
+    const ST_TOT_SALIDAS = { font:{bold:true}, fill:{fgColor:{rgb:'F4CCCC'}}, alignment:{horizontal:'center'}, border:BORDES };
+    const ST_TOT_FINALES = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:BORDES };
+    const ST_EQUIV_VACA  = { font:{bold:false,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center'}, border:BORDES };
+
+    // Aplica un estilo a un rango de celdas de una fila (r0 = fila 0-based, c0..c1 = columnas 0-based inclusive)
+    function estilarFila_(ws, r0, c0, c1, style) {
+      for (let c = c0; c <= c1; c++) {
+        const addr = XLSX.utils.encode_cell({ r: r0, c });
+        if (!ws[addr]) ws[addr] = { t: 'z', v: undefined };
+        ws[addr].s = style;
+      }
+    }
 
     const wb = XLSX.utils.book_new();
 
@@ -9994,7 +10021,7 @@ async function exportarStockExcel_() {
     // de cada hoja, igual que en la planilla de referencia.
     function encabezado_(subtitulo) {
       return [
-        ['Agroganadera Los Médanos'],
+        ['Agroganadera Los Médanos — ' + campoNombreSel],
         [],
         ['FECHA INICIO', fd(fechaInicioLabel)],
         ['FECHA CIERRE', fd(fechaCierreLabel)],
@@ -10056,6 +10083,42 @@ async function exportarStockExcel_() {
       return aoa;
     }
 
+    // Aplica el formato al bloque de encabezado (título, fechas, subtítulo) —
+    // siempre las mismas 7 filas (0-based: 0..6) que arma encabezado_().
+    function estilarEncabezado_(ws, colUltima) {
+      estilarFila_(ws, 0, 0, colUltima, ST_TITULO);
+      estilarFila_(ws, 2, 0, 1, ST_LABEL_FECHA);
+      estilarFila_(ws, 3, 0, 1, ST_LABEL_FECHA);
+      estilarFila_(ws, 5, 0, colUltima, ST_TITULO);
+      ws['!merges'] = (ws['!merges']||[]).concat([
+        { s:{r:0,c:0}, e:{r:0,c:colUltima} },
+        { s:{r:5,c:0}, e:{r:5,c:colUltima} },
+      ]);
+    }
+
+    // Aplica el formato al bloque de ENTRADAS/SALIDAS/TOTALES/EQUIV. VACA que arma
+    // filasMovimiento_() — la estructura de filas es siempre la misma (fija):
+    // 0 CATEGORIAS · 1 EXIS.ANTERIOR · 2 "ENTRADAS" · 3-8 6 subfilas · 9 TOTAL
+    // ENTRADAS · 10 "SALIDAS" · 11-16 6 subfilas · 17 TOTAL SALIDAS · 18 (vacía)
+    // · 19 TOTALES FINALES · 20 EQUIVALENTE VACA. filaBase = fila 0-based donde
+    // arranca este bloque dentro de la hoja (después del encabezado).
+    function estilarBloqueMovimiento_(ws, filaBase, colUltima) {
+      estilarFila_(ws, filaBase+0,  0, colUltima, ST_CATEGORIAS);
+      estilarFila_(ws, filaBase+1,  0, colUltima, ST_EXIS_ANT);
+      estilarFila_(ws, filaBase+2,  0, colUltima, ST_ENTRADAS);
+      for (let i=3; i<=8; i++) { estilarFila_(ws, filaBase+i, 0, 1, ST_SUBFILA_LBL); estilarFila_(ws, filaBase+i, 2, colUltima, ST_SUBFILA); }
+      estilarFila_(ws, filaBase+9,  0, colUltima, ST_TOT_ENTRADAS);
+      estilarFila_(ws, filaBase+10, 0, colUltima, ST_SALIDAS);
+      for (let i=11; i<=16; i++) { estilarFila_(ws, filaBase+i, 0, 1, ST_SUBFILA_LBL); estilarFila_(ws, filaBase+i, 2, colUltima, ST_SUBFILA); }
+      estilarFila_(ws, filaBase+17, 0, colUltima, ST_TOT_SALIDAS);
+      estilarFila_(ws, filaBase+19, 0, colUltima, ST_TOT_FINALES);
+      estilarFila_(ws, filaBase+20, 0, colUltima, ST_EQUIV_VACA);
+      ws['!merges'] = (ws['!merges']||[]).concat([
+        { s:{r:filaBase+2, c:0}, e:{r:filaBase+2, c:colUltima} },
+        { s:{r:filaBase+10,c:0}, e:{r:filaBase+10,c:colUltima} },
+      ]);
+    }
+
     // === HOJA "TODOS": acumulado de todo el período ===
     const movTodos = { carga_inicial:{}, nacimiento:{}, compra:{}, traslado_in:{}, recategorizacion_in:{}, aborto:{}, venta:{}, muerte:{}, traslado_out:{}, recategorizacion_out:{} };
     cats.forEach(c => Object.keys(movTodos).forEach(k => movTodos[k][c]=0));
@@ -10072,7 +10135,10 @@ async function exportarStockExcel_() {
       ...filasMovimiento_(stockAntesDeTodo, movTodos, stockFinalTodo),
     ];
     const wsTodos = XLSX.utils.aoa_to_sheet(aoaTodos);
+    const colUltimaTodos = 2 + cats.length; // A,B + una por categoría + TOTAL
     wsTodos['!cols'] = [{wch:22},{wch:20},...cats.map(()=>({wch:14})),{wch:14}];
+    estilarEncabezado_(wsTodos, colUltimaTodos);
+    estilarBloqueMovimiento_(wsTodos, 7, colUltimaTodos);
     XLSX.utils.book_append_sheet(wb, wsTodos, 'TODOS');
 
     // === Stock mensual (resumen simple, se mantiene como referencia rápida) ===
@@ -10091,6 +10157,7 @@ async function exportarStockExcel_() {
     });
     const ws1 = XLSX.utils.aoa_to_sheet(wsStock);
     ws1['!cols'] = [{wch:20}, ...meses.map(()=>({wch:14}))];
+    estilarFila_(ws1, 0, 0, meses.length, ST_CATEGORIAS);
     XLSX.utils.book_append_sheet(wb, ws1, 'Stock Mensual');
 
     // === REPORTE 2: Una hoja por mes ===
@@ -10109,7 +10176,10 @@ async function exportarStockExcel_() {
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const colUltimaMes = 2 + cats.length;
       ws['!cols'] = [{wch:22},{wch:20},...cats.map(()=>({wch:14})),{wch:14}];
+      estilarEncabezado_(ws, colUltimaMes);
+      estilarBloqueMovimiento_(ws, 7, colUltimaMes);
       XLSX.utils.book_append_sheet(wb, ws, nombreMes.slice(0,31));
     });
 
@@ -10119,7 +10189,8 @@ async function exportarStockExcel_() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Los_Medanos_Stock_${today().slice(0,7)}.xlsx`;
+    const campoFileTag = campoId ? '_' + campoNombreSel.replace(/[^a-zA-Z0-9]+/g,'_') : '_TodosLosCampos';
+    a.download = `Los_Medanos_Stock${campoFileTag}_${today().slice(0,7)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
     toast('✓ Excel descargado', 'ok');
@@ -10138,8 +10209,12 @@ function buildStockHacienda() {
   let h = `<div class="page-header">
     <div class="page-title">Stock de Hacienda</div>
     <div class="page-sub">Existencias actuales y reporte histórico por campo y categoría</div>
-    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-primary" onclick="exportarStockExcel_()" style="font-size:13px">
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="stock-export-campo" style="max-width:220px">
+        <option value="">Todos los campos</option>
+        ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary" onclick="exportarStockExcel_(document.getElementById('stock-export-campo').value)" style="font-size:13px">
         📊 Exportar Libro de Movimientos (.xlsx)
       </button>
     </div>
