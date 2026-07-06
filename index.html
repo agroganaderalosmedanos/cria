@@ -1214,6 +1214,11 @@ function buildIndicesReproduccion() {
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       ${criaTabs2.map(t => `<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
     </div>
+    <div style="margin-top:10px">
+      <button class="btn btn-primary" onclick="exportarIndicesReproduccionExcel_()" style="font-size:13px">
+        📊 Exportar Reproducción por Rodeo (.xlsx)
+      </button>
+    </div>
   </div>`;
 
   h += '<div class="section-label">Establecimiento — índices generales</div>';
@@ -9807,6 +9812,154 @@ function attachMargenBrutoEvents() {
     S.margenBrutoMoneda = p.dataset.moneda;
     render();
   });
+}
+
+// Exporta un Excel con un resumen reproductivo por rodeo (vaca/vaquillona):
+// cuántas en servicio, cuántas tactadas, preñadas, abortos, mortandad y destete
+// — para poder comparar el desempeño de cada rodeo de un vistazo.
+async function exportarIndicesReproduccionExcel_() {
+  toast('Generando Excel... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+
+    // Aseguramos tener cargadas todas las hojas necesarias, aunque no se haya
+    // pasado antes por sus pantallas puntuales.
+    for (const ent of ['servicios','tactos','abortos','mortandad','destetes']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+
+    const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+    const campos = (S.catalogs && S.catalogs.campos) || [];
+    const campoNombre_ = id => campos.find(c=>String(c.campo_id)===String(id))?.nombre || '—';
+    const servicios = S.cache.servicios || [];
+    const tactos    = S.cache.tactos    || [];
+    const abortos   = S.cache.abortos   || [];
+    const mortandad = S.cache.mortandad || [];
+    const destetes  = S.cache.destetes  || [];
+
+    // Solo rodeos de vientre (vaca/vaquillona) — mismo criterio que usa el
+    // sistema para "Índices de Reproducción".
+    const rodeosVientre = rodeosAll.filter(r => {
+      const c = (r.categoria||'').toLowerCase();
+      return c === 'vaca' || c === 'vaquillona';
+    });
+
+    const porRodeo = rodeosVientre.map(r => {
+      const rid = String(r.rodeo_id);
+      const serv = servicios.filter(s=>String(s.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.cantidad)||0),0);
+      const tact = tactos.filter(t=>String(t.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.total_tacteadas)||0),0);
+      const pren = tactos.filter(t=>String(t.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.prenadas)||0),0);
+      const abor = abortos.filter(a=>String(a.rodeo_id)===rid).length;
+      const mort = mortandad.filter(m=>String(m.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.cantidad)||1),0);
+      const dest = destetes.filter(d=>String(d.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.total)||0),0);
+      return { rodeo: r, serv, tact, pren, abor, mort, dest };
+    }).filter(x => x.serv || x.tact || x.pren || x.abor || x.mort || x.dest); // se ocultan rodeos sin ninguna actividad
+
+    if (!porRodeo.length) { toast('No hay datos de reproducción para exportar.', 'err'); return; }
+
+    porRodeo.sort((a,b) => a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es'));
+
+    const BORDE_FINA = { style:'thin', color:{rgb:'D9D9D9'} };
+    const BORDES = { top:BORDE_FINA, bottom:BORDE_FINA, left:BORDE_FINA, right:BORDE_FINA };
+    const ST_TITULO  = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:BORDES };
+    const ST_HEADER  = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:BORDES };
+    const ST_ROW     = { alignment:{horizontal:'center'}, border:BORDES };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:BORDES, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL     = { border:BORDES };
+    const ST_ROWLBL_ALT = { border:BORDES, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_PCT     = { alignment:{horizontal:'center'}, border:BORDES, font:{italic:true,color:{rgb:'375623'}} };
+    const ST_PCT_ALT  = { alignment:{horizontal:'center'}, border:BORDES, font:{italic:true,color:{rgb:'375623'}}, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL   = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:BORDES };
+    const ST_TOTALLBL= { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, border:BORDES };
+
+    const headers = ['Rodeo','Campo','En Servicio','Tactadas','Preñadas','% Preñez','Abortos','Mortandad','Destete','% Destete'];
+    const aoa = [
+      ['Agroganadera Los Médanos — Índices de Reproducción por Rodeo'],
+      ['Generado', fd(today())],
+      [],
+      headers,
+    ];
+    porRodeo.forEach(x => {
+      const pctPrenez = x.tact > 0 ? Math.round(x.pren/x.tact*1000)/10 : null;
+      const pctDestete = x.pren > 0 ? Math.round(x.dest/x.pren*1000)/10 : null;
+      aoa.push([
+        x.rodeo.nombre, campoNombre_(x.rodeo.campo_id),
+        x.serv, x.tact, x.pren, pctPrenez!==null?pctPrenez+'%':'—',
+        x.abor, x.mort, x.dest, pctDestete!==null?pctDestete+'%':'—',
+      ]);
+    });
+    const totServ = porRodeo.reduce((s,x)=>s+x.serv,0);
+    const totTact = porRodeo.reduce((s,x)=>s+x.tact,0);
+    const totPren = porRodeo.reduce((s,x)=>s+x.pren,0);
+    const totAbor = porRodeo.reduce((s,x)=>s+x.abor,0);
+    const totMort = porRodeo.reduce((s,x)=>s+x.mort,0);
+    const totDest = porRodeo.reduce((s,x)=>s+x.dest,0);
+    const pctPrenezTot = totTact>0 ? Math.round(totPren/totTact*1000)/10 : null;
+    const pctDesteteTot = totPren>0 ? Math.round(totDest/totPren*1000)/10 : null;
+    aoa.push([
+      'TOTAL', '',
+      totServ, totTact, totPren, pctPrenezTot!==null?pctPrenezTot+'%':'—',
+      totAbor, totMort, totDest, pctDesteteTot!==null?pctDesteteTot+'%':'—',
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:24},{wch:16},{wch:12},{wch:11},{wch:11},{wch:10},{wch:10},{wch:11},{wch:10},{wch:10}];
+    ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers.length-1} }];
+
+    function estilarFilaSimple_(r0, style) {
+      for (let c = 0; c < headers.length; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'z', v:undefined };
+        ws[addr].s = style;
+      }
+    }
+    estilarFilaSimple_(0, ST_TITULO);
+    for (let c=0;c<headers.length;c++){ ws[XLSX.utils.encode_cell({r:3,c})].s = ST_HEADER; }
+    // Filas de datos con bandas alternadas
+    porRodeo.forEach((x, i) => {
+      const r0 = 4 + i;
+      const alt = i % 2 === 1;
+      for (let c=0;c<headers.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws[addr]) ws[addr] = { t:'z', v:undefined };
+        if (c===0||c===1) ws[addr].s = alt ? ST_ROWLBL_ALT : ST_ROWLBL;
+        else if (c===5||c===9) ws[addr].s = alt ? ST_PCT_ALT : ST_PCT;
+        else ws[addr].s = alt ? ST_ROW_ALT : ST_ROW;
+      }
+    });
+    // Fila TOTAL
+    const rTot = 4 + porRodeo.length;
+    for (let c=0;c<headers.length;c++) {
+      const addr = XLSX.utils.encode_cell({r:rTot,c});
+      if (!ws[addr]) ws[addr] = { t:'z', v:undefined };
+      ws[addr].s = (c===0) ? ST_TOTALLBL : ST_TOTAL;
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Reproducción por Rodeo');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Reproduccion_Por_Rodeo_${today().slice(0,7)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
 }
 
 async function exportarStockExcel_(campoId) {
