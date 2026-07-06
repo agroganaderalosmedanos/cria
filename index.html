@@ -9917,8 +9917,13 @@ async function exportarStockExcel_() {
         if (m.tipo === 'Saldo inicial') {
           if (cIn) r.carga_inicial[cIn] = (r.carga_inicial[cIn]||0) + cant;
         } else if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') {
-          // Cambio de categoría si cat origen ≠ cat destino
-          if (cIn && cOut && cIn !== cOut) {
+          if (!m.rodeo_origen_id) {
+            // Sin rodeo de origen = entrada real desde afuera del sistema (Compra
+            // de Hacienda, que ahora genera este mismo tipo de movimiento — ver
+            // sincronizarMovimientoCompra_). No es un traslado interno.
+            if (cIn) r.compra[cIn] = (r.compra[cIn]||0) + cant;
+          } else if (cIn && cOut && cIn !== cOut) {
+            // Cambio de categoría (mismo u otro rodeo, pero distinta categoría)
             r.recategorizacion_in[cIn]  = (r.recategorizacion_in[cIn]||0)  + cant;
             r.recategorizacion_out[cOut]= (r.recategorizacion_out[cOut]||0)+ cant;
           } else {
@@ -9961,9 +9966,114 @@ async function exportarStockExcel_() {
     const NUM       = { alignment:{horizontal:'center'} };
     const SUBROW    = { fill:{fgColor:{rgb:'F5F5F5'}} };
 
-    const wb = XLSX.utils.book_new();
+    // Coeficientes de Equivalente Vaca (EV) — conversión estándar para comparar
+    // categorías de distinto porte en una misma unidad de carga animal. Son
+    // valores de referencia habituales; si manejás otros propios, avisame y los
+    // cambio acá.
+    const EV_COEF = {
+      vaca: 1.0, 'vaca venta': 1.0, toro: 1.3, torito: 0.5,
+      vaquillona: 0.7, 'vaquillona venta': 0.7,
+      ternero: 0.4, ternera: 0.4,
+      novillo: 0.9, novillito: 0.6,
+    };
+    const evCoef_ = cat => EV_COEF[cat] !== undefined ? EV_COEF[cat] : 0.6;
 
-    // === REPORTE 1: Stock mensual ===
+    const nombreMesLargo_ = mesStr => {
+      const [y,mo] = mesStr.split('-');
+      return new Date(Number(y),Number(mo)-1,1).toLocaleString('es-AR',{month:'long',year:'numeric'});
+    };
+    const fechaInicioLabel = mesInicio + '-01';
+    const fechaCierreLabel = (() => {
+      const [y,mo] = mesFin.split('-').map(Number);
+      return new Date(y,mo,0).toISOString().slice(0,10); // último día del mes de cierre
+    })();
+
+    // Construye el bloque de encabezado (nombre, período, título) que va arriba
+    // de cada hoja, igual que en la planilla de referencia.
+    function encabezado_(subtitulo) {
+      return [
+        ['Agroganadera Los Médanos'],
+        [],
+        ['FECHA INICIO', fd(fechaInicioLabel)],
+        ['FECHA CIERRE', fd(fechaCierreLabel)],
+        [],
+        [subtitulo],
+        [],
+      ];
+    }
+
+    // Arma las filas ENTRADAS/SALIDAS/TOTALES + EQUIVALENTE VACA para un bloque
+    // de movimientos ya acumulados (sea de un mes puntual o de todo el período).
+    function filasMovimiento_(stockAnterior, movBloque, stockFinal) {
+      const catCols = cats.map(c=>c.charAt(0).toUpperCase()+c.slice(1));
+      const aoa = [];
+      aoa.push(['CATEGORIAS', '', ...catCols, 'TOTAL']);
+      const exisAntRow = ['', 'EXIS.ANTERIOR', ...cats.map(c=>Math.max(0,stockAnterior[c]||0))];
+      exisAntRow.push(exisAntRow.slice(2).reduce((s,v)=>s+v,0));
+      aoa.push(exisAntRow);
+
+      aoa.push(['ENTRADAS', '', ...cats.map(()=>'')]);
+      const rowsEntradas = [
+        ['','CARGA INICIAL',    ...cats.map(c=>movBloque.carga_inicial[c]||0)],
+        ['','NACIMIENTO',       ...cats.map(c=>movBloque.nacimiento[c]||0)],
+        ['','COMPRA',           ...cats.map(c=>movBloque.compra[c]||0)],
+        ['','TRASLADO',         ...cats.map(c=>movBloque.traslado_in[c]||0)],
+        ['','RECATEGORIZACIÓN', ...cats.map(c=>movBloque.recategorizacion_in[c]||0)],
+        ['','AJUSTE',           ...cats.map(()=>0)],
+      ];
+      rowsEntradas.forEach(r => { r.push(r.slice(2).reduce((s,v)=>s+v,0)); aoa.push(r); });
+      const totInRow = ['TOTAL DE ENTRADAS', ''];
+      cats.forEach((c,ci) => totInRow.push(rowsEntradas.reduce((s,r)=>s+(r[ci+2]||0),0)));
+      totInRow.push(totInRow.slice(2).reduce((s,v)=>s+v,0));
+      aoa.push(totInRow);
+
+      aoa.push(['SALIDAS', '', ...cats.map(()=>'')]);
+      const rowsSalidas = [
+        ['','MUERTE',           ...cats.map(c=>movBloque.muerte[c]||0)],
+        ['','ABORTO',           ...cats.map(c=>movBloque.aborto[c]||0)],
+        ['','VENTA',            ...cats.map(c=>movBloque.venta[c]||0)],
+        ['','TRASLADO',         ...cats.map(c=>movBloque.traslado_out[c]||0)],
+        ['','RECATEGORIZACIÓN', ...cats.map(c=>movBloque.recategorizacion_out[c]||0)],
+        ['','AJUSTE',           ...cats.map(()=>0)],
+      ];
+      rowsSalidas.forEach(r => { r.push(r.slice(2).reduce((s,v)=>s+v,0)); aoa.push(r); });
+      const totOutRow = ['TOTAL DE SALIDAS', ''];
+      cats.forEach((c,ci) => totOutRow.push(rowsSalidas.reduce((s,r)=>s+(r[ci+2]||0),0)));
+      totOutRow.push(totOutRow.slice(2).reduce((s,v)=>s+v,0));
+      aoa.push(totOutRow);
+
+      aoa.push([]);
+      const finalRow = ['TOTALES FINALES', '', ...cats.map(c=>Math.max(0,stockFinal[c]||0))];
+      finalRow.push(finalRow.slice(2).reduce((s,v)=>s+v,0));
+      aoa.push(finalRow);
+
+      const evRow = ['EQUIVALENTE VACA', '', ...cats.map(c=>Math.round(Math.max(0,stockFinal[c]||0)*evCoef_(c)*10)/10)];
+      evRow.push(Math.round(evRow.slice(2).reduce((s,v)=>s+v,0)*10)/10);
+      aoa.push(evRow);
+
+      return aoa;
+    }
+
+    // === HOJA "TODOS": acumulado de todo el período ===
+    const movTodos = { carga_inicial:{}, nacimiento:{}, compra:{}, traslado_in:{}, recategorizacion_in:{}, aborto:{}, venta:{}, muerte:{}, traslado_out:{}, recategorizacion_out:{} };
+    cats.forEach(c => Object.keys(movTodos).forEach(k => movTodos[k][c]=0));
+    meses.forEach(mesStr => {
+      const mm = movsDeMes_(mesStr);
+      Object.keys(movTodos).forEach(k => cats.forEach(c => { movTodos[k][c] += mm[k][c]||0; }));
+    });
+    const stockAntesDeTodo = stockAlCierreDeMes_(
+      (mesInicio.slice(5,7)==='01') ? `${Number(mesInicio.slice(0,4))-1}-12` : `${mesInicio.slice(0,4)}-${String(Number(mesInicio.slice(5,7))-1).padStart(2,'0')}`
+    );
+    const stockFinalTodo = stockAlCierreDeMes_(mesFin);
+    const aoaTodos = [
+      ...encabezado_('MOVIMIENTO ACUMULADO DE HACIENDA'),
+      ...filasMovimiento_(stockAntesDeTodo, movTodos, stockFinalTodo),
+    ];
+    const wsTodos = XLSX.utils.aoa_to_sheet(aoaTodos);
+    wsTodos['!cols'] = [{wch:22},{wch:20},...cats.map(()=>({wch:14})),{wch:14}];
+    XLSX.utils.book_append_sheet(wb, wsTodos, 'TODOS');
+
+    // === Stock mensual (resumen simple, se mantiene como referencia rápida) ===
     const wsStock = [];
     wsStock.push(['', ...meses.map(m => {
       const [y,mo] = m.split('-');
@@ -9984,64 +10094,20 @@ async function exportarStockExcel_() {
     // === REPORTE 2: Una hoja por mes ===
     meses.forEach(mesStr => {
       const [y,mo] = mesStr.split('-');
-      const nombreMes = new Date(Number(y),Number(mo)-1,1).toLocaleString('es-AR',{month:'long',year:'numeric'});
+      const nombreMes = nombreMesLargo_(mesStr);
       const stockAnterior = stockAlCierreDeMes_(
         mo==='01' ? `${Number(y)-1}-12` : `${y}-${String(Number(mo)-1).padStart(2,'0')}`
       );
       const movMes = movsDeMes_(mesStr);
       const stockFinal = stockAlCierreDeMes_(mesStr);
 
-      const aoa = [];
-      const styles = []; // parallel array de estilos por celda
-
-      const catCols = cats.map(c=>c.charAt(0).toUpperCase()+c.slice(1));
-      aoa.push(['CATEGORÍAS', '', ...catCols]);
-      aoa.push(['', 'EXIS. ANTERIOR', ...cats.map(c=>Math.max(0,stockAnterior[c]||0))]);
-      aoa.push(['ENTRADAS', '', ...cats.map(()=>'')]);
-
-      const rowsEntradas = [
-        ['','CARGA INICIAL',    ...cats.map(c=>movMes.carga_inicial[c]||0)],
-        ['','NACIMIENTO',       ...cats.map(c=>movMes.nacimiento[c]||0)],
-        ['','COMPRA',           ...cats.map(()=>0)],
-        ['','TRASLADO',         ...cats.map(c=>movMes.traslado_in[c]||0)],
-        ['','RECATEGORIZACIÓN', ...cats.map(c=>movMes.recategorizacion_in[c]||0)],
-        ['','AJUSTE',           ...cats.map(()=>0)],
+      const aoa = [
+        ...encabezado_('MOVIMIENTO DE HACIENDA — ' + nombreMes.toUpperCase()),
+        ...filasMovimiento_(stockAnterior, movMes, stockFinal),
       ];
-      rowsEntradas.forEach(r=>aoa.push(r));
-
-      // TOTAL ENTRADAS (fórmulas)
-      const totInRow = ['TOTAL DE ENTRADAS', ''];
-      cats.forEach((c,ci) => {
-        const startRow = aoa.length - rowsEntradas.length + 1; // fila Excel base 1
-        totInRow.push(rowsEntradas.reduce((s,r)=>s+(r[ci+2]||0),0));
-      });
-      aoa.push(totInRow);
-
-      aoa.push(['SALIDAS', '', ...cats.map(()=>'')]);
-      const rowsSalidas = [
-        ['','MUERTE',           ...cats.map(c=>movMes.muerte[c]||0)],
-        ['','ABORTO',           ...cats.map(c=>movMes.aborto[c]||0)],
-        ['','VENTA',            ...cats.map(c=>movMes.venta[c]||0)],
-        ['','TRASLADO',         ...cats.map(c=>movMes.traslado_out[c]||0)],
-        ['','RECATEGORIZACIÓN', ...cats.map(c=>movMes.recategorizacion_out[c]||0)],
-        ['','AJUSTE',           ...cats.map(()=>0)],
-      ];
-      rowsSalidas.forEach(r=>aoa.push(r));
-
-      const totOutRow = ['TOTAL DE SALIDAS', ''];
-      cats.forEach((c,ci) => {
-        totOutRow.push(rowsSalidas.reduce((s,r)=>s+(r[ci+2]||0),0));
-      });
-      aoa.push(totOutRow);
-
-      aoa.push(['TOTALES FINALES', '', ...cats.map(c=>Math.max(0,stockFinal[c]||0))]);
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{wch:22},{wch:20},...cats.map(()=>({wch:16}))];
-
-      // Anchos de fila para el título implícito
-      ws['!rows'] = aoa.map(()=>({hpt:18}));
-
+      ws['!cols'] = [{wch:22},{wch:20},...cats.map(()=>({wch:14})),{wch:14}];
       XLSX.utils.book_append_sheet(wb, ws, nombreMes.slice(0,31));
     });
 
