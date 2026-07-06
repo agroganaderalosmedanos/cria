@@ -9966,6 +9966,8 @@ async function exportarStockExcel_() {
     const NUM       = { alignment:{horizontal:'center'} };
     const SUBROW    = { fill:{fgColor:{rgb:'F5F5F5'}} };
 
+    const wb = XLSX.utils.book_new();
+
     // Coeficientes de Equivalente Vaca (EV) — conversión estándar para comparar
     // categorías de distinto porte en una misma unidad de carga animal. Son
     // valores de referencia habituales; si manejás otros propios, avisame y los
