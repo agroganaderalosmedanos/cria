@@ -9856,8 +9856,18 @@ async function exportarIndicesReproduccionExcel_() {
     const porRodeo = rodeosVientre.map(r => {
       const rid = String(r.rodeo_id);
       const serv = servicios.filter(s=>String(s.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.cantidad)||0),0);
-      const tact = tactos.filter(t=>String(t.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.total_tacteadas)||0),0);
-      const pren = tactos.filter(t=>String(t.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.prenadas)||0),0);
+      // Mismo criterio que usa el resto del sistema (calcKpisFromData_ en el backend):
+      // el Tacto final re-confirma (y puede corregir) al IATF, no se suman los dos —
+      // se usa el final si existe, y el IATF como respaldo si todavía no se hizo el final.
+      const tactosRodeo = tactos.filter(t=>String(t.rodeo_id)===rid);
+      const tactoIatf  = tactosRodeo.filter(t=>t.tipo_tacto==='Tacto IATF');
+      const tactoFinal = tactosRodeo.filter(t=>t.tipo_tacto==='Tacto final');
+      const tactIatf  = tactoIatf.reduce((s,x)=>s+(Number(x.total_tacteadas)||0),0);
+      const prenIatf  = tactoIatf.reduce((s,x)=>s+(Number(x.prenadas)||0),0);
+      const tactFinal = tactoFinal.reduce((s,x)=>s+(Number(x.total_tacteadas)||0),0);
+      const prenFinal = tactoFinal.reduce((s,x)=>s+(Number(x.prenadas)||0),0);
+      const tact = tactFinal > 0 ? tactFinal : tactIatf;
+      const pren = prenFinal > 0 ? prenFinal : prenIatf;
       const abor = abortos.filter(a=>String(a.rodeo_id)===rid).length;
       const mort = mortandad.filter(m=>String(m.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.cantidad)||1),0);
       const dest = destetes.filter(d=>String(d.rodeo_id)===rid).reduce((s,x)=>s+(Number(x.total)||0),0);
@@ -9918,7 +9928,7 @@ async function exportarIndicesReproduccionExcel_() {
     function estilarFilaSimple_(r0, style) {
       for (let c = 0; c < headers.length; c++) {
         const addr = XLSX.utils.encode_cell({ r:r0, c });
-        if (!ws[addr]) ws[addr] = { t:'z', v:undefined };
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
         ws[addr].s = style;
       }
     }
@@ -9930,7 +9940,7 @@ async function exportarIndicesReproduccionExcel_() {
       const alt = i % 2 === 1;
       for (let c=0;c<headers.length;c++) {
         const addr = XLSX.utils.encode_cell({r:r0,c});
-        if (!ws[addr]) ws[addr] = { t:'z', v:undefined };
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
         if (c===0||c===1) ws[addr].s = alt ? ST_ROWLBL_ALT : ST_ROWLBL;
         else if (c===5||c===9) ws[addr].s = alt ? ST_PCT_ALT : ST_PCT;
         else ws[addr].s = alt ? ST_ROW_ALT : ST_ROW;
@@ -9940,7 +9950,7 @@ async function exportarIndicesReproduccionExcel_() {
     const rTot = 4 + porRodeo.length;
     for (let c=0;c<headers.length;c++) {
       const addr = XLSX.utils.encode_cell({r:rTot,c});
-      if (!ws[addr]) ws[addr] = { t:'z', v:undefined };
+      if (!ws[addr]) ws[addr] = { t:'s', v:'' };
       ws[addr].s = (c===0) ? ST_TOTALLBL : ST_TOTAL;
     }
 
@@ -10141,7 +10151,7 @@ async function exportarStockExcel_(campoId) {
     function estilarFila_(ws, r0, c0, c1, style) {
       for (let c = c0; c <= c1; c++) {
         const addr = XLSX.utils.encode_cell({ r: r0, c });
-        if (!ws[addr]) ws[addr] = { t: 'z', v: undefined };
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
         ws[addr].s = style;
       }
     }
