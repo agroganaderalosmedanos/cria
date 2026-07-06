@@ -11024,6 +11024,20 @@ function buildIA() {
   return h;
 }
 
+// Limpia un SVG generado por la IA antes de inyectarlo a la página: elimina
+// <script>, <foreignObject>, atributos de eventos (onload, onclick, onerror, ...)
+// y URLs javascript:. Los gráficos (path, rect, circle, text, etc.) pasan intactos.
+function sanitizarSvgIA_(s) {
+  return String(s || '')
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script[^>]*\/?>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(href|xlink:href)\s*=\s*(['"])\s*javascript:[^'"]*\2/gi, '$1=$2#$2');
+}
+
 function iaContexto_() {
   // Armar resumen de datos para pasarle a Claude
   const rodeos = rodeosTodos();
@@ -11116,28 +11130,14 @@ function attachIAEvents() {
         .slice(-10)
         .map(function(m){ return { role: m.role, content: m.content || '' }; });
 
-      const sysprompt = 'Sos un asistente de analisis ganadero para Agroganadera Los Medanos (Argentina). ' +
-        'Tenes acceso a los datos en tiempo real del sistema. Responde siempre en español, de forma concisa y util. ' +
-        'Si la pregunta amerita un grafico, generá el SVG directamente en tu respuesta usando elementos SVG validos (sin markdown, solo el SVG puro). ' +
-        'Para graficos de linea usa path, para barras usa rect. Usa colores: verde #3F5A2A, terracota #D46A33, dorado #6A7F3F. ' +
-        'Incluí titulos y etiquetas en los SVGs. Maximo 600x300 px. ' +
-        'Si no hay datos suficientes para responder, decilo claramente. ' +
-        'No inventes datos. Solo usa los datos del contexto.' +
-        '\n\nDATOS ACTUALES DEL SISTEMA:\n' + contexto;
-
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1000,
-          system: sysprompt,
-          messages: historial,
-        })
-      });
-
-      const data = await resp.json();
-      const respText = (data.content && data.content[0] && data.content[0].text) || 'Sin respuesta.';
+      // La consulta a la IA ahora viaja por el backend (acción 'ia' del Apps Script,
+      // función consultarIA), que guarda la clave de Anthropic en las Propiedades del
+      // script — el navegador nunca ve la clave. La llamada directa anterior a
+      // api.anthropic.com no funcionaba en producción: iba sin clave (daba error 401)
+      // y el navegador además la bloqueaba por CORS. El backend arma el mismo prompt
+      // de sistema que se armaba acá, así que la respuesta es equivalente.
+      const data = await apiCall('ia', { body: { mensajes: historial, contexto: contexto } });
+      const respText = (data && data.texto) || 'Sin respuesta.';
 
       // Replace thinking with real response
       const idx = S.iaMsgs.findIndex(function(m){ return m.id === thinkId; });
@@ -11145,8 +11145,11 @@ function attachIAEvents() {
         // Render SVG inline if present
         let html;
         if (respText.includes('<svg')) {
-          // Respuesta con SVG — renderizar directamente
-          html = respText;
+          // Respuesta con SVG — se renderiza, pero SANITIZADA primero: como es HTML
+          // generado por un modelo e inyectado directo a la página, se le quitan
+          // etiquetas <script>, atributos de eventos (onload, onclick, etc.),
+          // enlaces javascript: y <foreignObject>, que podrían ejecutar código.
+          html = sanitizarSvgIA_(respText);
         } else {
           // Texto plano — escapar HTML y convertir saltos de linea
           html = respText
