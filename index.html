@@ -2018,6 +2018,28 @@ function buildDashboard() {
   const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
 
+  // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
+  // Hectáreas: si hay un campo elegido en el filtro, se usan las hectáreas de
+  // ESE campo. Si el filtro está en "todos los campos", se suman las hectáreas
+  // de todos los campos que tienen al menos un rodeo de Cría (aunque hoy no
+  // tenga stock) — son las hectáreas dedicadas a esta actividad. Los campos sin
+  // hectáreas cargadas quedan afuera de la suma y se avisa en pantalla.
+  const camposTodos_ = (S.catalogs && S.catalogs.campos) || [];
+  const campoPorId_ = Object.fromEntries(camposTodos_.map(c => [String(c.campo_id), c]));
+  let haCria = 0, camposCriaSinHa = false;
+  if (campSelecField) {
+    const c = campoPorId_[String(campSelecField)];
+    const ha = c ? Number(c.superficie_ha) || 0 : 0;
+    if (ha > 0) haCria = ha; else camposCriaSinHa = true;
+  } else {
+    const campoIdsCria_ = [...new Set(rodeosCria.map(r => String(r.campo_id)).filter(Boolean))];
+    campoIdsCria_.forEach(cid => {
+      const ha = Number(campoPorId_[cid]?.superficie_ha) || 0;
+      if (ha > 0) haCria += ha; else camposCriaSinHa = true;
+    });
+  }
+  const margenPorHa = haCria > 0 ? margen / haCria : null;
+
   // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio,
   // que muestra la Existencia tanto en cabezas como en importe.
   const eiCabCria = saldosIniciales.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
@@ -2129,6 +2151,16 @@ function buildDashboard() {
     </div>
     <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fmCria_(Math.abs(margen))}</div>
   </div>`;
+
+  if (margenPorHa !== null || camposCriaSinHa) {
+    h += `<div style="background:var(--bg2);border-radius:10px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <div>
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)">Margen Bruto / ha</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px">${campSelecField?campoNombre(campSelecField):'Todos los campos con Cría'} · ${fn(haCria,0)} ha${camposCriaSinHa?' · ⚠ hay campos sin hectáreas cargadas, no entran en la suma':''}</div>
+      </div>
+      <div style="font-size:24px;font-weight:800;color:${margenColor}">${margenPorHa!==null?(margenPorHa>=0?'':'-')+fmCria_(Math.abs(margenPorHa)):'—'}</div>
+    </div>`;
+  }
 
   // ── Detalle stock valorizado (EF) ─────────────────────────────────────────
   if (stockDetalleRows.length) {
@@ -4256,6 +4288,24 @@ function buildRecriaDashboard() {
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
 
+  // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
+  // Misma lógica que en Cría: si hay un campo elegido, usa sus hectáreas; si
+  // está en "todos los campos", suma las hectáreas de los campos que tienen
+  // rodeos de Recría (histórico, no solo con stock hoy).
+  const campoPorIdRec_ = Object.fromEntries(campos.map(c => [String(c.campo_id), c]));
+  let haRecria = 0, camposRecriaSinHa = false;
+  if (campSelec) {
+    const ha = Number(campoPorIdRec_[String(campSelec)]?.superficie_ha) || 0;
+    if (ha > 0) haRecria = ha; else camposRecriaSinHa = true;
+  } else {
+    const campoIdsRecria_ = [...new Set(todosRodeosRecria.map(r => String(r.campo_id)).filter(Boolean))];
+    campoIdsRecria_.forEach(cid => {
+      const ha = Number(campoPorIdRec_[cid]?.superficie_ha) || 0;
+      if (ha > 0) haRecria += ha; else camposRecriaSinHa = true;
+    });
+  }
+  const margenPorHaRecria = haRecria > 0 ? margen / haRecria : null;
+
   // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio.
   const eiCabRecria = movs
     .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
@@ -4332,7 +4382,17 @@ function buildRecriaDashboard() {
     </div>
   </div>`;
 
-  // KPIs producción
+  if (margenPorHaRecria !== null || camposRecriaSinHa) {
+    h += `<div class="panel" style="background:var(--bg2);margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)">Margen Bruto / ha — Recría</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">${campSelec?campoNombre(campSelec):'Todos los campos con Recría'} · ${fn(haRecria,0)} ha${camposRecriaSinHa?' · ⚠ hay campos sin hectáreas cargadas, no entran en la suma':''}</div>
+        </div>
+        <div style="font-size:24px;font-weight:800;color:${mc}">${margenPorHaRecria!==null?(margenPorHaRecria>=0?'':'-')+fmM(Math.abs(margenPorHaRecria)):'—'}</div>
+      </div>
+    </div>`;
+  }
   h += `<div class="panel">
     <div class="panel-title">📊 KPIs de producción</div>
     <div class="kpi-grid">
@@ -12225,12 +12285,14 @@ function buildABM() {
             <option value="otro">Otro</option>
           </select>
         </div>
+        <div class="fg"><label>Hectáreas <span style="font-weight:400;color:var(--text2);font-size:11px">— opcional, habilita el Margen Bruto/ha</span></label><input type="number" id="cf-campo-ha" min="0" step="0.1" placeholder="Ej: 850"></div>
       </div>
       <button class="btn btn-primary" id="cf-campo-save" style="margin-top:8px">➕ Agregar campo</button>
     </div>`;
     h += buildEntityTable(campos, [
       { key: 'nombre', label: 'Nombre' },
       { key: 'tipo',   label: 'Tipo' },
+      { key: 'superficie_ha', label: 'Hectáreas', render: v => (v !== '' && v != null && Number(v) > 0) ? fn(Number(v),0) + ' ha' : '—' },
     ], 'campos', 'campo_id');
   }
 
@@ -12778,10 +12840,12 @@ function attachABMEvents() {
     if (btn) btn.onclick = async () => {
       const nombre = document.getElementById('cf-campo-nombre').value.trim();
       const tipo   = document.getElementById('cf-campo-tipo').value;
+      const ha     = document.getElementById('cf-campo-ha') ? document.getElementById('cf-campo-ha').value.trim() : '';
       if (!nombre) { toast('Ingresá el nombre del campo', 'err'); return; }
+      if (ha !== '' && Number(ha) <= 0) { toast('Las hectáreas deben ser un número mayor a 0.', 'err'); return; }
       disableBtn(btn);
       try {
-        await apiCall('create', { body: { entity: 'campos', data: { nombre, tipo } } });
+        await apiCall('create', { body: { entity: 'campos', data: { nombre, tipo, superficie_ha: ha } } });
         await loadCatalogs(); toast('Campo agregado', 'ok'); render();
       } catch (err) { enableBtn(btn, '➕ Agregar campo'); toast(err.message, 'err'); }
     };
@@ -12950,6 +13014,7 @@ function openEditModal(entity, idCol, id) {
     cant_animales: 'Cantidad animales', comprador: 'Comprador', peso_campo_kg: 'Kg campo',
     precio_pactado: '$/kg pactado', campana: 'Campaña', estado: 'Estado',
     materia_seca_pct: 'Materia seca (%) — opcional, para conversión alimenticia', por_campo: 'Por campo', activo: 'Activo',
+    superficie_ha: 'Hectáreas — opcional, para Margen Bruto/ha', nombre: 'Nombre',
   };
 
   let fieldsHtml = '';
