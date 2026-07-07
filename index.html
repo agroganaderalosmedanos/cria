@@ -5850,7 +5850,7 @@ function egConversionMS_(rodeoId, hastaFecha, kgProducidos) {
   if (!huboConsumos) motivoSinDato = 'Este corral todavía no tiene consumos de alimento registrados.';
   else if (kgMS === 0) motivoSinDato = 'Ningún alimento consumido por este corral tiene % de materia seca cargado en Productos.';
   else if (!(kgProducidos > 0)) motivoSinDato = 'Todavía no hay kg ganados registrados (falta una segunda pesada).';
-  return { kgMS, conv, costoKgMS, hayAlimSinMS, motivoSinDato };
+  return { kgMS, costoTotal, conv, costoKgMS, hayAlimSinMS, motivoSinDato };
 }
 // Devuelve el precio unitario vigente de un producto a una fecha dada —
 // es el precio_unitario de la última compra registrada ANTES o EN esa fecha.
@@ -9247,6 +9247,23 @@ function buildMargenBruto() {
   const abortRec  = abortos.filter(a=>rodeosRec.has(String(a.rodeo_id))).length;
   const abortTot  = abortCria+abortRec;
 
+  // ── CONVERSIÓN ALIMENTICIA (MS) PONDERADA — TODA LA TERMINACIÓN ────────────
+  // Es un promedio PONDERADO por kg producidos de cada corral (suma de kg MS de
+  // todos los corrales / suma de kg ganados de todos los corrales), no un promedio
+  // simple de las conversiones individuales — así un corral grande no queda
+  // subrepresentado frente a uno chico. Al mezclar corrales con raciones distintas
+  // es un número de panorama general; para el detalle real de cada corral, la
+  // ficha de Costos de Terminación sigue siendo la referencia.
+  let kgMSTerm = 0, costoMSTerm = 0, kgGTerm = 0, hayAlimSinMSTerm = false;
+  rodeosEngordeValidos_().forEach(r => {
+    const kgG_r = egKgGanadosHastaPesada_(r.rodeo_id, corteGlobal);
+    const cm_r = egConversionMS_(r.rodeo_id, corteGlobal, kgG_r);
+    kgMSTerm += cm_r.kgMS; costoMSTerm += cm_r.costoTotal; kgGTerm += Math.max(0, kgG_r);
+    if (cm_r.hayAlimSinMS) hayAlimSinMSTerm = true;
+  });
+  const convTermPonderada = (kgGTerm > 0 && kgMSTerm > 0) ? kgMSTerm / kgGTerm : null;
+  const costoKgMSTermPonderado = (kgMSTerm > 0 && !hayAlimSinMSTerm) ? costoMSTerm / kgMSTerm : null;
+
   if (tabMB === 'reporte') {
     const acts = [
       { nombre: 'Cría',        ing: rCria.ing, eg: rCria.eg, margen: rCria.margen, color: 'var(--green)', colorHex: getComputedStyle(document.documentElement).getPropertyValue('--green').trim()||'#2f6b3f', emoji: '🐄' },
@@ -9373,6 +9390,16 @@ function buildMargenBruto() {
         <div style="font-size:22px;font-weight:800;color:${mc};margin-top:6px">${margenPct.toFixed(1)}%</div>
       </div>
     </div>`;
+
+    if (convTermPonderada !== null) {
+      h += `<div class="panel" style="margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;background:var(--gold-bg)">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gold-text);letter-spacing:.04em">🏭 Conversión alimenticia — Terminación (promedio ponderado, todos los corrales)</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${costoKgMSTermPonderado?fmMB(costoKgMSTermPonderado)+' por kg de materia seca':hayAlimSinMSTerm?'⚠ hay corrales con alimentos sin % MS cargado':''}</div>
+        </div>
+        <div style="font-size:24px;font-weight:800;color:var(--gold)">${fn(convTermPonderada,1)} : 1</div>
+      </div>`;
+    }
 
     h += `<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch">
       <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
@@ -9777,6 +9804,22 @@ function buildMargenBruto() {
         ${bloqueStock('🌱 Recría', stockPorAct('Recría'))}
         ${bloqueStock('🏭 Terminación', stockPorAct('Engorde'))}
       </div></div>`;
+
+    if (convTermPonderada !== null) {
+      h += `<div class="panel"><div class="panel-title">🌾 Conversión alimenticia — Terminación</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+          <div style="background:var(--gold-bg);border-radius:8px;padding:12px 20px;text-align:center">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Promedio ponderado (todos los corrales)</div>
+            <div style="font-size:24px;font-weight:800;color:var(--gold);margin-top:4px">${fn(convTermPonderada,1)} : 1</div>
+          </div>
+          ${costoKgMSTermPonderado?`<div style="background:var(--bg2);border-radius:8px;padding:12px 20px;text-align:center">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text2)">Costo por kg de MS</div>
+            <div style="font-size:24px;font-weight:800;margin-top:4px">${fmMB(costoKgMSTermPonderado)}</div>
+          </div>`:''}
+          <div style="font-size:12px;color:var(--text3);max-width:320px">Ponderado por kg producidos de cada corral. ${hayAlimSinMSTerm?'⚠ Hay corrales con alimentos sin % de materia seca cargado — el número no incluye esos consumos.':'Para el detalle de un corral puntual, entrá a Terminación → Costos.'}</div>
+        </div>
+      </div>`;
+    }
 
     const rents = [
       { n:'🐄 Cría', mar:rCria.margen, eg:rCria.eg, stock:Object.values(stockPorAct('Cría')).reduce((s,v)=>s+v,0) },
