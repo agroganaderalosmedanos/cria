@@ -9839,10 +9839,13 @@ function buildMargenBruto() {
         <td class="tc">${roi!==null?`<span class="pill ${roi>=0?'pill-green':'pill-red'}">${roi.toFixed(1)}%</span>`:'—'}</td></tr>`;
     });
     const mejor=rents[0], peor=rents[rents.length-1];
-    h+=`</tbody></table><div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:13px;line-height:1.6">
-      <strong>Análisis:</strong> La actividad más rentable fue <strong>${mejor.n}</strong> con ${fmMB(mejor.mar)}.
-      ${peor.mar<0?`<strong>${peor.n}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.`:'Las tres actividades tuvieron resultado positivo.'}
-      ${marTotal>=0?`Margen ganadero total positivo: <strong>${fmMB(marTotal)}</strong>.`:`Margen ganadero total negativo: <strong>-${fmMB(Math.abs(marTotal))}</strong>.`}
+    h+=`</tbody></table><div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:13px;line-height:1.7">
+      <strong>Análisis:</strong>
+      <ul style="margin:6px 0 0 0;padding-left:20px">
+        <li>La actividad más rentable fue <strong>${mejor.n}</strong> con ${fmMB(mejor.mar)}.</li>
+        <li>${peor.mar<0?`<strong>${peor.n}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.`:'Las tres actividades tuvieron resultado positivo.'}</li>
+        <li>${marTotal>=0?`Margen ganadero total positivo: <strong>${fmMB(marTotal)}</strong>.`:`Margen ganadero total negativo: <strong>-${fmMB(Math.abs(marTotal))}</strong>.`}</li>
+      </ul>
     </div></div>`;
 
     if (mortTot>0) {
