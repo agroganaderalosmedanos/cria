@@ -5823,11 +5823,15 @@ function egConsumos_(rodeoId, hastaFecha) {
 function egConversionMS_(rodeoId, hastaFecha, kgProducidos) {
   const productos = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
   const prodPorId = Object.fromEntries(productos.map(p => [String(p.producto_id), p]));
-  let kgMS = 0, costoTotal = 0, hayAlimSinMS = false;
+  // Admite coma decimal (formato argentino, ej: "88,5") además de punto — si se
+  // guardó con coma, Number() directo da NaN y silenciosamente lo trataba como 0.
+  const numMS_ = v => Number(String(v == null ? '' : v).trim().replace(',', '.')) || 0;
+  let kgMS = 0, costoTotal = 0, hayAlimSinMS = false, huboConsumos = false;
   egConsumos_(rodeoId, hastaFecha).forEach(c => {
     const p = prodPorId[String(c.producto_id)];
     if (p && p.categoria === 'Veterinaria') return;
-    const ms = p ? Number(p.materia_seca_pct) || 0 : 0;
+    huboConsumos = true;
+    const ms = p ? numMS_(p.materia_seca_pct) : 0;
     const cant = Number(c.cantidad) || 0;
     // Costo real de ESTE consumo (kg tal cual × precio vigente a su fecha) — se
     // suma siempre, sea o no que el producto tenga % de MS cargado.
@@ -5840,7 +5844,13 @@ function egConversionMS_(rodeoId, hastaFecha, kgProducidos) {
   // cargado — si falta alguno, costoTotal incluye kg que kgMS no está contando,
   // y el cociente quedaría inflado sin ningún aviso.
   const costoKgMS = (kgMS > 0 && !hayAlimSinMS) ? costoTotal / kgMS : null;
-  return { kgMS, conv, costoKgMS, hayAlimSinMS };
+  // Diagnóstico legible cuando NO se puede mostrar la conversión — para que la
+  // tarjeta explique la causa en vez de desaparecer sin avisar nada.
+  let motivoSinDato = null;
+  if (!huboConsumos) motivoSinDato = 'Este corral todavía no tiene consumos de alimento registrados.';
+  else if (kgMS === 0) motivoSinDato = 'Ningún alimento consumido por este corral tiene % de materia seca cargado en Productos.';
+  else if (!(kgProducidos > 0)) motivoSinDato = 'Todavía no hay kg ganados registrados (falta una segunda pesada).';
+  return { kgMS, conv, costoKgMS, hayAlimSinMS, motivoSinDato };
 }
 // Devuelve el precio unitario vigente de un producto a una fecha dada —
 // es el precio_unitario de la última compra registrada ANTES o EN esa fecha.
@@ -6693,7 +6703,9 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Kg ganados</div>
         <div style="text-align:right;font-weight:600">${fn(kgG)}</div>
         ${convMS_.conv?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Conversión (MS)</div>
-        <div style="text-align:right;font-weight:600;color:var(--gold)">${fn(convMS_.conv,1)} : 1${convMS_.hayAlimSinMS?' ⚠':''}</div>`:''}
+        <div style="text-align:right;font-weight:600;color:var(--gold)">${fn(convMS_.conv,1)} : 1${convMS_.hayAlimSinMS?' ⚠':''}</div>`
+        :(convMS_.motivoSinDato && convMS_.motivoSinDato.includes('% de materia seca')?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Conversión (MS)</div>
+        <div style="text-align:right;font-weight:600;color:var(--text3)" title="${convMS_.motivoSinDato}">⚠ falta % MS</div>`:'')}
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo alim.</div>
         <div style="text-align:right;font-weight:600">${fm(costoAlim)}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo vet.</div>
@@ -6959,7 +6971,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   // (el mismo corte que usa "Alim./kg ganado"). Cálculo centralizado en
   // egConversionMS_ — el Dashboard general y el Historial de lotes usan la misma
   // función, así los tres lugares muestran siempre el mismo número.
-  const { conv: convAlim, costoKgMS, hayAlimSinMS } = egConversionMS_(rodeoId, ultima?.fecha, kgG);
+  const { conv: convAlim, costoKgMS, hayAlimSinMS, motivoSinDato: motivoSinConv } = egConversionMS_(rodeoId, ultima?.fecha, kgG);
   const precVentaProm = kgV > 0 ? iv / kgV : null;
   const totalAnim = (cantIng - stk) + stk;
   const costoARecuperar = costoTotal - iv;
@@ -7034,7 +7046,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg vendidos</div><div style="font-size:18px;font-weight:700">${fn(kgV,0)}</div></div>
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg en stock</div><div style="font-size:18px;font-weight:700">${fn(kgStk,0)}</div><div style="font-size:10px;color:var(--text3)">${fn(stk,0)} anim.</div></div>
     ${caXkg?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fm(caXkg)}</div></div>`:''}
-    ${convAlim?`<div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Conversión (MS)</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${fn(convAlim,1)} : 1</div><div style="font-size:10px;color:var(--text3)">${costoKgMS?fm(costoKgMS)+' por kg MS':hayAlimSinMS?'⚠ hay alimentos sin % MS':'kg MS por kg ganado'}</div></div>`:''}
+    <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px;min-width:180px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Conversión (MS)</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${convAlim?fn(convAlim,1)+' : 1':'—'}</div><div style="font-size:10px;color:var(--text3)">${convAlim?(costoKgMS?fm(costoKgMS)+' por kg MS':'⚠ hay alimentos sin % MS'):(motivoSinConv||'kg MS por kg ganado')}</div></div>
     ${precVentaProm?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Precio venta prom.</div><div style="font-size:18px;font-weight:700">${fm(precVentaProm)}/kg</div></div>`:''}
   </div>`;
 
