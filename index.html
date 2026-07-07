@@ -6857,6 +6857,26 @@ function buildEngordeCostos_(rodeoId, fm) {
   const ganDiaria = dias && dias > 0 && kgIngProm > 0 ? (Number(ultima?.peso_prom_kg||0) - kgIngProm) / dias : null;
   const caXkg = kgG > 0 ? caHPAlim / kgG : null;
   const ccXkg = kgG > 0 ? cc / kgG : null;
+  // ── CONVERSIÓN ALIMENTICIA FÍSICA ──────────────────────────────────────────
+  // kg de MATERIA SECA consumidos por cada kg vivo ganado (hasta la última pesada,
+  // el mismo corte que usa "Alim./kg ganado"). Solo entra el alimento que tenga
+  // cargado su % de materia seca en el catálogo de Productos; la veterinaria se
+  // excluye. Si algún alimento no tiene el % cargado, se avisa en la tarjeta en
+  // vez de mostrar una conversión incompleta como si fuera completa.
+  const prodsCatalogo_ = (S.catalogs && S.catalogs.productos) || [];
+  const prodInfoConv_ = Object.fromEntries(prodsCatalogo_.map(p => [String(p.producto_id), p]));
+  let kgMSconsumidos = 0, hayAlimSinMS = false;
+  egConsumos_(rodeoId, ultima?.fecha).forEach(c => {
+    const p = prodInfoConv_[String(c.producto_id)];
+    if (p && p.categoria === 'Veterinaria') return;
+    const ms = p ? Number(p.materia_seca_pct) || 0 : 0;
+    if (ms > 0) kgMSconsumidos += (Number(c.cantidad) || 0) * ms / 100;
+    else hayAlimSinMS = true;
+  });
+  const convAlim = (kgG > 0 && kgMSconsumidos > 0) ? kgMSconsumidos / kgG : null;
+  // Costo de la ración por kg de MS — solo tiene sentido si TODO el alimento tiene
+  // su % de MS cargado (si falta alguno, el costo incluiría kg que la MS no cuenta).
+  const costoKgMS = (kgMSconsumidos > 0 && !hayAlimSinMS) ? caHPAlim / kgMSconsumidos : null;
   const precVentaProm = kgV > 0 ? iv / kgV : null;
   const totalAnim = (cantIng - stk) + stk;
   const costoARecuperar = costoTotal - iv;
@@ -6931,6 +6951,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg vendidos</div><div style="font-size:18px;font-weight:700">${fn(kgV,0)}</div></div>
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg en stock</div><div style="font-size:18px;font-weight:700">${fn(kgStk,0)}</div><div style="font-size:10px;color:var(--text3)">${fn(stk,0)} anim.</div></div>
     ${caXkg?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fm(caXkg)}</div></div>`:''}
+    ${convAlim?`<div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Conversión (MS)</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${fn(convAlim,1)} : 1</div><div style="font-size:10px;color:var(--text3)">${costoKgMS?fm(costoKgMS)+' por kg MS':hayAlimSinMS?'⚠ hay alimentos sin % MS':'kg MS por kg ganado'}</div></div>`:''}
     ${precVentaProm?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Precio venta prom.</div><div style="font-size:18px;font-weight:700">${fm(precVentaProm)}/kg</div></div>`:''}
   </div>`;
 
@@ -7967,6 +7988,7 @@ function buildInsumos() {
           <select id="np-categoria"><option value="Alimentación">Alimentación</option><option value="Veterinaria">Veterinaria</option><option value="Reproducción">Reproducción</option></select>
         </div>
         <div class="fg"><label>Unidad</label><input type="text" id="np-unidad" placeholder="Ej: kg, litros, frascos, dosis"></div>
+        <div class="fg"><label>Materia seca (%) <span style="font-weight:400;color:var(--text2);font-size:11px">— opcional, solo alimentos en kg</span></label><input type="number" id="np-ms" min="0" max="100" step="0.1" placeholder="Ej: 88 (maíz), 35 (silo)"></div>
       </div>
       <label style="display:flex;align-items:center;gap:7px;font-size:13px;margin-top:6px;cursor:pointer">
         <input type="checkbox" id="np-por-campo" style="width:auto">
@@ -8072,6 +8094,7 @@ function buildInsumos() {
     { key: 'nombre', label: 'Nombre' },
     { key: 'categoria', label: 'Categoría' },
     { key: 'unidad', label: 'Unidad' },
+    { key: 'materia_seca_pct', label: 'MS %', render: v => (v !== '' && v != null && Number(v) > 0) ? fn(Number(v), 0) + ' %' : '—' },
     { key: 'por_campo', label: 'Por campo', render: v => esPorCampo_(v) ? '<span class="pill pill-gold">Sí, por campo</span>' : '<span class="pill pill-green">Pozo común</span>' },
     { key: '_stock', label: 'Stock actual', render: v => `<span style="font-weight:600;color:var(--gold)">${v}</span>` },
     { key: 'activo', label: 'Activo', render: v => String(v).toUpperCase() === 'TRUE' || v === true ? 'Sí' : 'No' },
@@ -8448,10 +8471,12 @@ function attachInsumosEvents() {
     const categoria = document.getElementById('np-categoria').value;
     const unidad = document.getElementById('np-unidad').value.trim();
     const porCampo = document.getElementById('np-por-campo').checked;
+    const msPct = document.getElementById('np-ms') ? document.getElementById('np-ms').value.trim() : '';
     if (!nombre || !unidad) { toast('Completá nombre y unidad del producto.', 'err'); return; }
+    if (msPct !== '' && (Number(msPct) <= 0 || Number(msPct) > 100)) { toast('La materia seca debe ser un porcentaje entre 0 y 100.', 'err'); return; }
     npSave.disabled = true;
     try {
-      await apiCall('create', { body: { entity: 'productos', data: { nombre, categoria, unidad, activo: true, por_campo: porCampo } } });
+      await apiCall('create', { body: { entity: 'productos', data: { nombre, categoria, unidad, activo: true, por_campo: porCampo, materia_seca_pct: msPct } } });
       await loadCatalogs();
       const sel = document.getElementById('in-producto');
       if (sel) {
@@ -8462,6 +8487,7 @@ function attachInsumosEvents() {
       actualizarCampoCompraInsumo_();
       document.getElementById('np-nombre').value = '';
       document.getElementById('np-unidad').value = '';
+      if (document.getElementById('np-ms')) document.getElementById('np-ms').value = '';
       document.getElementById('np-por-campo').checked = false;
       document.getElementById('in-nuevo-producto-panel').style.display = 'none';
       toast('Producto creado: ' + nombre, 'ok');
@@ -12901,6 +12927,10 @@ function openEditModal(entity, idCol, id) {
   if (!item) { toast('No se encontró el registro.', 'err'); return; }
   // Asegurarse que precio_cabeza, precio_kg y peso_prom_kg siempre estén disponibles
   // para editar, incluso en movimientos viejos cargados antes de habilitar estos campos.
+  if (entity === 'productos') {
+    // Productos cargados antes de habilitar la materia seca: mostrar el campo igual.
+    if (item.materia_seca_pct === undefined) item.materia_seca_pct = '';
+  }
   if (entity === 'movimientos') {
     if (!('precio_cabeza' in item)) item.precio_cabeza = 0;
     if (!('precio_kg' in item)) item.precio_kg = 0;
@@ -12919,6 +12949,7 @@ function openEditModal(entity, idCol, id) {
     precio_kg: '💲 Precio por kg ($) — usar solo si cargás peso_prom_kg', peso_prom_kg: '⚖️ Peso prom. de ingreso (kg)',
     cant_animales: 'Cantidad animales', comprador: 'Comprador', peso_campo_kg: 'Kg campo',
     precio_pactado: '$/kg pactado', campana: 'Campaña', estado: 'Estado',
+    materia_seca_pct: 'Materia seca (%) — opcional, para conversión alimenticia', por_campo: 'Por campo', activo: 'Activo',
   };
 
   let fieldsHtml = '';
