@@ -8868,7 +8868,9 @@ function calcMargenRecria_(campana, desde, hasta) {
     .forEach(m=>{ egCompraExt+=(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0); });
 
   let egAlim=0, egVet=0;
-  consumos.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id); if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo; });
+  // CAMBIO (decisión de negocio): los consumos se valorizan al precio vigente a la
+  // fecha de cada consumo (igual que Cría), no al promedio histórico de compras.
+  consumos.forEach(c=>{ const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id)); const costo=(Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha); if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo; });
 
   // Filas de cesiones enviadas a Engorde (para detalle)
   const filasCesEng_R = egresos.map(e=>({
@@ -8897,9 +8899,13 @@ function calcMargenTerminacion_(campana, desde, hasta) {
   const stockList = S.stock||[];
   const pesadas   = S.cache.pesadas||[];
 
-  // Ventas con fallback precio_pactado
+  // Ventas con fallback precio_pactado.
+  // CAMBIO (decisión de negocio): ahora las ventas respetan el período desde/hasta
+  // elegido, igual que ya lo hacían Cría y Recría — antes sumaban TODO el historial
+  // del corral aunque se eligiera un período, mezclando ingresos de un ciclo con
+  // costos de otro.
   let ingVentas=0;
-  (S.cache.ventas||[]).filter(v=>rodeosIds.has(String(v.rodeo_id))).forEach(v=>{
+  (S.cache.ventas||[]).filter(v=>rodeosIds.has(String(v.rodeo_id))&&(!desde||String(v.fecha_salida)>=desde)&&(!hasta||String(v.fecha_salida)<=hasta)).forEach(v=>{
     ingVentas+=Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
   });
 
@@ -8958,7 +8964,9 @@ function calcMargenTerminacion_(campana, desde, hasta) {
   let egAlim=0, egVet=0;
   consumos.forEach(c=>{
     const prod=productos.find(p=>String(p.producto_id)===String(c.producto_id));
-    const costo=(Number(c.cantidad)||0)*egCostoPromProducto_(c.producto_id);
+    // CAMBIO (decisión de negocio): precio vigente a la fecha del consumo, igual
+    // que Cría y Recría — antes acá se usaba el promedio histórico de compras.
+    const costo=(Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
     if(prod&&prod.categoria==='Veterinaria') egVet+=costo; else egAlim+=costo;
   });
 
