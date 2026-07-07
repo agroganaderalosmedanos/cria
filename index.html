@@ -12995,6 +12995,10 @@ function openEditModal(entity, idCol, id) {
     // Productos cargados antes de habilitar la materia seca: mostrar el campo igual.
     if (item.materia_seca_pct === undefined) item.materia_seca_pct = '';
   }
+  if (entity === 'campos') {
+    // Campos cargados antes de habilitar las hectáreas: mostrar el campo igual.
+    if (item.superficie_ha === undefined) item.superficie_ha = '';
+  }
   if (entity === 'movimientos') {
     if (!('precio_cabeza' in item)) item.precio_cabeza = 0;
     if (!('precio_kg' in item)) item.precio_kg = 0;
