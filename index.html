@@ -5636,6 +5636,7 @@ function attachEngordeEvents() {
       const fi = egFechaIngreso_(rid);
       const kgG = egKgGanadosHastaPesada_(rid);
       const gd = egGanDiaria_(rid);
+      const convMS_ = egConversionMS_(rid, null, kgG); // sin corte de fecha: todo el historial de consumo del corral
       btn.disabled = true; btn.textContent = '⏳ Guardando...';
       try {
         await apiCall('create', { body: { entity: 'engorde_lotes', data: {
@@ -5644,6 +5645,7 @@ function attachEngordeEvents() {
           animales: egCantIngresada_(rid), kg_ganados: kgG, gan_diaria: gd||'',
           costo_alim: egCostoAlim_(rid), costo_compra: egCostoCompra_(rid),
           ing_ventas: egIngVentas_(rid),
+          kg_ms_consumidos: convMS_.kgMS||'', conversion_ms: convMS_.conv||'', costo_kg_ms: convMS_.costoKgMS||'',
         }}});
         invalidateCache('engorde_lotes');
         await loadEntity('engorde_lotes', true);
@@ -5761,6 +5763,10 @@ function egLotes_() {
     ganDiaria: (l.gan_diaria!==''&&l.gan_diaria!==undefined&&l.gan_diaria!==null) ? Number(l.gan_diaria) : null,
     costoAlim: Number(l.costo_alim)||0, costoCompra: Number(l.costo_compra)||0,
     ingVentas: Number(l.ing_ventas)||0,
+    // Lotes cerrados antes de esta actualización no tienen estos tres campos —
+    // quedan en null y la tabla los muestra como "—" en vez de 0 (que sería engañoso).
+    conversionMS: (l.conversion_ms!==''&&l.conversion_ms!==undefined&&l.conversion_ms!==null) ? Number(l.conversion_ms) : null,
+    costoKgMS: (l.costo_kg_ms!==''&&l.costo_kg_ms!==undefined&&l.costo_kg_ms!==null) ? Number(l.costo_kg_ms) : null,
   }));
 }
 
@@ -5807,6 +5813,34 @@ function egVentas_(rodeoId) {
 function egConsumos_(rodeoId, hastaFecha) {
   const todos = (S.cache.consumos_insumos || []).filter(c => String(c.rodeo_id) === String(rodeoId));
   return hastaFecha ? todos.filter(c => String(c.fecha) <= hastaFecha) : todos;
+}
+
+// Conversión alimenticia (materia seca) de un corral, hasta una fecha de corte.
+// Función única reutilizada en la ficha de Costos, las tarjetas del Dashboard
+// general y el cierre de lote del Historial — así los tres lugares muestran
+// siempre el mismo número, calculado de la misma forma.
+// kgProducidos: kg vivo ganado en el mismo corte (ej. egKgGanadosHastaPesada_).
+function egConversionMS_(rodeoId, hastaFecha, kgProducidos) {
+  const productos = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+  const prodPorId = Object.fromEntries(productos.map(p => [String(p.producto_id), p]));
+  let kgMS = 0, costoTotal = 0, hayAlimSinMS = false;
+  egConsumos_(rodeoId, hastaFecha).forEach(c => {
+    const p = prodPorId[String(c.producto_id)];
+    if (p && p.categoria === 'Veterinaria') return;
+    const ms = p ? Number(p.materia_seca_pct) || 0 : 0;
+    const cant = Number(c.cantidad) || 0;
+    // Costo real de ESTE consumo (kg tal cual × precio vigente a su fecha) — se
+    // suma siempre, sea o no que el producto tenga % de MS cargado.
+    costoTotal += cant * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    if (ms > 0) kgMS += cant * ms / 100;
+    else hayAlimSinMS = true;
+  });
+  const conv = (kgProducidos > 0 && kgMS > 0) ? kgMS / kgProducidos : null;
+  // El costo por kg de MS solo es válido si TODO el alimento tenía su % de MS
+  // cargado — si falta alguno, costoTotal incluye kg que kgMS no está contando,
+  // y el cociente quedaría inflado sin ningún aviso.
+  const costoKgMS = (kgMS > 0 && !hayAlimSinMS) ? costoTotal / kgMS : null;
+  return { kgMS, conv, costoKgMS, hayAlimSinMS };
 }
 // Devuelve el precio unitario vigente de un producto a una fecha dada —
 // es el precio_unitario de la última compra registrada ANTES o EN esa fecha.
@@ -6638,6 +6672,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
     const resultado = ingVentas + ivStk - costoAlim - costoVet;
     const dias      = egDiasEngorde_(rid);
     const ultimaPes = egUltimaPesada_(rid);
+    const convMS_   = egConversionMS_(rid, ultimaPes?.fecha, kgG);
 
     h += `<div style="background:var(--bg);border:1px solid var(--border2);border-radius:12px;padding:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
@@ -6657,6 +6692,8 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
         <div style="text-align:right;font-weight:600;color:var(--green)">${gdp ? fn(gdp,3)+' kg/día' : '—'}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Kg ganados</div>
         <div style="text-align:right;font-weight:600">${fn(kgG)}</div>
+        ${convMS_.conv?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Conversión (MS)</div>
+        <div style="text-align:right;font-weight:600;color:var(--gold)">${fn(convMS_.conv,1)} : 1${convMS_.hayAlimSinMS?' ⚠':''}</div>`:''}
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo alim.</div>
         <div style="text-align:right;font-weight:600">${fm(costoAlim)}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo vet.</div>
@@ -6918,25 +6955,11 @@ function buildEngordeCostos_(rodeoId, fm) {
   const caXkg = kgG > 0 ? caHPAlim / kgG : null;
   const ccXkg = kgG > 0 ? cc / kgG : null;
   // ── CONVERSIÓN ALIMENTICIA FÍSICA ──────────────────────────────────────────
-  // kg de MATERIA SECA consumidos por cada kg vivo ganado (hasta la última pesada,
-  // el mismo corte que usa "Alim./kg ganado"). Solo entra el alimento que tenga
-  // cargado su % de materia seca en el catálogo de Productos; la veterinaria se
-  // excluye. Si algún alimento no tiene el % cargado, se avisa en la tarjeta en
-  // vez de mostrar una conversión incompleta como si fuera completa.
-  const prodsCatalogo_ = (S.catalogs && S.catalogs.productos) || [];
-  const prodInfoConv_ = Object.fromEntries(prodsCatalogo_.map(p => [String(p.producto_id), p]));
-  let kgMSconsumidos = 0, hayAlimSinMS = false;
-  egConsumos_(rodeoId, ultima?.fecha).forEach(c => {
-    const p = prodInfoConv_[String(c.producto_id)];
-    if (p && p.categoria === 'Veterinaria') return;
-    const ms = p ? Number(p.materia_seca_pct) || 0 : 0;
-    if (ms > 0) kgMSconsumidos += (Number(c.cantidad) || 0) * ms / 100;
-    else hayAlimSinMS = true;
-  });
-  const convAlim = (kgG > 0 && kgMSconsumidos > 0) ? kgMSconsumidos / kgG : null;
-  // Costo de la ración por kg de MS — solo tiene sentido si TODO el alimento tiene
-  // su % de MS cargado (si falta alguno, el costo incluiría kg que la MS no cuenta).
-  const costoKgMS = (kgMSconsumidos > 0 && !hayAlimSinMS) ? caHPAlim / kgMSconsumidos : null;
+  // kg de MATERIA SECA consumidos por cada kg vivo ganado, hasta la última pesada
+  // (el mismo corte que usa "Alim./kg ganado"). Cálculo centralizado en
+  // egConversionMS_ — el Dashboard general y el Historial de lotes usan la misma
+  // función, así los tres lugares muestran siempre el mismo número.
+  const { conv: convAlim, costoKgMS, hayAlimSinMS } = egConversionMS_(rodeoId, ultima?.fecha, kgG);
   const precVentaProm = kgV > 0 ? iv / kgV : null;
   const totalAnim = (cantIng - stk) + stk;
   const costoARecuperar = costoTotal - iv;
@@ -7662,7 +7685,7 @@ function buildEngordeHistorial_(rodeosEng, fm) {
     h += '<div class="empty-state"><span class="ico">📋</span><div class="msg">No hay lotes cerrados. Cuando un corral llegue a stock 0 podés guardarlo acá.</div></div>';
     return h;
   }
-  h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th class="tc">Apertura</th><th class="tc">Cierre</th><th class="tc">Días</th><th class="tc">Animales</th><th class="tc">Kg ganados</th><th class="tc">GDP</th><th class="tc">Costo alim.</th><th class="tc">Ingreso</th><th class="tc">Utilidad</th><th></th></tr></thead><tbody>';
+  h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th class="tc">Apertura</th><th class="tc">Cierre</th><th class="tc">Días</th><th class="tc">Animales</th><th class="tc">Kg ganados</th><th class="tc">GDP</th><th class="tc">Conversión (MS)</th><th class="tc">Costo alim.</th><th class="tc">Ingreso</th><th class="tc">Utilidad</th><th></th></tr></thead><tbody>';
   lotes.forEach(l => {
     const dias = Math.round((new Date(l.fechaCierre)-new Date(l.fechaApertura))/86400000);
     const util = l.ingVentas - l.costoCompra - l.costoAlim;
@@ -7674,6 +7697,7 @@ function buildEngordeHistorial_(rodeosEng, fm) {
       <td class="tc">${fn(l.animales,0)} cab.</td>
       <td class="tc">${fn(l.kgGanados,0)} kg</td>
       <td class="tc">${l.ganDiaria?fn(l.ganDiaria,3)+' kg/día':'—'}</td>
+      <td class="tc">${l.conversionMS?fn(l.conversionMS,1)+' : 1':'—'}</td>
       <td class="tc">${fm(l.costoAlim)}</td>
       <td class="tc">${fm(l.ingVentas)}</td>
       <td class="tc" style="font-weight:700;color:${util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(util)}</td>
