@@ -679,6 +679,7 @@ const NAV = [
   ]},
   { section: 'Terminación', icon: 'ti-meat', defaultPage: 'engorde', items: [
     { k: 'engorde',              icon: 'ti-chart-bar',      label: 'Dashboard' },
+    { k: 'engorde_pesadas',      icon: 'ti-scale',          label: 'Pesadas' },
     { k: 'engorde_costos',       icon: 'ti-coin',           label: 'Costos' },
     { k: 'engorde_comparacion',  icon: 'ti-arrows-diff',    label: 'Comparación' },
     { k: 'engorde_proyeccion',   icon: 'ti-calendar-event', label: 'Proyección de salidas' },
@@ -982,7 +983,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    home: '', recria_dashboard: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación',
+    home: '', recria_dashboard: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde',
   };
   return titles[p] || p;
 }
@@ -1029,7 +1030,6 @@ function buildPage(page) {
     case 'engorde_cierre':
     case 'engorde_historial': return buildEngorde();
     case 'engorde_pesadas':   return buildEngordePesadasPage();
-    case 'engorde_pesadas': return buildEngordePesadas();
     case 'engorde_alim':    return buildEngordeAlim();
     case 'sueldos':          return buildSueldos();
     case 'indices_reproduccion': return buildIndicesReproduccion();
@@ -11445,6 +11445,19 @@ function buildPesadas() {
 
   let h = '<div class="page-header"><div class="page-title">Pesadas</div><div class="page-sub">Registrá pesadas de cualquier rodeo — Cría, Recría o Engorde</div></div>';
 
+  // ── Alerta: corrales de Terminación donde la GPD entre las dos últimas
+  // pesadas bajó respecto al intervalo anterior (eficiencia de engorde en baja).
+  const alertasGpd = egCorralesGpdEnBaja_(rodeosEngordeValidos_());
+  if (alertasGpd.length) {
+    h += `<div class="panel" style="border:1px solid var(--red);background:var(--red-bg)">
+      <div class="panel-title" style="color:var(--red-text)">⚠ Caída de eficiencia (GPD) entre pesadas — Terminación</div>
+      <div style="font-size:12.5px;color:var(--red-text);margin-bottom:8px">En estos corrales la ganancia diaria de peso del último intervalo entre pesadas es <strong>menor</strong> que en el intervalo anterior:</div>
+      <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--red-text)">
+        ${alertasGpd.map(a => `<li style="margin-bottom:3px"><strong>${a.nombre}</strong> (${a.campo}) — bajó a <strong>${fn(a.gpd,3)} kg/día</strong> (antes: ${fn(a.gpdAnterior,3)} kg/día) al ${fd(a.fecha)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
   h += `<div class="panel">
     <div class="panel-title">Registrar pesada</div>
     <div class="fgrid">
@@ -11486,14 +11499,31 @@ function buildPesadas() {
   return h;
 }
 
+// Calcula, para una lista de pesadas a mostrar (puede venir filtrada por campo/
+// rodeo), la GPD contra la pesada ANTERIOR de ese mismo rodeo — usando siempre
+// el historial COMPLETO de cada rodeo (egGpdIntervalos_), nunca la lista
+// filtrada, para que el intervalo sea correcto aunque la pesada anterior no
+// esté visible en la tabla filtrada actual.
 function buildPesadasHistorial_(pes) {
   if (!pes.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pesadas registradas.</div></div>';
+  const rodeoIds = [...new Set(pes.map(p => String(p.rodeo_id)))];
+  const gpdPorPesadaId = {};
+  rodeoIds.forEach(rid => {
+    egGpdIntervalos_(rid).forEach(it => { gpdPorPesadaId[String(it.pesada_id)] = it; });
+  });
   return buildEntityTable(pes, [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
     { key: 'campo_id', label: 'Campo', render: v => v ? campoNombre(v) : '—' },
     { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
     { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+    { key: 'pesada_id', label: 'GPD vs. pesada ant.', render: id => {
+        const it = gpdPorPesadaId[String(id)];
+        if (!it || it.gpd == null) return '<span style="color:var(--text3)">—</span>';
+        const txt = fn(it.gpd, 3) + ' kg/día';
+        if (it.bajo) return `<span style="color:var(--red-text);font-weight:700" title="Bajó respecto al intervalo anterior (${fn(it.gpdAnterior,3)} kg/día)">⚠ ${txt}</span>`;
+        return `<span style="color:var(--green-text)">${txt}</span>`;
+      } },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'pesadas', 'pesada_id');
 }
