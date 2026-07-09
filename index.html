@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_1';
+const APP_VERSION = 'index_consolidado_4_6_155_2';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10813,8 +10813,11 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
     });
     ventas.filter(function(v){ return (v.fecha_salida || '') <= fechaCorte && String(v.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(v){ stock -= Number(v.cant_animales) || 0; });
-    pariciones.filter(function(p){ return (p.fecha || '') <= fechaCorte && String(p.rodeo_id) === String(r.rodeo_id); })
-      .forEach(function(p){ stock += Number(p.nacidos_vivos) || 0; });
+    // NOTA: los nacimientos NO se suman acá desde la hoja Pariciones (nacidos_vivos)
+    // sobre el rodeo de la VACA — esas cabezas ya están acreditadas, aparte, en el
+    // rodeo de terneros vía su propio Saldo inicial (con el tag [pid:...], ver
+    // esAltaPorParicion_ más arriba). Sumarlas también acá duplicaba los nacimientos
+    // del período (mismo bug ya corregido en calcStockHacienda_ — ver su comentario).
     mortandad.filter(function(m){ return (m.fecha || '') <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(m){ stock -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return (d.fecha || '') <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
