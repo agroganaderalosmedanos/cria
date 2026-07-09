@@ -5539,15 +5539,43 @@ function buildEngordePesadasPage() {
     <button class="btn btn-primary" id="egp-save" style="margin-top:6px">Registrar pesada</button>
   </div>`;
 
+  // ── Alerta: corrales donde la GPD entre las dos últimas pesadas bajó
+  // respecto al intervalo anterior (la eficiencia de engorde viene cayendo).
+  const alertasGpd = egCorralesGpdEnBaja_(rodeosEng);
+  if (alertasGpd.length) {
+    h += `<div class="panel" style="border:1px solid var(--red);background:var(--red-bg)">
+      <div class="panel-title" style="color:var(--red-text)">⚠ Caída de eficiencia (GPD) entre pesadas</div>
+      <div style="font-size:12.5px;color:var(--red-text);margin-bottom:8px">En estos corrales la ganancia diaria de peso del último intervalo entre pesadas es <strong>menor</strong> que en el intervalo anterior:</div>
+      <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--red-text)">
+        ${alertasGpd.map(a => `<li style="margin-bottom:3px"><strong>${a.nombre}</strong> (${a.campo}) — bajó a <strong>${fn(a.gpd,3)} kg/día</strong> (antes: ${fn(a.gpdAnterior,3)} kg/día) al ${fd(a.fecha)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
   h += '<div class="section-label">Historial de pesadas por corral</div>';
   rodeosEng.forEach(r => {
     const pes = todasPes.filter(p => String(p.rodeo_id) === String(r.rodeo_id));
     if (!pes.length) return;
-    h += `<div style="font-weight:600;font-size:13px;margin:12px 0 6px">${r.nombre} <span style="color:var(--muted);font-weight:400">${campoNombre(r.campo_id)}</span></div>`;
+    // Mapa pesada_id → datos del intervalo que esa pesada cierra, para mostrar
+    // la GPD contra la pesada anterior y resaltar si bajó respecto al intervalo previo.
+    const intervalos = egGpdIntervalos_(r.rodeo_id);
+    const gpdPorPesadaId = Object.fromEntries(intervalos.map(it => [String(it.pesada_id), it]));
+    const bajaUltima = intervalos.length && intervalos[intervalos.length - 1].bajo;
+    h += `<div style="font-weight:600;font-size:13px;margin:12px 0 6px;display:flex;align-items:center;gap:8px">
+      ${r.nombre} <span style="color:var(--muted);font-weight:400">${campoNombre(r.campo_id)}</span>
+      ${bajaUltima ? '<span class="pill pill-red" title="La GPD entre las dos últimas pesadas bajó respecto al intervalo anterior">⚠ GPD en baja</span>' : ''}
+    </div>`;
     h += buildEntityTable(pes, [
       { key: 'fecha', label: 'Fecha', render: v => fd(v) },
       { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
       { key: 'peso_prom_kg', label: 'Peso prom. (kg)', render: v => fn(v) },
+      { key: 'pesada_id', label: 'GPD vs. pesada ant.', render: id => {
+          const it = gpdPorPesadaId[String(id)];
+          if (!it || it.gpd == null) return '<span style="color:var(--text3)">—</span>';
+          const txt = fn(it.gpd, 3) + ' kg/día';
+          if (it.bajo) return `<span style="color:var(--red-text);font-weight:700" title="Bajó respecto al intervalo anterior (${fn(it.gpdAnterior,3)} kg/día)">⚠ ${txt}</span>`;
+          return `<span style="color:var(--green-text)">${txt}</span>`;
+        } },
       { key: 'observacion', label: 'Obs.', render: v => v || '—' },
     ], 'pesadas', 'pesada_id');
   });
@@ -6031,6 +6059,55 @@ function egGanDiaria_(rodeoId) {
   const last = pes[pes.length - 1];
   const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
   return dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
+}
+// Calcula la GPD (Ganancia de Peso Diaria) de CADA intervalo entre dos pesadas
+// consecutivas de un corral — a diferencia de egGanDiaria_() (que da un único
+// promedio desde el ingreso hasta la última pesada), esto permite ver pesada a
+// pesada si la eficiencia de engorde se mantiene, mejora o cae.
+// Devuelve un array ordenado cronológicamente. Cada intervalo trae:
+//   pesada_id   → id de la pesada que CIERRA el intervalo (la más nueva de las dos)
+//   fechaDesde/fechaHasta, dias, pesoDesde/pesoHasta, gpd
+//   gpdAnterior → GPD del intervalo previo (null si es el primer intervalo)
+//   bajo        → true si este intervalo tiene GPD menor al intervalo anterior
+//                 (alerta: la eficiencia de engorde disminuyó entre estas pesadas)
+function egGpdIntervalos_(rodeoId) {
+  const pes = egPesadas_(rodeoId); // ya viene ordenado asc por fecha
+  const intervalos = [];
+  for (let i = 1; i < pes.length; i++) {
+    const prev = pes[i - 1], cur = pes[i];
+    const dias = Math.round((new Date(cur.fecha) - new Date(prev.fecha)) / 86400000);
+    const pesoDesde = Number(prev.peso_prom_kg) || 0;
+    const pesoHasta = Number(cur.peso_prom_kg) || 0;
+    const gpd = dias > 0 ? (pesoHasta - pesoDesde) / dias : null;
+    intervalos.push({
+      pesada_id: cur.pesada_id, fechaDesde: prev.fecha, fechaHasta: cur.fecha,
+      dias, pesoDesde, pesoHasta, gpd, gpdAnterior: null, bajo: false,
+    });
+  }
+  // Compara cada intervalo contra el anterior para detectar caída de eficiencia
+  for (let i = 1; i < intervalos.length; i++) {
+    const gpdAnterior = intervalos[i - 1].gpd;
+    intervalos[i].gpdAnterior = gpdAnterior;
+    intervalos[i].bajo = (gpdAnterior != null && intervalos[i].gpd != null && intervalos[i].gpd < gpdAnterior);
+  }
+  return intervalos;
+}
+// Lista, para un conjunto de corrales, aquellos cuyo ÚLTIMO intervalo entre
+// pesadas muestra una GPD menor a la del intervalo anterior — es decir, la
+// eficiencia de engorde viene cayendo en las últimas dos pesadas cargadas.
+function egCorralesGpdEnBaja_(rodeosEng) {
+  const out = [];
+  rodeosEng.forEach(r => {
+    const intervalos = egGpdIntervalos_(r.rodeo_id);
+    const ultimo = intervalos[intervalos.length - 1];
+    if (ultimo && ultimo.bajo) {
+      out.push({
+        rodeo_id: r.rodeo_id, nombre: r.nombre, campo: campoNombre(r.campo_id),
+        gpd: ultimo.gpd, gpdAnterior: ultimo.gpdAnterior, fecha: ultimo.fechaHasta,
+      });
+    }
+  });
+  return out;
 }
 function egFmon_(pesos, moneda) {
   if (moneda === 'USD') {
@@ -6667,6 +6744,8 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
     const kgStk   = egKgStockEstimado_(rid);
     const kgG     = egKgGanadosHastaPesada_(rid);
     const gdp     = egGanDiaria_(rid);
+    const gpdIntervalos = egGpdIntervalos_(rid);
+    const gpdUltimoBajo = gpdIntervalos.length && gpdIntervalos[gpdIntervalos.length - 1].bajo;
     const consumosRodeo = consumos.filter(c=>String(c.rodeo_id)===String(rid));
     let costoAlim=0, costoVet=0;
     consumosRodeo.forEach(c=>{
@@ -6699,7 +6778,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Última pesada</div>
         <div style="text-align:right;font-weight:600">${ultimaPes ? fn(ultimaPes.peso)+' kg' : '—'}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">GDP</div>
-        <div style="text-align:right;font-weight:600;color:var(--green)">${gdp ? fn(gdp,3)+' kg/día' : '—'}</div>
+        <div style="text-align:right;font-weight:600;color:${gpdUltimoBajo?'var(--red-text)':'var(--green)'}" ${gpdUltimoBajo?'title="La GPD entre las dos últimas pesadas bajó respecto al intervalo anterior — ver Pesadas por corral"':''}>${gdp ? fn(gdp,3)+' kg/día' : '—'}${gpdUltimoBajo?' ⚠':''}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Kg ganados</div>
         <div style="text-align:right;font-weight:600">${fn(kgG)}</div>
         ${convMS_.conv?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Conversión (MS)</div>
