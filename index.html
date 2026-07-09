@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_2';
+const APP_VERSION = 'index_consolidado_4_6_155_3';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -9729,6 +9729,14 @@ function buildMargenBruto() {
       </div>`;
     }
 
+    // ── DETALLE DE INGRESOS Y EGRESOS POR ACTIVIDAD ─────────────────────────
+    // Se agrega acá (además de en la pestaña "Resultado económico") para que
+    // el Reporte Directorio impreso/PDF quede completo y permita rastrear
+    // diferencias entre dos informes línea por línea, sin tener que cambiar
+    // de pestaña y volver a imprimir.
+    h += '<div class="section-label" style="margin-top:4px">💵 Detalle de Ingresos y Egresos por actividad</div>';
+    h += buildDetalleIngresosEgresosPorActividad_();
+
     // ── ANÁLISIS ────────────────────────────────────────────────────────
     const actsOrdenadas = acts.slice().sort((a,b)=>b.margen-a.margen);
     const mejorAct = actsOrdenadas[0];
@@ -9770,8 +9778,12 @@ function buildMargenBruto() {
     return h;
   }
 
-  if (tabMB === 'resultado') {
-    h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+  // Detalle de Ingresos y Egresos por actividad (Cría / Recría / Terminación) —
+  // se usa tanto en la pestaña "Resultado económico" como en el "Reporte
+  // Directorio" (imprimible), para que el PDF también quede completo y se
+  // puedan rastrear diferencias entre dos informes línea por línea.
+  function buildDetalleIngresosEgresosPorActividad_() {
+    return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
       <div class="panel" style="margin-bottom:0">
         <div class="panel-title" style="color:var(--green-text)">📈 Ingresos totales</div>
         <table class="dt"><tbody>
@@ -9822,6 +9834,10 @@ function buildMargenBruto() {
         </tbody></table>
       </div>
     </div>`;
+  }
+
+  if (tabMB === 'resultado') {
+    h += buildDetalleIngresosEgresosPorActividad_();
 
     h += `<div class="panel" style="background:${mb2};border:2px solid ${mc};margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
