@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_4';
+const APP_VERSION = 'index_consolidado_4_6_155_5';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -9828,6 +9828,7 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Compra de hacienda</td><td class="tr">${fmMB(rEng.detalle.egCompras)}</td></tr>
           <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rEng.detalle.egAlim)}</td></tr>
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rEng.detalle.egVet)}</td></tr>
+          ${rEng.detalle.egOtros>0?`<tr><td style="padding-left:16px">Otros insumos</td><td class="tr">${fmMB(rEng.detalle.egOtros)}</td></tr>`:''}
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rEng.detalle.egSueldos)}</td></tr>
           <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(rEng.eg)}</strong></td></tr>
           <tr style="font-size:15px;background:rgba(220,50,50,0.1)"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMB(egTotal)}</strong></td></tr>
