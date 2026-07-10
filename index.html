@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_11';
+const APP_VERSION = 'index_consolidado_4_6_155_12';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2728,8 +2728,7 @@ function buildAbortos() {  const _criaTabs = [
   // Historial con filtros de campo y rodeo
   const rodeosTodosAb = (S.catalogs?.rodeos||[]);
   const rodeosAptosHist = rodeosConServicioPorCampo(campos[0]?.campo_id);
-  h += `<div class="section-label">Historial <span class="count-badge" style="margin-left:6px">${items.length}</span></div>
-  <div class="fgrid" style="margin-bottom:10px">
+  h += `<div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por campo</label>
       <select id="ab-hist-campo" onchange="
         const rid=document.getElementById('ab-hist-rodeo');
@@ -2749,31 +2748,20 @@ function buildAbortos() {  const _criaTabs = [
   </div>
   <div id="ab-hist-tabla">`;
   const itemsFilt = items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-  h += buildAbortosTabla_(itemsFilt);
+  h += buildEntityTable(itemsFilt, ABORTOS_COLS_, 'abortos', 'aborto_id');
   h += `</div>`;
   return h;
 }
 
-function buildAbortosTabla_(items) {
-  if (!items.length) return '<div class="empty-state"><span class="ico">⊘</span><div class="msg">Sin abortos registrados.</div></div>';
-  let t = `<div class="tw"><table class="dt"><thead><tr>
-    <th>Fecha</th><th>Rodeo</th><th>Caravana</th><th>Obs.</th><th></th>
-  </tr></thead><tbody>`;
-  items.forEach(a=>{
-    t += `<tr>
-      <td>${fd(a.fecha)}</td>
-      <td>${rodeoNombre(a.rodeo_id)}</td>
-      <td>${a.caravana_vaca||'—'}</td>
-      <td>${a.observacion||'—'}</td>
-      <td><div class="row-actions">
-        <button class="icon-btn" data-edit="${a.aborto_id}" data-entity="abortos" data-idcol="aborto_id" title="Editar">✎</button>
-        <button class="icon-btn danger" data-del="${a.aborto_id}" data-entity="abortos" data-idcol="aborto_id" title="Eliminar">✕</button>
-      </div></td>
-    </tr>`;
-  });
-  t += `</tbody></table></div>`;
-  return t;
-}
+// Columnas del historial de Abortos — se usan tanto en el render inicial como
+// en el refiltrado por campo/rodeo, para que ambos pasen por buildEntityTable
+// (con orden por columna clickeable) en vez de una tabla armada a mano sin sort.
+const ABORTOS_COLS_ = [
+  { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+  { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+  { key: 'caravana_vaca', label: 'Caravana', render: v => v || '—' },
+  { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+];
 function attachAbortosEvents() {
   window.abFiltrarHistorial_ = function() {
     const campoId = document.getElementById('ab-hist-campo')?.value || '';
@@ -2787,7 +2775,7 @@ function attachAbortosEvents() {
       return true;
     }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const el = document.getElementById('ab-hist-tabla');
-    if (el) { el.innerHTML = buildAbortosTabla_(items); attachTableDeleteEvents('abortos', 'aborto_id'); }
+    if (el) { el.innerHTML = buildEntityTable(items, ABORTOS_COLS_, 'abortos', 'aborto_id'); attachTableDeleteEvents('abortos', 'aborto_id'); }
   };
 
   const save = document.getElementById('ab-save');
