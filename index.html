@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_5';
+const APP_VERSION = 'index_consolidado_4_6_155_7';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -8244,7 +8244,7 @@ function buildInsumos() {
             style="width:120px;font-size:13px;padding:4px 6px">
           <input type="date" class="pv-nueva-fecha" data-pid="${pid}" value="${today()}"
             style="font-size:13px;padding:4px 6px">
-          <button class="btn btn-primary btn-sm pv-guardar" data-pid="${pid}"
+          <button class="btn btn-primary btn-sm pv-guardar" data-pid="${pid}" data-nombre="${p.nombre}"
             style="font-size:11px;padding:4px 10px;white-space:nowrap">✓ Actualizar</button>
         </div>
       </td>
@@ -13212,6 +13212,7 @@ function fieldInputType_(key, value) {
   if (key.includes('fecha')) return 'date';
   if (key === 'rodeo_id' || key === 'rodeo_origen_id' || key === 'rodeo_destino_id') return 'rodeo';
   if (key === 'campo_id' || key === 'campo_origen_id' || key === 'campo_destino_id') return 'campo';
+  if (key === 'producto_id') return 'producto';
   if (key === 'activo' || key === 'por_campo') return 'boolean';
   if (key === 'tipo' || key === 'tipo_tacto' || key === 'tipo_venta' || key === 'estado') return 'text';
   if (typeof value === 'number' || (!isNaN(value) && value !== '' && value !== null)) return 'number';
@@ -13233,6 +13234,19 @@ function openEditModal(entity, idCol, id) {
     // Campos cargados antes de habilitar las hectáreas: mostrar el campo igual.
     if (item.superficie_ha === undefined) item.superficie_ha = '';
   }
+  if (entity === 'compras_insumos') {
+    // Registros viejos, o cargados desde el botón "Actualizar" de Precios, pueden
+    // no traer alguna de estas claves en el objeto crudo — sin esto, el campo
+    // directamente no aparecía en el modal (no es que estuviera vacío, faltaba entero).
+    if (!('precio_unitario' in item)) item.precio_unitario = 0;
+    if (!('cantidad' in item))        item.cantidad = 0;
+    if (!('proveedor' in item))       item.proveedor = '';
+    if (!('observaciones' in item))   item.observaciones = '';
+  }
+  if (entity === 'consumos_insumos') {
+    if (!('cantidad' in item))        item.cantidad = 0;
+    if (!('observaciones' in item))   item.observaciones = '';
+  }
   if (entity === 'movimientos') {
     if (!('precio_cabeza' in item)) item.precio_cabeza = 0;
     if (!('precio_kg' in item)) item.precio_kg = 0;
@@ -13241,6 +13255,7 @@ function openEditModal(entity, idCol, id) {
   const keys = Object.keys(item).filter(k => k !== idCol);
   const rodeosL = rodeosTodos();
   const camposL = (S.catalogs && S.catalogs.campos) || [];
+  const productosL = (S.catalogs && S.catalogs.productos) || [];
 
   // Etiquetas amigables para el modal de edición
   const FIELD_LABELS_ = {
@@ -13253,6 +13268,7 @@ function openEditModal(entity, idCol, id) {
     precio_pactado: '$/kg pactado', campana: 'Campaña', estado: 'Estado',
     materia_seca_pct: 'Materia seca (%) — opcional, para conversión alimenticia', por_campo: 'Por campo', activo: 'Activo',
     superficie_ha: 'Hectáreas — opcional, para Margen Bruto/ha', nombre: 'Nombre',
+    precio_unitario: '💲 Precio unitario ($)', proveedor: 'Proveedor', producto_id: 'Producto',
   };
 
   let fieldsHtml = '';
@@ -13272,6 +13288,9 @@ function openEditModal(entity, idCol, id) {
     } else if (type === 'campo') {
       fieldsHtml += `<div class="fg"><label>${labelText}</label>
         <select id="${fid}"><option value="">—</option>${camposL.map(c => `<option value="${c.campo_id}" ${String(c.campo_id)===String(item[k])?'selected':''}>${c.nombre}</option>`).join('')}</select></div>`;
+    } else if (type === 'producto') {
+      fieldsHtml += `<div class="fg"><label>${labelText}</label>
+        <select id="${fid}">${productosL.map(p => `<option value="${p.producto_id}" ${String(p.producto_id)===String(item[k])?'selected':''}>${p.nombre}</option>`).join('')}</select></div>`;
     } else if (type === 'boolean') {
       const esTrue = esPorCampo_(item[k]);
       fieldsHtml += `<div class="fg"><label>${labelText}</label>
