@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_7';
+const APP_VERSION = 'index_consolidado_4_6_155_8';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6485,6 +6485,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)) && (c.fecha||'')<=corteEng);
   let totalAlim=0, totalVeter=0, totalOtros=0;
   const detalleAlimEng=[], detalleVetEng=[], detalleOtrosEng=[];
+  const resumenAlimentos = {}; // pid -> {nombre, unidad, cantidad, costo} — para el resumen de alimentos consumidos
   consumos.forEach(c => {
     const pid = String(c.producto_id);
     const precioU = egPrecioVigenteProducto_(pid, c.fecha);
@@ -6492,7 +6493,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     const cat = (prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
     const row = {fecha:c.fecha, prod:prodPorId[pid]?.nombre||'—', cant:Number(c.cantidad)||0, rodeo:rodeoNombre(c.rodeo_id), costo:importe};
     if (cat.includes('veterin')||cat.includes('sanid')) { totalVeter+=importe; detalleVetEng.push(row); }
-    else if (cat.includes('aliment'))                   { totalAlim+=importe;  detalleAlimEng.push(row); }
+    else if (cat.includes('aliment'))                   {
+      totalAlim+=importe;  detalleAlimEng.push(row);
+      if (!resumenAlimentos[pid]) resumenAlimentos[pid] = { nombre: prodPorId[pid]?.nombre||'Producto '+pid, unidad: prodPorId[pid]?.unidad||'', cantidad: 0, costo: 0 };
+      resumenAlimentos[pid].cantidad += Number(c.cantidad)||0;
+      resumenAlimentos[pid].costo    += importe;
+    }
     else                                                { totalOtros+=importe; detalleOtrosEng.push(row); }
   });
 
@@ -6597,6 +6603,27 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     </div>
     <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
   </div>`;
+
+  // ── RESUMEN DE ALIMENTOS CONSUMIDOS EN EL PERÍODO ────────────────────
+  // Agrupa los consumos de categoría "Alimentación" por producto (mismo
+  // conjunto de registros que arma el total de "🌾 Alimentación" de arriba),
+  // mostrando la cantidad total consumida en la unidad propia de cada insumo
+  // (ej: 340 fardos de alfalfa, 1.200 kg de maíz, 45 días de silo, etc.).
+  const listaAlimentos = Object.values(resumenAlimentos).sort((a,b)=>b.costo-a.costo);
+  if (listaAlimentos.length) {
+    h += `<div class="panel">
+      <div class="panel-title">🌾 Alimentos consumidos — ${campSelec}${campoLabel}</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Total acumulado hasta ${fd(corteEng)} · ${consumos.filter(c=>{const cat=(prodPorId[String(c.producto_id)]?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');return cat.includes('aliment');}).length} registros de consumo</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+        ${listaAlimentos.map(a => `
+          <div style="background:var(--bg2);border-radius:9px;padding:12px 14px">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px">${a.nombre}</div>
+            <div style="font-size:20px;font-weight:800;color:var(--gold-text)">${fn(a.cantidad)} <span style="font-size:12px;font-weight:600;color:var(--text2)">${a.unidad||''}</span></div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${fm(a.costo)}${totalAlim>0?' · '+fn(a.costo/totalAlim*100,1)+'% del total':''}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }
 
   // ── EXISTENCIA INICIAL ─────────────────────────────────────────────
   const movs2 = S.cache.movimientos || [];
