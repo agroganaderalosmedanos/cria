@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_8';
+const APP_VERSION = 'index_consolidado_4_6_155_9';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6692,26 +6692,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     ventas: ventasCabEng, mortandad: mortCabEng,
   }, efCabEng);
 
-  // Paneles de detalle de insumos — se renderizan acá donde detalleAlimEng está definida
-  const buildInsumoTableEng_ = (filas, titulo) => {
-    if (!filas.length) return '';
-    let t = `<div class="panel"><div class="panel-title">${titulo}</div>
-      <div class="tw"><table class="dt"><thead><tr>
-        <th>Fecha</th><th>Producto</th><th>Corral</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
-      </tr></thead><tbody>`;
-    let tot=0;
-    filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
-      tot+=d.costo;
-      t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
-        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
-    });
-    t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
-      <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
-    return t+'</tbody></table></div></div>';
-  };
-  if (detalleAlimEng.length)  h += buildInsumoTableEng_(detalleAlimEng,  '🌾 Alimentación — detalle');
-  if (detalleVetEng.length)   h += buildInsumoTableEng_(detalleVetEng,   '💉 Veterinaria — detalle');
-  if (detalleOtrosEng.length) h += buildInsumoTableEng_(detalleOtrosEng, '📦 Otros insumos — detalle');
+  // NOTA: las tablas de detalle línea por línea de Alimentación/Veterinaria/
+  // Otros insumos (un renglón por cada consumo cargado) se movieron a la
+  // pestaña "Costos" — acá en el Dashboard quedan solo los totales (arriba,
+  // en Egresos) y el resumen agrupado por producto ("🌾 Alimentos consumidos").
+  // Antes esta tabla completa se mostraba acá y quedaba larguísima con mucho
+  // movimiento cargado.
 
   // buildEngordeDashboard_ retorna acá — el resto (KPIs, tarjetas, mortandad)
   // se renderiza en el bloque page==='engorde' en el orden correcto:
@@ -7029,6 +7015,45 @@ function buildEngordeCostos_(rodeoId, fm) {
       </tr>`;
     });
     h += '</tbody></table></div>';
+
+    // ── Detalle de insumos consumidos (un renglón por cada consumo cargado) ──
+    // Antes vivía en el Dashboard y quedaba larguísimo con mucho movimiento
+    // cargado; acá en Costos es donde corresponde mirarlo línea por línea.
+    // IMPORTANTE: usa la MISMA clasificación que egCostoAlim_ de arriba (solo
+    // categoria === 'Veterinaria' es Veterinaria; todo lo demás cuenta como
+    // Alimentación) — no la clasificación por texto libre que usa el Dashboard —
+    // para que el total de esta tabla siempre coincida con las tarjetas de Egresos.
+    const productosAllC = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+    const prodPorIdC = Object.fromEntries(productosAllC.map(p=>[String(p.producto_id),p]));
+    const consumosC = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds2.has(String(c.rodeo_id)) && (c.fecha||'')<=corteCostos);
+    const detalleAlimC=[], detalleVetC=[];
+    consumosC.forEach(c => {
+      const pid = String(c.producto_id);
+      const importe = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
+      const row = {fecha:c.fecha, prod:prodPorIdC[pid]?.nombre||'—', cant:Number(c.cantidad)||0, rodeo:rodeoNombre(c.rodeo_id), costo:importe};
+      if (prodPorIdC[pid]?.categoria === 'Veterinaria') detalleVetC.push(row);
+      else detalleAlimC.push(row);
+    });
+    const buildInsumoTableCostos_ = (filas, titulo) => {
+      if (!filas.length) return '';
+      let t = `<div class="panel"><div class="panel-title">${titulo}</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Fecha</th><th>Producto</th><th>Corral</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+        </tr></thead><tbody>`;
+      let tot=0;
+      filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
+        tot+=d.costo;
+        t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
+          <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
+      });
+      t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
+        <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
+      return t+'</tbody></table></div></div>';
+    };
+    h += '<div class="section-label">Detalle de insumos consumidos</div>';
+    h += buildInsumoTableCostos_(detalleAlimC, '🌾 Alimentación — detalle');
+    h += buildInsumoTableCostos_(detalleVetC,  '💉 Veterinaria — detalle');
+
     return h;
   }
   const r = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
