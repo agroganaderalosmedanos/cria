@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_10';
+const APP_VERSION = 'index_consolidado_4_6_155_11';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2337,49 +2337,42 @@ function buildDashboard() {
   if (detalleAlimCria.length) h += buildInsumoTableCria_(detalleAlimCria, '🌿 Alimentación e insumos — detalle');
   if (detalleVetCria.length)  h += buildInsumoTableCria_(detalleVetCria,  '💉 Veterinaria — detalle');
 
-  // Mortandad y Abortos — al final del dashboard, con el detalle línea por
-  // línea de cada baja/aborto (antes eran tarjetas resumen por rodeo; ahora
-  // se lista cada registro para poder ver fecha, caravana y observación).
+  // Mortandad y Abortos — al final del dashboard: título + cantidad por rodeo
+  // en renglones (el detalle registro por registro, si hace falta, se ve en
+  // la pantalla de Mortandad/Abortos, no acá).
   const mortandadCriaFilt = (S.cache.mortandad || []).filter(m => rodeosCriaIds.has(String(m.rodeo_id)));
   const mortCriaTotal = mortandadCriaFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
   const abortosCriaFilt2 = (S.cache.abortos || []).filter(a => rodeosCriaIds.has(String(a.rodeo_id)));
   const abortosCriaTotal2 = abortosCriaFilt2.length;
 
-  const buildDetalleBajas_ = (filas, titulo, color, colorBg, unidadTxt) => {
-    const ordenadas = filas.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const buildResumenPorRodeo_ = (porRodeo, titulo, color, colorBg, total, unidadSing, unidadPlural) => {
     let t = `<div class="panel" style="border:2px solid ${color};background:${colorBg}">
-      <div class="panel-title" style="color:${color}">${titulo}</div>
-      <div class="tw"><table class="dt"><thead><tr>
-        <th>Fecha</th><th>Rodeo</th><th>Caravana</th><th class="tc">Cant.</th><th>Obs.</th>
-      </tr></thead><tbody>`;
-    ordenadas.forEach(f => {
-      t += `<tr>
-        <td>${fd(f.fecha)}</td>
-        <td>${rodeoNombre(f.rodeo_id)}</td>
-        <td>${f.caravana||'—'}</td>
-        <td class="tc">${fn(f.cantidad)}</td>
-        <td>${f.observacion||'—'}</td>
-      </tr>`;
+      <div class="panel-title" style="color:${color}">${titulo}</div>`;
+    Object.entries(porRodeo).forEach(([rid,cant])=>{
+      const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
+      t += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid ${color}">
+        <div style="font-weight:600">${r?.nombre||'Rodeo '+rid}</div>
+        <div style="font-size:16px;font-weight:700;color:${color}">${cant} ${cant===1?unidadSing:unidadPlural}</div>
+      </div>`;
     });
-    t += `<tr style="background:${colorBg};font-weight:800"><td colspan="3" class="tr">TOTAL</td>
-      <td class="tc" style="color:${color};font-size:15px">${fn(filas.reduce((s,f)=>s+(Number(f.cantidad)||1),0))}</td><td></td></tr>`;
-    t += `</tbody></table></div></div>`;
+    t += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin-top:4px">
+      <div style="font-weight:800">TOTAL</div>
+      <div style="font-size:18px;font-weight:800;color:${color}">${total} ${total===1?unidadSing:unidadPlural}</div>
+    </div></div>`;
     return t;
   };
 
   if (mortCriaTotal > 0) {
-    h += buildDetalleBajas_(
-      mortandadCriaFilt.map(m=>({fecha:m.fecha, rodeo_id:m.rodeo_id, caravana:m.caravana_ternero, cantidad:m.cantidad, observacion:m.observacion})),
-      '💀 Muertes en Cría', 'var(--red)', 'rgba(200,50,50,0.06)'
-    );
+    const mortCriaPorRodeo = {};
+    mortandadCriaFilt.forEach(m => { mortCriaPorRodeo[m.rodeo_id] = (mortCriaPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
+    h += buildResumenPorRodeo_(mortCriaPorRodeo, '💀 Muertes en Cría', 'var(--red)', 'rgba(200,50,50,0.06)', mortCriaTotal, 'baja', 'bajas');
     h += `<div style="font-size:12px;color:var(--red);margin:-10px 0 16px">⚠ Su impacto está reflejado en el menor stock al cierre.</div>`;
   }
 
   if (abortosCriaTotal2 > 0) {
-    h += buildDetalleBajas_(
-      abortosCriaFilt2.map(a=>({fecha:a.fecha, rodeo_id:a.rodeo_id, caravana:a.caravana_vaca, cantidad:1, observacion:a.observacion})),
-      '⊘ Abortos en Cría', 'var(--clay-text)', 'rgba(180,100,30,0.06)'
-    );
+    const abortosPorRodeo2 = {};
+    abortosCriaFilt2.forEach(a => { abortosPorRodeo2[a.rodeo_id] = (abortosPorRodeo2[a.rodeo_id]||0) + 1; });
+    h += buildResumenPorRodeo_(abortosPorRodeo2, '⊘ Abortos en Cría', 'var(--clay-text)', 'rgba(180,100,30,0.06)', abortosCriaTotal2, 'aborto', 'abortos');
   }
 
   return h;
