@@ -138,6 +138,16 @@ body { min-height: 100vh; }
 
 .tw { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
 table.dt { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Columna de acciones (✎/✕) fija a la derecha en tablas anchas con scroll
+   horizontal — sin esto, en tablas con muchas columnas había que scrollear
+   hasta el final para poder editar/borrar, y al volver se perdía de vista
+   qué fila era. */
+table.dt th.col-actions-sticky, table.dt td.col-actions-sticky {
+  position: sticky; right: 0; background: var(--bg);
+  box-shadow: -3px 0 6px rgba(0,0,0,0.08);
+  z-index: 1;
+}
+table.dt tbody tr:hover td.col-actions-sticky { background: var(--bg2); }
 table.dt th { text-align: left; padding: 10px 14px; background: var(--bg2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
 table.dt th.tc, table.dt td.tc { text-align: center; }
 table.dt td { padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -236,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_13';
+const APP_VERSION = 'index_consolidado_4_6_155_14';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2733,7 +2743,7 @@ function buildAbortos() {  const _criaTabs = [
       <select id="ab-hist-campo" onchange="
         const rid=document.getElementById('ab-hist-rodeo');
         const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
-        rid.innerHTML='<option value=\"\">Todos los rodeos</option>'+rods.map(r=>\`<option value=\"\${r.rodeo_id}\">\${r.nombre}</option>\`).join('');
+        rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
         abFiltrarHistorial_()">
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
@@ -2966,7 +2976,7 @@ function buildMortandad() {
       <select id="mo-hist-campo" onchange="
         const rid=document.getElementById('mo-hist-rodeo');
         const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
-        rid.innerHTML='<option value=\"\">Todos los rodeos</option>'+rods.map(r=>\`<option value=\"\${r.rodeo_id}\">\${r.nombre}</option>\`).join('');
+        rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
         moFiltrarHistorial_()">
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
@@ -8358,7 +8368,7 @@ function buildInsumos() {
       <select id="in-hist-filtro-campo" onchange="
         const ri=document.getElementById('in-hist-filtro-rodeo');
         const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
-        ri.innerHTML='<option value=\"\">Todos los rodeos</option>'+rods.map(r=>\`<option value=\"\${r.rodeo_id}\">\${r.nombre}</option>\`).join('');
+        ri.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
         renderInsumosHistorialFiltrado()">
         <option value="">Todos los campos</option>
         ${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
@@ -8468,7 +8478,7 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
     const flecha = activo ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
     h += `<th class="sortable-th" onclick="sortHistorialInsumos('${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
   });
-  h += '<th></th></tr></thead><tbody>';
+  h += '<th class="col-actions-sticky"></th></tr></thead><tbody>';
   filas.forEach(f => {
     h += `<tr>
       <td>${fd(f.fecha)}</td>
@@ -8478,7 +8488,7 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
       <td>${f.rodeo}</td>
       <td>${fn(f.cantidad)} ${f.unidad}</td>
       <td>${f.detalle}</td>
-      <td><div class="row-actions">
+      <td class="col-actions-sticky"><div class="row-actions">
         <button class="icon-btn" data-edit="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Editar">✎</button>
         <button class="icon-btn danger" data-del="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Eliminar">✕</button>
       </div></td>
@@ -13210,11 +13220,11 @@ function buildEntityTable(items, cols, entity, idCol) {
     const flecha = activo ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
     h += `<th class="sortable-th" onclick="sortEntityTable('${entity}','${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
   });
-  h += '<th></th></tr></thead><tbody>';
+  h += '<th class="col-actions-sticky"></th></tr></thead><tbody>';
   sortedItems.forEach(item => {
     h += '<tr>';
     cols.forEach(c => h += `<td>${c.render ? c.render(item[c.key]) : (item[c.key] != null ? item[c.key] : '—')}</td>`);
-    h += `<td><div class="row-actions">
+    h += `<td class="col-actions-sticky"><div class="row-actions">
       <button class="icon-btn" data-edit="${item[idCol]}" data-entity="${entity}" data-idcol="${idCol}" title="Editar">✎</button>
       <button class="icon-btn danger" data-del="${item[idCol]}" data-entity="${entity}" data-idcol="${idCol}" title="Eliminar">✕</button>
     </div></td>`;
