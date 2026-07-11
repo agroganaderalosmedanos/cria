@@ -236,7 +236,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_12';
+const APP_VERSION = 'index_consolidado_4_6_155_13';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2943,6 +2943,7 @@ function buildMortandad() {
   const items = S.cache.mortandad || [];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosTodosL = rodeosPorCampo(campos[0]?.campo_id);
+  const rodeosTodosMo = (S.catalogs?.rodeos||[]);
   let h = `<div class="panel">
     <div class="panel-title">Registrar mortandad</div>
     <div class="fgrid">
@@ -2959,16 +2960,52 @@ function buildMortandad() {
     </div>
     <button class="btn btn-primary" id="mo-save" style="margin-top:6px">Registrar mortandad</button>
   </div>`;
-  h += buildEntityTable(items, [
-    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-    { key: 'caravana_ternero', label: 'Caravana', render: v => v || '—' },
-    { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
-    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
-  ], 'mortandad', 'mortandad_id');
+  // Filtros del historial por campo/rodeo — mismo patrón que Abortos/Pesadas.
+  h += `<div class="fgrid" style="margin-bottom:10px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="mo-hist-campo" onchange="
+        const rid=document.getElementById('mo-hist-rodeo');
+        const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
+        rid.innerHTML='<option value=\"\">Todos los rodeos</option>'+rods.map(r=>\`<option value=\"\${r.rodeo_id}\">\${r.nombre}</option>\`).join('');
+        moFiltrarHistorial_()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="mo-hist-rodeo" onchange="moFiltrarHistorial_()">
+        <option value="">Todos los rodeos</option>
+        ${rodeosTodosMo.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="mo-hist-tabla">`;
+  h += buildEntityTable(items, MORTANDAD_COLS_, 'mortandad', 'mortandad_id');
+  h += `</div>`;
   return h;
 }
+const MORTANDAD_COLS_ = [
+  { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+  { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+  { key: 'caravana_ternero', label: 'Caravana', render: v => v || '—' },
+  { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
+  { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+];
 function attachMortandadEvents() {
+  window.moFiltrarHistorial_ = function() {
+    const campoId = document.getElementById('mo-hist-campo')?.value || '';
+    const rodeoId = document.getElementById('mo-hist-rodeo')?.value || '';
+    const items = (S.cache.mortandad || []).filter(m => {
+      if (rodeoId && String(m.rodeo_id) !== rodeoId) return false;
+      if (campoId && !rodeoId) {
+        const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(m.rodeo_id));
+        if (!r || String(r.campo_id) !== campoId) return false;
+      }
+      return true;
+    });
+    const el = document.getElementById('mo-hist-tabla');
+    if (el) { el.innerHTML = buildEntityTable(items, MORTANDAD_COLS_, 'mortandad', 'mortandad_id'); attachTableDeleteEvents('mortandad', 'mortandad_id'); }
+  };
   const save = document.getElementById('mo-save');
   if (save) save.onclick = async () => {
     const data = {
