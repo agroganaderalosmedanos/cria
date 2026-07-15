@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_15';
+const APP_VERSION = 'index_consolidado_4_6_155_16';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -592,6 +592,16 @@ function rodeosConActividadPorCampo_(campoId) {
 // Para registrar consumo de insumos: solo rodeos con animales AHORA (no tiene sentido cargar consumo en un rodeo vacío)
 function rodeosConStockPorCampo_(campoId) {
   return rodeosPorCampo(campoId).filter(r => {
+    const row = (S.stock || []).find(s => String(s.rodeo_id) === String(r.rodeo_id));
+    return row && Number(row.stock) > 0;
+  });
+}
+// Igual que rodeosConStockPorCampo_ pero sin filtrar por campo — se usa para
+// productos de "pozo común" (por_campo=false), donde el consumo puede
+// registrarse contra cualquier lote de cualquier campo, no solo el del
+// primer campo del catálogo (que es lo que quedaba fijado antes por error).
+function rodeosConStockTodosCampos_() {
+  return rodeosTodos().filter(r => {
     const row = (S.stock || []).find(s => String(s.rodeo_id) === String(r.rodeo_id));
     return row && Number(row.stock) > 0;
   });
@@ -8659,6 +8669,23 @@ window.actualizarCampoCompraInsumo_ = function() {
   // Consumos: campo solo si el producto es por campo (el rodeo siempre aparece)
   const kw = document.getElementById('in-campo-wrap');
   if (kw && !esCompra) kw.style.display = esPorCampo ? 'flex' : 'none';
+
+  // Repoblar el select de Rodeo según corresponda: si el producto es "por
+  // campo", solo los lotes del campo elegido; si es de pozo común, TODOS los
+  // lotes con stock de TODOS los campos (antes quedaba fijado en el primer
+  // campo del catálogo porque el select de Campo, oculto para estos
+  // productos, nunca disparaba la actualización).
+  if (!esCompra) {
+    const ri = document.getElementById('in-rodeo');
+    if (ri) {
+      if (esPorCampo) {
+        const campoId = document.getElementById('in-campo')?.value || (((S.catalogs && S.catalogs.campos) || [])[0]?.campo_id);
+        ri.innerHTML = rodeoOptionsHtml(rodeosConStockPorCampo_(campoId));
+      } else {
+        ri.innerHTML = rodeoOptionsHtml(rodeosConStockTodosCampos_());
+      }
+    }
+  }
 };
 
 window.inActualizarTotalCompra_ = function() {
