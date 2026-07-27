@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_16';
+const APP_VERSION = 'index_consolidado_4_6_155_17';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6066,6 +6066,53 @@ function egCostoCompra_(rodeoId) {
 
   return costoSaldo + costoCesion;
 }
+// Contracara de egCostoCompra_: cuando un corral de Terminación ENVÍA animales a
+// OTRO corral de Terminación (ej: para cerrar un corral y consolidar en otro), el
+// costo de entrada que ya se reconoce en el corral destino no tenía ningún ingreso
+// espejo en el corral de origen — su ficha mostraba solo la baja de stock, sin
+// ninguna renta que compense los costos que ese corral acumuló (alimentación,
+// sanidad, sueldo prorrateado). Esto usa el MISMO dato del traslado (peso_prom_kg
+// × precio_kg, o precio_cabeza, o — si no se cargó precio — la auto-valorización
+// por categoría/peso, igual que egCostoCompra_) para reconocerlo como "Cesión
+// interna enviada" en el panel de Ingresos del corral de origen.
+// OJO: esto es solo para la FICHA INDIVIDUAL de un corral — no se usa en los
+// consolidados (Dashboard / "todos los corrales" / Margen Bruto), porque ahí el
+// movimiento ya se cancela solo (ver el filtro !rodeosEngIds.has(origen) agregado
+// en buildEngordeDashboard_ y en el resumen "todos los corrales" de esta función).
+function egIngresoCesionEnviada_(rodeoId, hastaFecha) {
+  const movs = (S.cache.movimientos || []).filter(m =>
+    (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
+    String(m.rodeo_origen_id) === String(rodeoId) &&
+    (!hastaFecha || (m.fecha||'') <= hastaFecha)
+  );
+  const rodeosEngIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
+  const moneda = S.engordeMoneda || 'ARS';
+  const r = rodeosTodos().find(rr => String(rr.rodeo_id) === String(rodeoId));
+  const enviados = movs.filter(m => rodeosEngIds.has(String(m.rodeo_destino_id)) && String(m.rodeo_destino_id) !== String(rodeoId));
+  let total = 0, cant = 0, kg = 0;
+  enviados.forEach(m => {
+    const c = Number(m.cantidad) || 0;
+    const peso = Number(m.peso_prom_kg) || 0;
+    const pKg = Number(m.precio_kg) || 0;
+    const pCab = Number(m.precio_cabeza) || 0;
+    let importeARS;
+    if (pKg > 0 && peso > 0) importeARS = c * peso * pKg;
+    else if (pCab > 0) importeARS = c * pCab;
+    else {
+      // Sin precio cargado: auto-valorizar con el peso propio de ESTE corral
+      // (origen) a la fecha del traslado — mismo criterio que usa egCostoCompra_
+      // del lado del corral que recibe.
+      const pesO = (S.cache.pesadas || []).filter(p => String(p.rodeo_id) === String(rodeoId) && String(p.fecha) <= String(m.fecha)).sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoO = pesO[0] ? Number(pesO[0].peso_prom_kg) || 0 : 0;
+      importeARS = valorizarRodeo_(r || {categoria:'novillo'}, c, pesoO);
+      if (pesoO) kg += c * pesoO;
+    }
+    if (peso) kg += c * peso;
+    cant += c;
+    total += convertirAMoneda_(importeARS, m.fecha, moneda);
+  });
+  return { total, cant, kg };
+}
 function egKgStockEstimado_(rodeoId) {
   const stk = egStock_(rodeoId);
   if (!stk) return 0;
@@ -6465,7 +6512,13 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // para el costo de cesiones recibidas (antes del fix, "Cesiones Recría→Terminación"
   // guardaba solo en egresos_recria SIN mover stock real; ahora también genera el
   // Traslado correspondiente en Movimientos, que es lo que efectivamente mueve el stock).
-  const cesionesRecTrasla = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  // Se EXCLUYE explícitamente el caso de origen también dentro de rodeosEngIds: un
+  // traslado entre dos corrales de la MISMA Terminación (ej: cerrar un corral y
+  // consolidar en otro) es un movimiento interno que no debería contarse como una
+  // "cesión recibida" externa — antes se sumaba como costo de todos modos, inflando
+  // los egresos totales de la actividad por un simple movimiento entre corrales
+  // propios. Mismo criterio que ya usa clasificarTrasladosActividad_ para cabezas.
+  const cesionesRecTrasla = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)) && !rodeosEngIds.has(String(m.rodeo_origen_id)));
   // Registros legacy en egresos_recria que NO tienen su Traslado correspondiente todavía
   // (cesiones cargadas ANTES de este fix, cuando el módulo no generaba el movimiento real).
   // Se identifican por no tener match de fecha+cantidad+rodeo en ningún Traslado — evita
@@ -6906,7 +6959,10 @@ function buildEngordeCostos_(rodeoId, fm) {
     // MISMA fuente de verdad que usa el Dashboard (antes, acá se auto-valorizaba
     // SIEMPRE por categoría/peso del rodeo de origen, ignorando el precio real que
     // se haya cargado en la cesión — por eso el número no coincidía con el Dashboard).
-    const cesiones2 = movsTodos.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
+    // Se excluye el origen también dentro de rodeosEngIds2 por el mismo motivo que
+    // en buildEngordeDashboard_: un traslado entre dos corrales de la MISMA
+    // Terminación es interno y no debe contarse como cesión (costo) del total.
+    const cesiones2 = movsTodos.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosEngIds2.has(String(m.rodeo_destino_id))&&!rodeosEngIds2.has(String(m.rodeo_origen_id)));
     const egresosRecRaw2 = (S.cache.egresos_recria || []).filter(e=>(e.fecha||'')<=corteCostos);
     const cesionesRecLegacy2 = egresosRecRaw2.filter(e => {
       if (e.destino !== 'Engorde' || !rodeosEngIds2.has(String(e.rodeo_destino_id||''))) return false;
@@ -7115,7 +7171,11 @@ function buildEngordeCostos_(rodeoId, fm) {
   const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
   const ivStock = convertirAMoneda_(ivStockARS, corteCostosUno, S.engordeMoneda||'ARS');
   const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo
-  const ivTotal = iv + ivStock;
+  // Cesión interna enviada a otro corral de Terminación (ej: para cerrar este
+  // corral) — ver egIngresoCesionEnviada_. Es la contracara del "Costo de entrada"
+  // (cc) que ya se reconoce en el corral que RECIBE.
+  const cesEnv = egIngresoCesionEnviada_(rodeoId, corteCostosUno);
+  const ivTotal = iv + ivStock + cesEnv.total;
   // Sueldos: se cargan por campo completo, no por corral individual. Para mostrar un
   // costo de sueldos en la ficha de ESTE corral, se prorratea el sueldo de Engorde
   // del campo según la proporción de animales ingresados de este corral sobre el total
@@ -7141,7 +7201,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const { conv: convAlim, costoKgMS, hayAlimSinMS, motivoSinDato: motivoSinConv } = egConversionMS_(rodeoId, ultima?.fecha, kgG);
   const precVentaProm = kgV > 0 ? iv / kgV : null;
   const totalAnim = (cantIng - stk) + stk;
-  const costoARecuperar = costoTotal - iv;
+  const costoARecuperar = costoTotal - iv - cesEnv.total;
   const breakEven = kgStk > 0 ? costoARecuperar / kgStk : null;
   const margenVsBE = breakEven && precVentaProm ? precVentaProm - breakEven : null;
 
@@ -7161,6 +7221,10 @@ function buildEngordeCostos_(rodeoId, fm) {
           <div><div style="font-weight:600">📦 Stock valorizado</div><div style="font-size:11px;color:var(--text3)">${fn(stk,0)} anim. · ${pesoUltima?fn(pesoUltima,0)+' kg prom. (última pesada)':'sin pesada — precio/cab'}</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--green)">${ivStock>0?fm(ivStock):'—'}</div>
         </div>
+        ${cesEnv.total > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+          <div><div style="font-weight:600">🔄 Cesión interna enviada</div><div style="font-size:11px;color:var(--text3)">${fn(cesEnv.cant,0)} anim. · ${fn(cesEnv.kg,0)} kg → otro corral</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(cesEnv.total)}</div>
+        </div>` : ''}
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
           <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(ivTotal)}</div>
