@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_23';
+const APP_VERSION = 'index_consolidado_4_6_155_24';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6278,20 +6278,31 @@ function buildEngorde() {
           style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px">
           <option value="">— Todos los corrales —</option>
           ${(() => {
-            // Corrales en stock 0 (cerrados) no se ofrecen para elegir en Costos,
-            // Proyección de Salidas ni Proyección de Costos — no tiene sentido
-            // analizarlos ahí, van a Historial. Se filtran acá porque los tres
-            // comparten este mismo selector.
+            // Proyección de Salidas y Proyección de Costos/Cierre: un corral cerrado
+            // (stock 0) no tiene nada que proyectar, así que se siguen ocultando ahí.
+            // Costos SÍ debe mostrarlos — es la pantalla donde justamente querés
+            // revisar el detalle de un corral que ya cerró (costo de entrada, cesión
+            // enviada/recibida, alimentación acumulada), no solo la foto resumida
+            // que guarda Historial.
             const corteSel = S._corteEng || today();
             const stockSel = stockPorRodeoACorte_(corteSel);
-            const abiertos = rodeosEng.filter(r=>!S._engCampoFiltro||String(r.campo_id)===String(S._engCampoFiltro))
-              .filter(r=>(stockSel[String(r.rodeo_id)]||0) > 0);
-            // Si el corral seleccionado quedó afuera (se vendió del todo), volvemos
-            // la selección a "Todos los corrales" para no dejar la vista "huérfana".
-            if (egGetCorralId() && !abiertos.some(r=>String(r.rodeo_id)===String(egGetCorralId()))) {
+            let disponibles = rodeosEng.filter(r=>!S._engCampoFiltro||String(r.campo_id)===String(S._engCampoFiltro));
+            if (page !== 'engorde_costos') {
+              disponibles = disponibles.filter(r=>(stockSel[String(r.rodeo_id)]||0) > 0);
+            } else {
+              // Solo se ofrecen los que tuvieron algún movimiento — un rodeo creado
+              // pero nunca usado no aporta nada acá.
+              disponibles = disponibles.filter(r=>egCantIngresada_(r.rodeo_id) > 0);
+            }
+            // Si el corral seleccionado quedó afuera (se vendió del todo, y estamos
+            // en una pantalla que sí lo excluye), volvemos a "Todos los corrales".
+            if (egGetCorralId() && !disponibles.some(r=>String(r.rodeo_id)===String(egGetCorralId()))) {
               egSetCorralId('');
             }
-            return abiertos.map(r=>`<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(egGetCorralId())?'selected':''}>${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('');
+            return disponibles.map(r=>{
+              const cerrado = (stockSel[String(r.rodeo_id)]||0) === 0;
+              return `<option value="${r.rodeo_id}" ${String(r.rodeo_id)===String(egGetCorralId())?'selected':''}>${r.nombre} (${campoNombre(r.campo_id)})${cerrado?' — cerrado':''}</option>`;
+            }).join('');
           })()}
         </select>
       </div>
