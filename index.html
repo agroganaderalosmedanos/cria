@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_34';
+const APP_VERSION = 'index_consolidado_4_6_155_35';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6034,7 +6034,28 @@ function egCantIngresada_(rodeoId) {
   return Number(cfg.stockInicial) || 0;
 }
 function egKgIngresados_(rodeoId) {
-  return egCantIngresada_(rodeoId) * egKgIngreso_(rodeoId);
+  // ANTES: cantidad total × UN SOLO peso (el de la primera entrada) — si un
+  // corral recibe más de un lote a pesos distintos (ej: 189 cab. a 336 kg de
+  // Recría + 18 cab. a 565 kg de otro corral), esto aplicaba el peso del primer
+  // lote a TODAS las cabezas, inflando o desinflando "Kg ingresados" según el
+  // caso. Ahora suma cantidad×peso de CADA movimiento de entrada por separado;
+  // la excepción manual de la ABM (Kg prom. de ingreso) queda como corrección
+  // puntual SOLO para los movimientos que no traigan su propio peso, en vez de
+  // pisar el total entero.
+  const movs = S.cache.movimientos || [];
+  const entradas = movs.filter(m => String(m.rodeo_destino_id) === String(rodeoId) &&
+    (m.tipo === 'Saldo inicial' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual'));
+  if (entradas.length) {
+    const cfg = egConfig_(rodeoId);
+    const kgOverride = Number(cfg.kgIngreso) || 0;
+    return entradas.reduce((s, m) => {
+      const peso = Number(m.peso_prom_kg) || kgOverride;
+      return s + (Number(m.cantidad)||0) * peso;
+    }, 0);
+  }
+  // Fallback: corral sin movimientos, cargado a mano en la ABM (altas previas al sistema)
+  const cfg = egConfig_(rodeoId);
+  return (Number(cfg.stockInicial)||0) * (Number(cfg.kgIngreso)||0);
 }
 function egCostoCompra_(rodeoId, ignorarOverride) {
   const movs = S.cache.movimientos || [];
@@ -6197,13 +6218,42 @@ function egIngresoCesionEnviada_(rodeoId, hastaFecha) {
   });
   return { total, cant, kg };
 }
-function egKgStockEstimado_(rodeoId) {
-  const stk = egStock_(rodeoId);
+function egKgStockEstimado_(rodeoId, corte, stockOverride) {
+  const stk = stockOverride !== undefined ? stockOverride
+    : (corte ? Math.max(0, (stockPorRodeoACorte_(corte)[String(rodeoId)]||0)) : egStock_(rodeoId));
   if (!stk) return 0;
-  const pes = egPesadas_(rodeoId);
-  if (pes.length) return stk * Number(pes[pes.length-1].peso_prom_kg);
-  const kgIng = egKgIngreso_(rodeoId);
-  return kgIng ? stk * kgIng : 0;
+  const pes = corte ? egPesadas_(rodeoId).filter(p=>(p.fecha||'')<=corte) : egPesadas_(rodeoId);
+  if (!pes.length) {
+    const kgIng = egKgIngreso_(rodeoId);
+    return kgIng ? stk * kgIng : 0;
+  }
+  const ultimaPesada = pes[pes.length-1];
+  // ANTES: stock total × peso de la ÚLTIMA pesada, sin importar si esa pesada
+  // es anterior a una cesión recibida más tarde. Si corral 2 recibió 18 cab. a
+  // 565 kg DESPUÉS de la última pesada (que solo vio a las 189 originales a
+  // 336 kg), aplicarles el promedio de esa pesada vieja a las 18 nuevas está
+  // mal — todavía no las pesaron juntas, así que se quedan a su peso de
+  // ingreso hasta la próxima pesada que sí las incluya.
+  const movs = S.cache.movimientos || [];
+  const entradasPosterioresAPesada = movs.filter(m =>
+    String(m.rodeo_destino_id) === String(rodeoId) &&
+    (m.tipo === 'Saldo inicial' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
+    (m.fecha||'') > ultimaPesada.fecha && (!corte || (m.fecha||'') <= corte)
+  );
+  if (!entradasPosterioresAPesada.length) {
+    // Caso normal: todo el stock actual ya fue visto en la última pesada.
+    return stk * Number(ultimaPesada.peso_prom_kg);
+  }
+  const cantNueva = Math.min(stk, entradasPosterioresAPesada.reduce((s,m)=>s+(Number(m.cantidad)||0),0));
+  // Cálculo: kg de las entradas nuevas a su propio peso de ingreso (topeado al
+  // stock actual, por si hubo ventas/mortandad de esas mismas cabezas nuevas
+  // antes de esta foto), más el resto del stock (los que ya estaban antes de
+  // la última pesada) al peso de esa pesada.
+  const cantEntradasNuevasTotal = entradasPosterioresAPesada.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+  const kgEntradasNuevas = entradasPosterioresAPesada.reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.peso_prom_kg)||0),0);
+  const kgNuevasAjustado = cantEntradasNuevasTotal>0 ? kgEntradasNuevas * (cantNueva / cantEntradasNuevasTotal) : 0;
+  const stkAntiguo = Math.max(0, stk - cantNueva);
+  return stkAntiguo * Number(ultimaPesada.peso_prom_kg) + kgNuevasAjustado;
 }
 function egKgGanadosHastaPesada_(rodeoId, corte) {
   const pes = corte ? egPesadas_(rodeoId).filter(p=>(p.fecha||'')<=corte) : egPesadas_(rodeoId);
@@ -6212,9 +6262,14 @@ function egKgGanadosHastaPesada_(rodeoId, corte) {
   const kgVendHP = egVentas_(rodeoId)
     .filter(v => String(v.fecha_salida) <= String(ultima.fecha))
     .reduce((s, v) => s + (Number(v.peso_campo_kg) || 0), 0);
+  // Kg cedidos a otro corral de Terminación hasta la fecha de la pesada — esos
+  // kilos también se ganaron EN ESTE corral, igual que los vendidos, y antes
+  // no se sumaban acá: "Kg ganados" le restaba injustamente a un corral que
+  // cerró trasladando en vez de vendiendo (ver egIngresoCesionEnviada_).
+  const kgCedidoHP = egIngresoCesionEnviada_(rodeoId, ultima.fecha).kg;
   const kgStockPesada = Number(ultima.cantidad) * Number(ultima.peso_prom_kg);
   const kgIng = egKgIngresados_(rodeoId);
-  return Math.max(0, kgVendHP + kgStockPesada - kgIng);
+  return Math.max(0, kgVendHP + kgCedidoHP + kgStockPesada - kgIng);
 }
 function egGanDiaria_(rodeoId) {
   const pes = egPesadas_(rodeoId);
@@ -6951,7 +7006,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
     totAn    += Math.max(0, stockACorteCard[String(rid)]||0);
     totKgI   += egKgIngresados_(rid);
     totKgV   += egKgVend_(rid);
-    totKgStk += egKgStockEstimado_(rid);
+    totKgStk += egKgStockEstimado_(rid, corte, Math.max(0, stockACorteCard[String(rid)]||0));
     totKgG   += egKgGanadosHastaPesada_(rid, corte);
     const gdp = egGanDiaria_(rid);
     if (gdp) gdps.push(gdp);
@@ -6993,7 +7048,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
     const stock   = Math.max(0, stockACorteCard[String(rid)]||0);
     const kgI     = egKgIngresados_(rid);
     const kgV     = egKgVend_(rid);
-    const kgStk   = egKgStockEstimado_(rid);
+    const kgStk   = egKgStockEstimado_(rid, corte, stock);
     const kgG     = egKgGanadosHastaPesada_(rid, corte);
     const gdp     = egGanDiaria_(rid);
     const gpdIntervalos = egGpdIntervalos_(rid);
@@ -7231,8 +7286,8 @@ function buildEngordeCostos_(rodeoId, fm) {
       totKgI  += egKgIngresados_(r.rodeo_id);
       totKgG  += egKgGanadosHastaPesada_(r.rodeo_id, corteCostos);
       totKgV  += egKgVend_(r.rodeo_id);
-      totKgStk+= egKgStockEstimado_(r.rodeo_id);
-      totAn   += egStock_(r.rodeo_id);
+      totKgStk+= egKgStockEstimado_(r.rodeo_id, corteCostos, Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0));
+      totAn   += Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0);
       const gdp = egGanDiaria_(r.rodeo_id);
       if (gdp) gdpsTodos.push(gdp);
     });
@@ -7568,8 +7623,14 @@ async function exportarComparacionEngordeExcel_() {
       const cantIng = egCantIngresada_(rid);
       const kgI = egKgIngresados_(rid);
       const kgV = egKgVend_(rid);
+      // Kg cedidos a otro corral (traslado interno) — se separan de "Kg vendidos"
+      // porque no es lo mismo, aunque ambos sean kilos que dejaron este corral.
+      const kgCedido = egIngresoCesionEnviada_(rid, corteComp).kg;
       const kgG = egKgGanadosHastaPesada_(rid, corteComp);
-      const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
+      // Antes esto se calculaba acá mismo con la lógica vieja (stock × un solo
+      // peso) en vez de reusar egKgStockEstimado_ ya corregida — quedaba
+      // desactualizado respecto al resto de las pantallas.
+      const kgStk = egKgStockEstimado_(rid, corteComp, stk);
       const ca = egCostoAlim_(rid, corteComp);
       const cc = egCostoCompra_(rid);
       // Desglose de dónde viene ese costo de entrada: externo (Recría/compra
@@ -7606,7 +7667,7 @@ async function exportarComparacionEngordeExcel_() {
       return {
         nombre: r.nombre, campo: campoNombre(r.campo_id), cerrado: stk===0 ? 'Sí' : 'No',
         cantIng, stk, dias, kgIng, pesoUltima: pesoUltimaC||null,
-        kgI, kgV, kgStk, kgG, gd,
+        kgI, kgV, kgCedido, kgStk, kgG, gd,
         cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, ca, sueldoProrr, costoTotal: ca+cc+sueldoProrr, caXkg,
         iv, ivStock, cesEnv, util,
       };
@@ -7640,19 +7701,19 @@ async function exportarComparacionEngordeExcel_() {
     const monedaLabel = moneda === 'USD' ? 'U$S' : 'ARS';
 
     const headers = ['Corral','Campo','Cerrado','Animales ingresados','Stock actual','Días hasta última pesada',
-      'Kg prom. entrada','Kg prom. última pesada','Kg ingresados','Kg vendidos','Kg en stock','Kg ganados','GDP (kg/día)',
+      'Kg prom. entrada','Kg prom. última pesada','Kg ingresados','Kg vendidos','Kg cedidos (a otro corral)','Kg en stock','Kg ganados','GDP (kg/día)',
       `Cesión/compra EXTERNA (${monedaLabel})`, `Cesión INTERNA recibida (${monedaLabel})`, `Costo alimentación (${monedaLabel})`, `Sueldos prorrateados (${monedaLabel})`, `Costo total (${monedaLabel})`, `Alim./kg ganado (${monedaLabel})`,
       `Ingreso ventas (${monedaLabel})`, `Stock valorizado (${monedaLabel})`, `Cesión enviada (${monedaLabel})`, `Utilidad (${monedaLabel})`];
     const aoa = [
       [`Agroganadera Los Médanos — Comparación de corrales (Terminación)`],
       ['Fecha de corte', fd(corteComp)],
-      ['Nota', `Importes en ${monedaLabel === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}. Los corrales cerrados (stock 0) muestran su resultado final ya realizado. La suma de "Cesión/compra EXTERNA" de todos los corrales debe coincidir con "Stock inicial + Cesiones de Recría" del Dashboard — la "Cesión INTERNA recibida" y la "Cesión enviada" son las dos caras de los traslados entre corrales propios, y se cancelan entre sí (por eso el Dashboard no las cuenta).`],
+      ['Nota', `Importes en ${monedaLabel === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}. Los corrales cerrados (stock 0) muestran su resultado final ya realizado. La suma de "Cesión/compra EXTERNA" de todos los corrales debe coincidir con "Stock inicial + Cesiones de Recría" del Dashboard — la "Cesión INTERNA recibida" y la "Cesión enviada" son las dos caras de los traslados entre corrales propios, y se cancelan entre sí (por eso el Dashboard no las cuenta). Mismo criterio en kilos: "Kg cedidos" de un corral = "Kg ingresados por cesión" de otro.`],
       [],
       headers,
     ];
     filas.forEach(f => aoa.push([
       f.nombre, f.campo, f.cerrado, f.cantIng, f.stk, f.dias,
-      f.kgIng||'—', f.pesoUltima||'—', f.kgI, f.kgV, Math.round(f.kgStk), Math.round(f.kgG), f.gd?Number(f.gd.toFixed(3)):'—',
+      f.kgIng||'—', f.pesoUltima||'—', Math.round(f.kgI), Math.round(f.kgV), Math.round(f.kgCedido), Math.round(f.kgStk), Math.round(f.kgG), f.gd?Number(f.gd.toFixed(3)):'—',
       Math.round(conv(f.ccExterno)), Math.round(conv(f.ccInterno)), Math.round(conv(f.ca)), Math.round(conv(f.sueldoProrr)), Math.round(conv(f.costoTotal)), f.caXkg?Math.round(conv(f.caXkg)):'—',
       Math.round(conv(f.iv)), Math.round(conv(f.ivStock)), Math.round(conv(f.cesEnv)), Math.round(conv(f.util)),
     ]));
@@ -7662,11 +7723,23 @@ async function exportarComparacionEngordeExcel_() {
     const totExterno = filas.reduce((s,f)=>s+f.ccExterno,0);
     const totInterno = filas.reduce((s,f)=>s+f.ccInterno,0);
     const totCesEnv = filas.reduce((s,f)=>s+f.cesEnv,0);
+    const totKgCedido = filas.reduce((s,f)=>s+f.kgCedido,0);
     aoa.push([]);
-    aoa.push(['CONTROL', '', '', '', '', '', '', '', '', '', '', '', '',
-      Math.round(conv(totExterno)), Math.round(conv(totInterno)), '', '', '', '', '', '', Math.round(conv(totCesEnv))]);
-    aoa.push(['', 'Cesión/compra EXTERNA total (debe = Dashboard)', '', '', '', '', '', '', '', '', '', '', '',
-      '↑ debe coincidir con Stock inicial + Cesiones de Recría del Dashboard', '↑ debe ser = a Cesión enviada total →', '', '', '', '', '', '', '↑ Cesión enviada total']);
+    // Construcción explícita por índice (en vez de contar comas a mano) para no
+    // desalinear las columnas si el layout de headers cambia en el futuro.
+    const filaControl = headers.map(()=>'');
+    filaControl[0] = 'CONTROL';
+    filaControl[headers.indexOf('Kg cedidos (a otro corral)')] = Math.round(totKgCedido);
+    filaControl[headers.indexOf(`Cesión/compra EXTERNA (${monedaLabel})`)] = Math.round(conv(totExterno));
+    filaControl[headers.indexOf(`Cesión INTERNA recibida (${monedaLabel})`)] = Math.round(conv(totInterno));
+    filaControl[headers.indexOf(`Cesión enviada (${monedaLabel})`)] = Math.round(conv(totCesEnv));
+    aoa.push(filaControl);
+    const filaControlNota = headers.map(()=>'');
+    filaControlNota[1] = 'Cesión/compra EXTERNA total (debe = Dashboard) · Kg cedidos total (debe = Kg ingresados por cesión en el corral que recibió)';
+    filaControlNota[headers.indexOf(`Cesión/compra EXTERNA (${monedaLabel})`)] = '↑ debe = Dashboard';
+    filaControlNota[headers.indexOf(`Cesión INTERNA recibida (${monedaLabel})`)] = '↑ debe = Cesión enviada →';
+    filaControlNota[headers.indexOf(`Cesión enviada (${monedaLabel})`)] = '↑ Cesión enviada total';
+    aoa.push(filaControlNota);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = headers.map((_,i)=>({wch: i===0?26:(i===1?14:13)}));
     ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers.length-1} }];
@@ -7732,8 +7805,13 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     const cantIng = egCantIngresada_(rid);
     const kgI = egKgIngresados_(rid);
     const kgV = egKgVend_(rid);
+    // Kg cedidos a otro corral (traslado interno) — se separan de "Kg vendidos"
+    // porque no es lo mismo, aunque ambos sean kilos que dejaron este corral.
+    const kgCedido = egIngresoCesionEnviada_(rid, corteComp).kg;
     const kgG = egKgGanadosHastaPesada_(rid, corteComp);
-    const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
+    // Antes esto se calculaba acá mismo con la lógica vieja (stock × un solo
+    // peso) en vez de reusar egKgStockEstimado_ ya corregida.
+    const kgStk = egKgStockEstimado_(rid, corteComp, stk);
     const ca = egCostoAlim_(rid, corteComp);
     const cc = egCostoCompra_(rid);
     const ccDesg = egCostoCompraDesglose_(rid);
@@ -7768,7 +7846,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     // saber el crecimiento real, así que no tiene sentido mostrar días transcurridos.
     const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
     const cerrado = stk === 0;
-    return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, kgIng, ultima, cerrado };
+    return { r, rid, stk, cantIng, kgI, kgV, kgCedido, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, kgIng, ultima, cerrado };
   });
 
   const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
@@ -7800,6 +7878,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>⚖️ Kilos</strong></td></tr>`;
   h += row('Kg ingresados', r=>r.kgI, v=>fn(v,0)+' kg');
   h += row('Kg vendidos', r=>r.kgV, v=>fn(v,0)+' kg');
+  h += row('Kg cedidos (a otro corral)', r=>r.kgCedido>0?r.kgCedido:null, v=>fn(v,0)+' kg');
   h += row('Kg en stock', r=>r.kgStk, v=>fn(v,0)+' kg');
   h += rowTag('Kg ganados (última pesada)', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
   h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
@@ -7817,7 +7896,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   h += row('(–) Costo total', r=>r.ca+r.cc+r.sueldoProrr, v=>'−'+fm(v));
   h += rowTagSigned('Utilidad', r=>r.util, fm, bUtil);
   h += '</tbody></table></div>';
-  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">💡 La suma de "Cesión/compra externa" de todos los corrales debe coincidir con "Stock inicial + Cesiones de Recría" del Dashboard. La "Cesión interna recibida" y la "Cesión enviada" son las dos caras de un mismo traslado entre corrales propios — sus totales deben ser iguales entre sí (se cancelan solas en el Dashboard, por eso ahí no aparecen).</div>`;
+  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">💡 La suma de "Cesión/compra externa" de todos los corrales debe coincidir con "Stock inicial + Cesiones de Recría" del Dashboard. La "Cesión interna recibida" y la "Cesión enviada" son las dos caras de un mismo traslado entre corrales propios — sus totales deben ser iguales entre sí (se cancelan solas en el Dashboard, por eso ahí no aparecen). Mismo criterio en kilos: "Kg cedidos" de un corral debe ser igual a los "Kg ingresados" que ese mismo traslado le sumó al corral que lo recibió.</div>`;
   h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:8px">
     <div style="font-size:11px;color:var(--muted)">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales. Los valores en <span style="color:var(--red);font-weight:700">rojo</span> son pérdida.</div>
     <button class="btn btn-secondary btn-sm" onclick="exportarComparacionEngordeExcel_()">📊 Exportar a Excel</button>
