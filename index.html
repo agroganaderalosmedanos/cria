@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_28';
+const APP_VERSION = 'index_consolidado_4_6_155_29';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6428,7 +6428,7 @@ function buildEngorde() {
     // 5) Detalle por corral + KPIs productivos
     const _campFiltro = S._dashEngCampo || '';
     const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
-    h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm);
+    h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm, corteEng);
 
     // 6) Mortandad — al final
     const rodeosEngIdsLocal = new Set(rodeosEngFiltLocal.map(r=>String(r.rodeo_id)));
@@ -6879,21 +6879,20 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   return h;
 }
 
-function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
+function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
+  corte = corte || today();
+  const stockACorteCard = stockPorRodeoACorte_(corte);
   const fn_ = (v,d=0) => fn(v,d);
   let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
-  const gdps=[], consumos=(S.cache.consumos_insumos||[]), productos=(S.catalogs&&S.catalogs.productos)||[];
-  const costoProm={};
-  (S.cache.compras_insumos||[]).forEach(c=>{ const pid=String(c.producto_id); if(!costoProm[pid]) costoProm[pid]={costo:0,cant:0}; costoProm[pid].costo+=(Number(c.precio_unitario)||0)*(Number(c.cantidad)||0); costoProm[pid].cant+=(Number(c.cantidad)||0); });
-  const prodPorId=Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
+  const gdps=[];
 
   rodeosEngFilt.forEach(r => {
     const rid = r.rodeo_id;
-    totAn    += egStock_(rid);
+    totAn    += Math.max(0, stockACorteCard[String(rid)]||0);
     totKgI   += egKgIngresados_(rid);
     totKgV   += egKgVend_(rid);
     totKgStk += egKgStockEstimado_(rid);
-    totKgG   += egKgGanadosHastaPesada_(rid);
+    totKgG   += egKgGanadosHastaPesada_(rid, corte);
     const gdp = egGanDiaria_(rid);
     if (gdp) gdps.push(gdp);
   });
@@ -6931,26 +6930,25 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
   h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:20px">';
   rodeosEngFilt.forEach(r => {
     const rid = r.rodeo_id;
-    const stock   = egStock_(rid);
+    const stock   = Math.max(0, stockACorteCard[String(rid)]||0);
     const kgI     = egKgIngresados_(rid);
     const kgV     = egKgVend_(rid);
     const kgStk   = egKgStockEstimado_(rid);
-    const kgG     = egKgGanadosHastaPesada_(rid);
+    const kgG     = egKgGanadosHastaPesada_(rid, corte);
     const gdp     = egGanDiaria_(rid);
     const gpdIntervalos = egGpdIntervalos_(rid);
     const gpdUltimoBajo = gpdIntervalos.length && gpdIntervalos[gpdIntervalos.length - 1].bajo;
-    const consumosRodeo = consumos.filter(c=>String(c.rodeo_id)===String(rid));
-    let costoAlim=0, costoVet=0;
-    consumosRodeo.forEach(c=>{
-      const pid=String(c.producto_id);
-      const cp=costoProm[pid]; const precioU=cp&&cp.cant>0?cp.costo/cp.cant:0;
-      const imp=(Number(c.cantidad)||0)*precioU;
-      const cat=(prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-      if(cat.includes('veterin')||cat.includes('sanid')) costoVet+=imp;
-      else costoAlim+=imp;
-    });
+    // Antes esto calculaba Alimentación/Veterinaria con un PROMEDIO GLOBAL de
+    // todas las compras históricas (sin fecha de corte) — un método distinto al
+    // que usan Costos y Comparación (egCostoAlim_, precio vigente a la fecha de
+    // cada consumo + respeta el corte). Por eso esta tarjeta y Comparación podían
+    // mostrar números distintos para el mismo corral. Ahora usan la misma función.
+    const costoTotalAlimVet = egCostoAlim_(rid, corte);
+    const costoVet = egCostoAlim_(rid, corte, 'Veterinaria');
+    const costoAlim = costoTotalAlimVet - costoVet;
     const ingVentas = egIngVentas_(rid);
-    const ivStk     = valorizarRodeo_(r, egStock_(rid), egPesadas_(rid).slice(-1)[0]?.peso_prom_kg||0);
+    const pesoUltimaCard = egPesadas_(rid).filter(p=>(p.fecha||'')<=corte).slice(-1)[0]?.peso_prom_kg || 0;
+    const ivStk     = valorizarRodeo_(r, stock, pesoUltimaCard);
     // Antes faltaban acá los dos lados de una cesión interna entre corrales:
     // el costo de entrada (cc, lo que este corral pagó por lo que recibió —
     // sea de otro corral o de Recría) y la cesión enviada (cesEnv, lo que este
@@ -6958,7 +6956,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
     // Sin esto, "Resultado" solo restaba alimentación/veterinaria — ignoraba
     // el costo de entrada por completo y no reflejaba nada de las cesiones.
     const cc        = egCostoCompra_(rid);
-    const cesEnv    = egIngresoCesionEnviada_(rid, null).total;
+    const cesEnv    = egIngresoCesionEnviada_(rid, corte).total;
     const resultado = ingVentas + ivStk + cesEnv - costoAlim - costoVet - cc;
     const dias      = egDiasEngorde_(rid);
     const ultimaPes = egUltimaPesada_(rid);
@@ -7553,22 +7551,32 @@ async function exportarComparacionEngordeExcel_() {
       }
     }
 
+    // Antes esto exportaba SIEMPRE en ARS crudo, ignorando el selector de moneda
+    // "Ver en ARS/U$S" de la pantalla — por eso el Excel no coincidía con lo que
+    // se veía en pantalla si tenías U$S seleccionado. Ahora respeta esa misma
+    // selección (S.engordeMoneda), igual que hace fm()/egFmon_() en pantalla.
+    const moneda = S.engordeMoneda || 'ARS';
+    const tc = tipoCambioVigente_(corteComp);
+    const tcVal = tc ? Number(tc.valor || tc) : null;
+    const conv = v => (moneda === 'USD' && tcVal) ? v / tcVal : v;
+    const monedaLabel = moneda === 'USD' ? 'U$S' : 'ARS';
+
     const headers = ['Corral','Campo','Cerrado','Animales ingresados','Stock actual','Días hasta última pesada',
       'Kg prom. entrada','Kg prom. última pesada','Kg ingresados','Kg vendidos','Kg en stock','Kg ganados','GDP (kg/día)',
-      'Costo de compra (ARS)','Costo alimentación (ARS)','Costo total (ARS)','Alim./kg ganado (ARS)',
-      'Ingreso ventas (ARS)','Stock valorizado (ARS)','Cesión enviada (ARS)','Utilidad (ARS)'];
+      `Costo de compra (${monedaLabel})`, `Costo alimentación (${monedaLabel})`, `Costo total (${monedaLabel})`, `Alim./kg ganado (${monedaLabel})`,
+      `Ingreso ventas (${monedaLabel})`, `Stock valorizado (${monedaLabel})`, `Cesión enviada (${monedaLabel})`, `Utilidad (${monedaLabel})`];
     const aoa = [
       [`Agroganadera Los Médanos — Comparación de corrales (Terminación)`],
       ['Fecha de corte', fd(corteComp)],
-      ['Nota', 'Todos los importes están en ARS crudo, sin convertir. Los corrales cerrados (stock 0) muestran su resultado final ya realizado.'],
+      ['Nota', `Importes en ${monedaLabel === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}. Los corrales cerrados (stock 0) muestran su resultado final ya realizado.`],
       [],
       headers,
     ];
     filas.forEach(f => aoa.push([
       f.nombre, f.campo, f.cerrado, f.cantIng, f.stk, f.dias,
       f.kgIng||'—', f.pesoUltima||'—', f.kgI, f.kgV, Math.round(f.kgStk), Math.round(f.kgG), f.gd?Number(f.gd.toFixed(3)):'—',
-      Math.round(f.cc), Math.round(f.ca), Math.round(f.costoTotal), f.caXkg?Math.round(f.caXkg):'—',
-      Math.round(f.iv), Math.round(f.ivStock), Math.round(f.cesEnv), Math.round(f.util),
+      Math.round(conv(f.cc)), Math.round(conv(f.ca)), Math.round(conv(f.costoTotal)), f.caXkg?Math.round(conv(f.caXkg)):'—',
+      Math.round(conv(f.iv)), Math.round(conv(f.ivStock)), Math.round(conv(f.cesEnv)), Math.round(conv(f.util)),
     ]));
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = headers.map((_,i)=>({wch: i===0?26:(i===1?14:13)}));
