@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_32';
+const APP_VERSION = 'index_consolidado_4_6_155_34';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6096,6 +6096,57 @@ function egCostoCompra_(rodeoId, ignorarOverride) {
 
   return costoSaldo + costoCesion;
 }
+// Desglosa el costo de entrada de egCostoCompra_ en dos orígenes distintos:
+// "externo" (Saldo inicial + cesiones que vienen de Recría/Cría/compra directa —
+// lo que el Dashboard cuenta como "Stock inicial + Cesiones de Recría") e
+// "interno" (cesiones recibidas de OTRO corral de Terminación — lo que el
+// Dashboard excluye porque se cancela con la "Cesión enviada" del corral que
+// las mandó). El TOTAL sigue siendo exactamente el mismo que egCostoCompra_();
+// esto solo lo separa para que Comparación/Excel puedan reconciliar directo
+// contra el Dashboard sin tener que restar "Cesión enviada" a mano — antes,
+// "Costo de compra" mezclaba las dos cosas en una sola columna sin avisar.
+function egCostoCompraDesglose_(rodeoId, ignorarOverride) {
+  const total = egCostoCompra_(rodeoId, ignorarOverride);
+  const cfg = egConfig_(rodeoId);
+  if (!ignorarOverride && Number(cfg.precioCompra) > 0) {
+    // Con excepción manual activa no hay forma de saber qué parte del total
+    // "manual" corresponde a cada origen — se muestra todo como externo,
+    // ya que la excepción reemplaza al detalle real de todos modos.
+    return { externo: total, interno: 0 };
+  }
+  const movs = S.cache.movimientos || [];
+  const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
+  const rodeosEngIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
+  function costoExplicito_(m) {
+    const cant = Number(m.cantidad) || 0;
+    const peso = Number(m.peso_prom_kg) || 0;
+    const pKg = Number(m.precio_kg) || 0;
+    const pCab = Number(m.precio_cabeza) || 0;
+    if (pKg > 0 && peso > 0) return cant * peso * pKg;
+    if (pCab > 0) return cant * pCab;
+    return 0;
+  }
+  const saldos = movs.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
+  const costoSaldo = saldos.reduce((s,m)=>s+costoExplicito_(m),0); // Saldo inicial siempre es "externo"
+  const cesiones = movs.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_destino_id)===String(rodeoId));
+  let interno = 0, externoCesiones = 0;
+  cesiones.forEach(m => {
+    const cant = Number(m.cantidad)||0;
+    const explicito = costoExplicito_(m);
+    let costoMov;
+    if (explicito > 0) {
+      costoMov = explicito;
+    } else {
+      const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
+      const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
+      costoMov = valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
+    }
+    if (rodeosEngIds.has(String(m.rodeo_origen_id))) interno += costoMov;
+    else externoCesiones += costoMov;
+  });
+  return { externo: costoSaldo + externoCesiones, interno };
+}
 // Contracara de egCostoCompra_: cuando un corral de Terminación ENVÍA animales a
 // OTRO corral de Terminación (ej: para cerrar un corral y consolidar en otro), el
 // costo de entrada que ya se reconoce en el corral destino no tenía ningún ingreso
@@ -7521,6 +7572,13 @@ async function exportarComparacionEngordeExcel_() {
       const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
       const ca = egCostoAlim_(rid, corteComp);
       const cc = egCostoCompra_(rid);
+      // Desglose de dónde viene ese costo de entrada: externo (Recría/compra
+      // directa, lo que el Dashboard cuenta) vs. interno (de otro corral de
+      // Terminación, lo que el Dashboard excluye porque se cancela con la
+      // "Cesión enviada" del corral que lo mandó). Antes "Costo de compra" los
+      // mezclaba en una sola columna, y por eso el total no sumaba directo
+      // contra el Dashboard sin restar "Cesión enviada" a mano.
+      const ccDesg = egCostoCompraDesglose_(rid);
       const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
         .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
       const fi = egFechaIngreso_(rid);
@@ -7532,13 +7590,24 @@ async function exportarComparacionEngordeExcel_() {
       const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
       const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
       const cesEnv = egIngresoCesionEnviada_(rid, corteComp).total;
-      const util = iv + ivStock + cesEnv - ca - cc;
+      // Antes faltaba acá el sueldo prorrateado (Costos individual sí lo resta) —
+      // por eso la Utilidad total de Comparación quedaba sistemáticamente más alta
+      // que la del Dashboard, justo por el monto de sueldos. Mismo criterio de
+      // prorrateo que usa la ficha individual de cada corral en Costos.
+      const sueldoEngCampo = sueldoTotalActividad_('engorde', s =>
+        String(s.campo_id) === String(r.campo_id) &&
+        String(s.periodo).slice(0,7) <= String(corteComp).slice(0,7)
+      );
+      const corralesMismoCampo = rodeosEngordeValidos_().filter(rr => String(rr.campo_id) === String(r.campo_id));
+      const totalAnimCampo = corralesMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
+      const sueldoProrr = totalAnimCampo > 0 ? sueldoEngCampo * (cantIng / totalAnimCampo) : 0;
+      const util = iv + ivStock + cesEnv - ca - cc - sueldoProrr;
       const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
       return {
         nombre: r.nombre, campo: campoNombre(r.campo_id), cerrado: stk===0 ? 'Sí' : 'No',
         cantIng, stk, dias, kgIng, pesoUltima: pesoUltimaC||null,
         kgI, kgV, kgStk, kgG, gd,
-        cc, ca, costoTotal: ca+cc, caXkg,
+        cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, ca, sueldoProrr, costoTotal: ca+cc+sueldoProrr, caXkg,
         iv, ivStock, cesEnv, util,
       };
     });
@@ -7572,21 +7641,32 @@ async function exportarComparacionEngordeExcel_() {
 
     const headers = ['Corral','Campo','Cerrado','Animales ingresados','Stock actual','Días hasta última pesada',
       'Kg prom. entrada','Kg prom. última pesada','Kg ingresados','Kg vendidos','Kg en stock','Kg ganados','GDP (kg/día)',
-      `Costo de compra (${monedaLabel})`, `Costo alimentación (${monedaLabel})`, `Costo total (${monedaLabel})`, `Alim./kg ganado (${monedaLabel})`,
+      `Cesión/compra EXTERNA (${monedaLabel})`, `Cesión INTERNA recibida (${monedaLabel})`, `Costo alimentación (${monedaLabel})`, `Sueldos prorrateados (${monedaLabel})`, `Costo total (${monedaLabel})`, `Alim./kg ganado (${monedaLabel})`,
       `Ingreso ventas (${monedaLabel})`, `Stock valorizado (${monedaLabel})`, `Cesión enviada (${monedaLabel})`, `Utilidad (${monedaLabel})`];
     const aoa = [
       [`Agroganadera Los Médanos — Comparación de corrales (Terminación)`],
       ['Fecha de corte', fd(corteComp)],
-      ['Nota', `Importes en ${monedaLabel === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}. Los corrales cerrados (stock 0) muestran su resultado final ya realizado.`],
+      ['Nota', `Importes en ${monedaLabel === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}. Los corrales cerrados (stock 0) muestran su resultado final ya realizado. La suma de "Cesión/compra EXTERNA" de todos los corrales debe coincidir con "Stock inicial + Cesiones de Recría" del Dashboard — la "Cesión INTERNA recibida" y la "Cesión enviada" son las dos caras de los traslados entre corrales propios, y se cancelan entre sí (por eso el Dashboard no las cuenta).`],
       [],
       headers,
     ];
     filas.forEach(f => aoa.push([
       f.nombre, f.campo, f.cerrado, f.cantIng, f.stk, f.dias,
       f.kgIng||'—', f.pesoUltima||'—', f.kgI, f.kgV, Math.round(f.kgStk), Math.round(f.kgG), f.gd?Number(f.gd.toFixed(3)):'—',
-      Math.round(conv(f.cc)), Math.round(conv(f.ca)), Math.round(conv(f.costoTotal)), f.caXkg?Math.round(conv(f.caXkg)):'—',
+      Math.round(conv(f.ccExterno)), Math.round(conv(f.ccInterno)), Math.round(conv(f.ca)), Math.round(conv(f.sueldoProrr)), Math.round(conv(f.costoTotal)), f.caXkg?Math.round(conv(f.caXkg)):'—',
       Math.round(conv(f.iv)), Math.round(conv(f.ivStock)), Math.round(conv(f.cesEnv)), Math.round(conv(f.util)),
     ]));
+    // Fila de control: suma de "Cesión/compra EXTERNA" (debe dar lo mismo que
+    // Stock inicial + Cesiones de Recría del Dashboard) y suma de "Cesión INTERNA
+    // recibida" vs "Cesión enviada" (deben coincidir entre sí — se cancelan solas).
+    const totExterno = filas.reduce((s,f)=>s+f.ccExterno,0);
+    const totInterno = filas.reduce((s,f)=>s+f.ccInterno,0);
+    const totCesEnv = filas.reduce((s,f)=>s+f.cesEnv,0);
+    aoa.push([]);
+    aoa.push(['CONTROL', '', '', '', '', '', '', '', '', '', '', '', '',
+      Math.round(conv(totExterno)), Math.round(conv(totInterno)), '', '', '', '', '', '', Math.round(conv(totCesEnv))]);
+    aoa.push(['', 'Cesión/compra EXTERNA total (debe = Dashboard)', '', '', '', '', '', '', '', '', '', '', '',
+      '↑ debe coincidir con Stock inicial + Cesiones de Recría del Dashboard', '↑ debe ser = a Cesión enviada total →', '', '', '', '', '', '', '↑ Cesión enviada total']);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = headers.map((_,i)=>({wch: i===0?26:(i===1?14:13)}));
     ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers.length-1} }];
@@ -7656,6 +7736,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
     const ca = egCostoAlim_(rid, corteComp);
     const cc = egCostoCompra_(rid);
+    const ccDesg = egCostoCompraDesglose_(rid);
     const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
       .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
     const fi = egFechaIngreso_(rid);
@@ -7671,12 +7752,23 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     // esto, un corral cerrado por traslado interno mostraba pérdida falsa acá
     // igual que ya corregimos en Costos y en las tarjetas del Dashboard.
     const cesEnv = egIngresoCesionEnviada_(rid, corteComp).total;
-    const util = iv + ivStock + cesEnv - ca - cc;
+    // Antes faltaba acá el sueldo prorrateado (Costos individual sí lo resta) —
+    // por eso la Utilidad total de Comparación quedaba sistemáticamente más alta
+    // que la del Dashboard, justo por el monto de sueldos. Mismo criterio de
+    // prorrateo que usa la ficha individual de cada corral en Costos.
+    const sueldoEngCampo = sueldoTotalActividad_('engorde', s =>
+      String(s.campo_id) === String(r.campo_id) &&
+      String(s.periodo).slice(0,7) <= String(corteComp).slice(0,7)
+    );
+    const corralesMismoCampo = rodeosEngTodos.filter(rr => String(rr.campo_id) === String(r.campo_id));
+    const totalAnimCampo = corralesMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
+    const sueldoProrr = totalAnimCampo > 0 ? sueldoEngCampo * (cantIng / totalAnimCampo) : 0;
+    const util = iv + ivStock + cesEnv - ca - cc - sueldoProrr;
     // Días: hasta la última pesada (no "hoy") — si todavía no hay pesada, no se puede
     // saber el crecimiento real, así que no tiene sentido mostrar días transcurridos.
     const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
     const cerrado = stk === 0;
-    return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, kgIng, ultima, cerrado };
+    return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, kgIng, ultima, cerrado };
   });
 
   const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
@@ -7712,17 +7804,20 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   h += rowTag('Kg ganados (última pesada)', r=>r.kgG, v=>fn(v,0)+' kg', bKgG);
   h += rowTag('GDP', r=>r.gd, v=>fn(v,3)+' kg/día', bGd);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💲 Costos</strong></td></tr>`;
-  h += row('Costo de compra', r=>r.cc, fm);
+  h += row('Cesión/compra externa (Recría o compra directa)', r=>r.ccExterno, fm);
+  h += row('Cesión interna recibida (de otro corral)', r=>r.ccInterno>0?r.ccInterno:null, fm);
   h += row('Costo alimentación (hasta el corte)', r=>r.ca, fm);
-  h += row('Costo total', r=>r.ca+r.cc, fm);
+  h += row('Sueldos (prorrateado por campo)', r=>r.sueldoProrr>0?r.sueldoProrr:null, fm);
+  h += row('Costo total', r=>r.ca+r.cc+r.sueldoProrr, fm);
   h += rowTag('Alim. / kg ganado (hasta última pesada)', r=>r.caXkg, fm, bCaXkg, true);
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💰 Resultados</strong></td></tr>`;
   h += row('Ingreso ventas', r=>r.iv, fm);
   h += row('Stock valorizado', r=>r.ivStock>0?r.ivStock:null, fm);
   h += row('Cesión enviada (a otro corral)', r=>r.cesEnv>0?r.cesEnv:null, fm);
-  h += row('(–) Costo total', r=>r.ca+r.cc, v=>'−'+fm(v));
+  h += row('(–) Costo total', r=>r.ca+r.cc+r.sueldoProrr, v=>'−'+fm(v));
   h += rowTagSigned('Utilidad', r=>r.util, fm, bUtil);
   h += '</tbody></table></div>';
+  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">💡 La suma de "Cesión/compra externa" de todos los corrales debe coincidir con "Stock inicial + Cesiones de Recría" del Dashboard. La "Cesión interna recibida" y la "Cesión enviada" son las dos caras de un mismo traslado entre corrales propios — sus totales deben ser iguales entre sí (se cancelan solas en el Dashboard, por eso ahí no aparecen).</div>`;
   h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:8px">
     <div style="font-size:11px;color:var(--muted)">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales. Los valores en <span style="color:var(--red);font-weight:700">rojo</span> son pérdida.</div>
     <button class="btn btn-secondary btn-sm" onclick="exportarComparacionEngordeExcel_()">📊 Exportar a Excel</button>
