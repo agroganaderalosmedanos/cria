@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_21';
+const APP_VERSION = 'index_consolidado_4_6_155_22';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6923,7 +6923,15 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
     });
     const ingVentas = egIngVentas_(rid);
     const ivStk     = valorizarRodeo_(r, egStock_(rid), egPesadas_(rid).slice(-1)[0]?.peso_prom_kg||0);
-    const resultado = ingVentas + ivStk - costoAlim - costoVet;
+    // Antes faltaban acá los dos lados de una cesión interna entre corrales:
+    // el costo de entrada (cc, lo que este corral pagó por lo que recibió —
+    // sea de otro corral o de Recría) y la cesión enviada (cesEnv, lo que este
+    // corral "cobra" cuando manda animales a otro corral, ej. al cerrarlo).
+    // Sin esto, "Resultado" solo restaba alimentación/veterinaria — ignoraba
+    // el costo de entrada por completo y no reflejaba nada de las cesiones.
+    const cc        = egCostoCompra_(rid);
+    const cesEnv    = egIngresoCesionEnviada_(rid, null).total;
+    const resultado = ingVentas + ivStk + cesEnv - costoAlim - costoVet - cc;
     const dias      = egDiasEngorde_(rid);
     const ultimaPes = egUltimaPesada_(rid);
     const convMS_   = egConversionMS_(rid, ultimaPes?.fecha, kgG);
@@ -6950,12 +6958,16 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm) {
         <div style="text-align:right;font-weight:600;color:var(--gold)">${fn(convMS_.conv,1)} : 1${convMS_.hayAlimSinMS?' ⚠':''}</div>`
         :(convMS_.motivoSinDato && convMS_.motivoSinDato.includes('% de materia seca')?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Conversión (MS)</div>
         <div style="text-align:right;font-weight:600;color:var(--text3)" title="${convMS_.motivoSinDato}">⚠ falta % MS</div>`:'')}
+        <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo entrada</div>
+        <div style="text-align:right;font-weight:600">${cc>0?fm(cc):'—'}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo alim.</div>
         <div style="text-align:right;font-weight:600">${fm(costoAlim)}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo vet.</div>
         <div style="text-align:right;font-weight:600;color:var(--blue)">${fm(costoVet)}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Ingreso ventas</div>
         <div style="text-align:right;font-weight:600">${fm(ingVentas)}</div>
+        ${cesEnv>0?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Cesión enviada</div>
+        <div style="text-align:right;font-weight:600;color:var(--green)">${fm(cesEnv)}</div>`:''}
       </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Resultado</div>
