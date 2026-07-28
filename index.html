@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_18';
+const APP_VERSION = 'index_consolidado_4_6_155_20';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6025,8 +6025,15 @@ function egKgIngresados_(rodeoId) {
 }
 function egCostoCompra_(rodeoId) {
   const movs = S.cache.movimientos || [];
-  const moneda = S.engordeMoneda || 'ARS';
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
+  // OJO: esta función SIEMPRE devuelve pesos ARS crudos, sin convertir moneda.
+  // Antes convertía internamente a `moneda` (S.engordeMoneda) con convertirAMoneda_,
+  // pero las 7 pantallas que la usan (Costos, Comparación, Proyección, Historial,
+  // IA, etc.) muestran el resultado con fm()/egFmon_(), que TAMBIÉN convierte —
+  // en modo U$S esto dividía dos veces por la cotización, mostrando "Costo de
+  // compra" ~1300 veces más chico de lo real. Comparación ya tenía un parche
+  // local (aArs_) para este mismo problema — se corrige acá de raíz para que
+  // ninguna pantalla lo sufra, y aArs_ queda como no-operación inofensiva.
 
   // Prioridad 0: ABM de Corrales tiene precio de entrada → úsalo para TODOS los
   // movimientos de entrada de este corral (reemplaza el precio del movimiento).
@@ -6034,7 +6041,7 @@ function egCostoCompra_(rodeoId) {
   if (Number(cfg.precioCompra) > 0) {
     const cantTotal = egCantIngresada_(rodeoId);
     const precioABM = Number(cfg.precioCompra);
-    return convertirAMoneda_(cantTotal * precioABM, today(), moneda);
+    return cantTotal * precioABM;
   }
 
   function costoExplicito_(m) {
@@ -6049,7 +6056,7 @@ function egCostoCompra_(rodeoId) {
 
   // Saldo inicial × precio (cabeza o kg)
   const saldos = movs.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
-  const costoSaldo = saldos.reduce((s,m)=>s+convertirAMoneda_(costoExplicito_(m),m.fecha,moneda),0);
+  const costoSaldo = saldos.reduce((s,m)=>s+costoExplicito_(m),0);
 
   // Traslados recibidos: si el traslado trae precio cargado manualmente (cabeza o kg)
   // (ej: el origen ya no tiene su propio Saldo inicial, o el traslado representa
@@ -6061,12 +6068,12 @@ function egCostoCompra_(rodeoId) {
     const cant = Number(m.cantidad)||0;
     const explicito = costoExplicito_(m);
     if (explicito > 0) {
-      return s + convertirAMoneda_(explicito, m.fecha, moneda);
+      return s + explicito;
     }
     const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
     const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
-    return s+convertirAMoneda_(valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO),m.fecha,moneda);
+    return s+valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
   },0);
 
   return costoSaldo + costoCesion;
@@ -6085,13 +6092,16 @@ function egCostoCompra_(rodeoId) {
 // movimiento ya se cancela solo (ver el filtro !rodeosEngIds.has(origen) agregado
 // en buildEngordeDashboard_ y en el resumen "todos los corrales" de esta función).
 function egIngresoCesionEnviada_(rodeoId, hastaFecha) {
+  // Igual que egCostoCompra_: devuelve SIEMPRE pesos ARS crudos, sin convertir
+  // moneda acá adentro — quien llama la usa con fm(), que ya hace la única
+  // conversión correcta al mostrar (o la guarda cruda en Sheets, como en el
+  // "Guardar en historial", donde también debe quedar en ARS).
   const movs = (S.cache.movimientos || []).filter(m =>
     (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
     String(m.rodeo_origen_id) === String(rodeoId) &&
     (!hastaFecha || (m.fecha||'') <= hastaFecha)
   );
   const rodeosEngIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
-  const moneda = S.engordeMoneda || 'ARS';
   const r = rodeosTodos().find(rr => String(rr.rodeo_id) === String(rodeoId));
   const enviados = movs.filter(m => rodeosEngIds.has(String(m.rodeo_destino_id)) && String(m.rodeo_destino_id) !== String(rodeoId));
   let total = 0, cant = 0, kg = 0;
@@ -6114,7 +6124,7 @@ function egIngresoCesionEnviada_(rodeoId, hastaFecha) {
     }
     if (peso) kg += c * peso;
     cant += c;
-    total += convertirAMoneda_(importeARS, m.fecha, moneda);
+    total += importeARS;
   });
   return { total, cant, kg };
 }
@@ -6728,15 +6738,19 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       const rod = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
       const cant = Number(m.cantidad)||0;
       const { total, precioLabel } = valorMovimientoEntrada_(m);
-      const val = convertirAMoneda_(total, m.fecha, moneda);
-      totCabIni += cant; totValIni += val;
+      // OJO: "total" ya viene en ARS crudo (valorMovimientoEntrada_ no convierte
+      // moneda). NO usar convertirAMoneda_ acá — fm() más abajo YA hace la
+      // conversión ARS→USD al mostrarlo. Antes esto convertía DOS VECES (acá y
+      // en fm()), dividiendo por la cotización al cuadrado y mostrando valores
+      // ~1300 veces más chicos de lo real (ej: "U$S 1" en vez de "U$S 1.077").
+      totCabIni += cant; totValIni += total;
       h += `<tr>
         <td>${rod?.nombre||'—'}</td>
         <td>${campoNombre(rod?.campo_id)}</td>
         <td>${rod?.categoria||'—'}</td>
         <td class="tc">${fn(cant)}</td>
         <td class="tr">${precioLabel || '—'}</td>
-        <td class="tr"><strong>${fm(val)}</strong></td>
+        <td class="tr"><strong>${fm(total)}</strong></td>
       </tr>`;
     });
     h += `<tr class="total-row"><td colspan="3"><strong>Total</strong></td>
@@ -6779,6 +6793,49 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     nacimientos: 0, cesionesEnviadas: clasEng.cesionesEnviadas,
     ventas: ventasCabEng, mortandad: mortCabEng,
   }, efCabEng);
+
+  // ── Conciliación POR CORRAL — para encontrar en qué corral puntual está el
+  // desvío cuando el total no cierra. A diferencia del panel de arriba (que
+  // excluye traslados internos entre corrales de Terminación porque se cancelan
+  // solos en el agregado), acá SÍ se cuentan — un traslado interno es una
+  // entrada real para el corral que recibe y una salida real para el que envía,
+  // aunque no afecte el total de la actividad.
+  if (efCabEng !== eiCabEng + clasEng.compras + clasEng.cesionesRecibidas - clasEng.cesionesEnviadas - ventasCabEng - mortCabEng) {
+    const filasPorCorral = rodeosEngFilt.map(r => {
+      const rid = String(r.rodeo_id);
+      const eiR = saldosIni.filter(m => String(m.rodeo_destino_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+      const entradasR = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_destino_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+      const salidasR = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+      const ventasR = ventasEng.filter(v => String(v.rodeo_id) === rid).reduce((s,v) => s+(Number(v.cant_animales)||0), 0);
+      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id) === rid && (m.fecha||'')<=corteEng).reduce((s,m) => s+(Number(m.cantidad)||1), 0);
+      const efCalcR = eiR + entradasR - salidasR - ventasR - mortR;
+      const efRealR = Math.max(0, stockACorteEng[rid]||0);
+      return { nombre: r.nombre, eiR, entradasR, salidasR, ventasR, mortR, efCalcR, efRealR, diff: efRealR - efCalcR };
+    }).filter(f => f.eiR || f.entradasR || f.salidasR || f.ventasR || f.mortR || f.efRealR)
+      .sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff));
+    h += `<div class="panel" style="border:1px solid var(--border2)">
+      <div class="panel-title">🔎 Conciliación por corral — para encontrar el desvío</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Corral</th><th class="tc">EI</th><th class="tc">+ Entradas</th><th class="tc">− Salidas</th>
+        <th class="tc">− Ventas</th><th class="tc">− Mort.</th><th class="tc">= EF calc.</th>
+        <th class="tc">EF real</th><th class="tc">Diferencia</th>
+      </tr></thead><tbody>`;
+    filasPorCorral.forEach(f => {
+      const ok = f.diff === 0;
+      h += `<tr ${ok?'':'style="background:rgba(220,50,50,0.06)"'}>
+        <td><strong>${f.nombre}</strong></td>
+        <td class="tc">${fn(f.eiR,0)}</td>
+        <td class="tc">${fn(f.entradasR,0)}</td>
+        <td class="tc">${fn(f.salidasR,0)}</td>
+        <td class="tc">${fn(f.ventasR,0)}</td>
+        <td class="tc">${fn(f.mortR,0)}</td>
+        <td class="tc">${fn(f.efCalcR,0)}</td>
+        <td class="tc">${fn(f.efRealR,0)}</td>
+        <td class="tc" style="font-weight:700;color:${ok?'var(--green-text)':'var(--red-text)'}">${f.diff>0?'+':''}${fn(f.diff,0)}</td>
+      </tr>`;
+    });
+    h += '</tbody></table></div></div>';
+  }
 
   // NOTA: las tablas de detalle línea por línea de Alimentación/Veterinaria/
   // Otros insumos (un renglón por cada consumo cargado) se movieron a la
@@ -6959,7 +7016,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     const movsTodos = (S.cache.movimientos || []).filter(m=>(m.fecha||'')<=corteCostos);
     const rodeosEngIds2 = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
     const saldosIni2 = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
-    const totalSaldoIni = saldosIni2.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, S.engordeMoneda||'ARS'),0);
+    const totalSaldoIni = saldosIni2.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
     const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
     // MISMA fuente de verdad que usa el Dashboard (antes, acá se auto-valorizaba
     // SIEMPRE por categoría/peso del rodeo de origen, ignorando el precio real que
@@ -6979,8 +7036,12 @@ function buildEngordeCostos_(rodeoId, fm) {
       );
       return !tieneTrasladoReal;
     });
+    // OJO — mismo bug que egCostoCompra_ y totalSaldoIni (ver comentarios ahí):
+    // esto se pre-convertía a moneda acá y DE NUEVO en fm() al mostrarlo, y
+    // además mezclaba ARS crudo con ya-convertido en totalEgresos/margen. Ahora
+    // todo queda en ARS crudo hasta el display.
     const totalCesiones2 = cesionesRecLegacy2.reduce((s,e)=>{
-      return s + convertirAMoneda_((Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0), e.fecha, S.engordeMoneda||'ARS');
+      return s + (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
     },0) + cesiones2.reduce((s,m)=>{
       const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
       const cant = Number(m.cantidad)||0;
@@ -6994,7 +7055,7 @@ function buildEngordeCostos_(rodeoId, fm) {
         const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
         costoARS = valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
       }
-      return s+convertirAMoneda_(costoARS,m.fecha,S.engordeMoneda||'ARS');
+      return s+costoARS;
     },0);
     const cantCesionesTotal2 = cesiones2.length + cesionesRecLegacy2.length;
 
@@ -7174,7 +7235,11 @@ function buildEngordeCostos_(rodeoId, fm) {
   const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
   const kgStk = stk * (pesoUltima || kgIngProm || 0);
   const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
-  const ivStock = convertirAMoneda_(ivStockARS, corteCostosUno, S.engordeMoneda||'ARS');
+  // OJO: mismo problema que egCostoCompra_ — antes esto se pre-convertía a
+  // `moneda` acá y DE NUEVO en fm() al mostrarlo (doble conversión en modo
+  // U$S), y encima ivTotal sumaba ARS crudo (iv) + ya-convertido (ivStock) en
+  // la misma cuenta. Ahora todo queda en ARS crudo hasta el display.
+  const ivStock = ivStockARS;
   const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo
   // Cesión interna enviada a otro corral de Terminación (ej: para cerrar este
   // corral) — ver egIngresoCesionEnviada_. Es la contracara del "Costo de entrada"
@@ -7398,22 +7463,12 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   // van al Historial, igual que en Costos.
   const rodeosEng = rodeosEngTodos.filter(r => (stockACorteComp[String(r.rodeo_id)]||0) > 0);
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todos los corrales están en 0 — mirá el Historial para los cerrados.</div></div>';
-  // BUG CORREGIDO: egCostoCompra_() devuelve el costo ya convertido a `moneda` (según
-  // S.engordeMoneda) — pero acá abajo cada fila se mostraba con fm(), que vuelve a
-  // convertir. En modo ARS no se notaba (convertir a ARS es no-operación), pero en
-  // modo U$S esto dividía dos veces por la cotización, mostrando "Costo de compra",
-  // "Compra / kg ganado" y "Utilidad" con números mucho más chicos de lo real —
-  // y encima "Utilidad" mezclaba pesos (de Ingreso ventas/Alimentación, que SÍ
-  // estaban bien) con dólares (de Costo de compra/Stock, ya convertidos) en la
-  // misma resta. Acá se vuelve todo a pesos crudos una sola vez, y fm() hace la
-  // única conversión al mostrar — mismo criterio que ya usan Ingreso ventas y
-  // Costo alimentación, que nunca tuvieron este problema.
-  const aArs_ = v => {
-    if (moneda !== 'USD' || !v) return v || 0;
-    const tc = tipoCambioVigente_(today());
-    const val = tc ? Number(tc.valor || tc) : null;
-    return (val && val > 0) ? v * val : v;
-  };
+  // BUG CORREGIDO DE RAÍZ (en egCostoCompra_ misma, ver su comentario): antes
+  // devolvía el costo ya convertido a `moneda`, y acá abajo se mostraba con
+  // fm(), que vuelve a convertir — doble conversión en modo U$S. Ahora
+  // egCostoCompra_() siempre devuelve pesos ARS crudos, así que ya no hace
+  // falta ningún parche acá: fm() hace la única conversión al mostrar, igual
+  // que Ingreso ventas y Costo alimentación, que nunca tuvieron este problema.
   const rows = rodeosEng.map(r => {
     const rid = r.rodeo_id;
     const stk = Math.max(0, stockACorteComp[String(rid)]||0);
@@ -7423,7 +7478,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     const kgG = egKgGanadosHastaPesada_(rid, corteComp);
     const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
     const ca = egCostoAlim_(rid, corteComp);
-    const cc = aArs_(egCostoCompra_(rid));
+    const cc = egCostoCompra_(rid);
     const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
       .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
     const fi = egFechaIngreso_(rid);
@@ -7857,8 +7912,12 @@ function buildEngordeCierre_(rodeoId, fm) {
       }
       if (costoProyect2!==null) totCostoProyect += costoProyect2;
       if (costoProyect2!==null) totCostoFinal += cc2 + caAcum2 + costoProyect2;
-      totIvProyect += convertirAMoneda_(ivStk2, today(), S.engordeMoneda||'ARS');
-      const util2 = egIngVentas_(rid) + convertirAMoneda_(ivStk2,today(),S.engordeMoneda||'ARS') - (cc2+caAcum2+(costoProyect2||0));
+      // OJO — mismo bug que egCostoCompra_/ivStock (ver comentarios ahí): esto
+      // se pre-convertía a moneda acá y de nuevo en fm() al mostrarlo, y
+      // mezclaba ARS crudo (egIngVentas_, cc2, caAcum2) con ya-convertido
+      // (ivStk2) en la misma resta. Ahora todo queda en ARS crudo.
+      totIvProyect += ivStk2;
+      const util2 = egIngVentas_(rid) + ivStk2 - (cc2+caAcum2+(costoProyect2||0));
       totUtil += util2; countUtil++;
     });
 
