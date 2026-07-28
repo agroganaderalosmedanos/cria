@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_22';
+const APP_VERSION = 'index_consolidado_4_6_155_23';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -7472,10 +7472,14 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   // en 6 pantallas distintas, así que preferí no apurarlo sin revisarlas todas.
   const corteComp = S._corteEng || today();
   const stockACorteComp = stockPorRodeoACorte_(corteComp);
-  // Corrales ya vendidos del todo (stock 0) no aportan nada a esta comparación —
-  // van al Historial, igual que en Costos.
-  const rodeosEng = rodeosEngTodos.filter(r => (stockACorteComp[String(r.rodeo_id)]||0) > 0);
-  if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todos los corrales están en 0 — mirá el Historial para los cerrados.</div></div>';
+  // ANTES: se excluían acá los corrales en stock 0 ("no aportan nada a esta
+  // comparación, van al Historial"). Pero un corral cerrado es justo el caso
+  // más útil para comparar — "¿cuál corral rindió mejor, el que ya cerré o
+  // el que sigue activo?" — y todas las funciones de cálculo (costo, alim.,
+  // GDP, ventas) son lecturas históricas que funcionan igual con stock 0. Se
+  // cambia el filtro a "tuvo animales alguna vez" en vez de "tiene ahora".
+  const rodeosEng = rodeosEngTodos.filter(r => egCantIngresada_(r.rodeo_id) > 0);
+  if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay corrales con movimiento para comparar.</div></div>';
   // BUG CORREGIDO DE RAÍZ (en egCostoCompra_ misma, ver su comentario): antes
   // devolvía el costo ya convertido a `moneda`, y acá abajo se mostraba con
   // fm(), que vuelve a convertir — doble conversión en modo U$S. Ahora
@@ -7503,11 +7507,16 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     const ccXkg = kgG > 0 ? cc / kgG : null;
     const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
     const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
-    const util = iv + ivStock - ca - cc;
+    // Cesión enviada a otro corral (ej: se cerró consolidando en otro) — sin
+    // esto, un corral cerrado por traslado interno mostraba pérdida falsa acá
+    // igual que ya corregimos en Costos y en las tarjetas del Dashboard.
+    const cesEnv = egIngresoCesionEnviada_(rid, corteComp).total;
+    const util = iv + ivStock + cesEnv - ca - cc;
     // Días: hasta la última pesada (no "hoy") — si todavía no hay pesada, no se puede
     // saber el crecimiento real, así que no tiene sentido mostrar días transcurridos.
     const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
-    return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, util, gd, caXkg, ccXkg, dias, kgIng, ultima };
+    const cerrado = stk === 0;
+    return { r, rid, stk, cantIng, kgI, kgV, kgG, kgStk, ca, cc, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, kgIng, ultima, cerrado };
   });
 
   const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
@@ -7518,7 +7527,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   // del mejor NO puede filtrar los valores ≤0 como hace best() para el resto.
   const bUtil = rows.map(r=>r.util).filter(v=>v!==null).length ? Math.max(...rows.map(r=>r.util).filter(v=>v!==null)) : null;
 
-  let h = '<div class="tw"><table class="dt"><thead><tr><th>Indicador</th>' + rows.map(r=>`<th class="tc">${r.r.nombre}</th>`).join('') + '</tr></thead><tbody>';
+  let h = '<div class="tw"><table class="dt"><thead><tr><th>Indicador</th>' + rows.map(r=>`<th class="tc">${r.r.nombre}${r.cerrado?' <span style="font-size:10px;font-weight:600;color:var(--text3)">(cerrado)</span>':''}</th>`).join('') + '</tr></thead><tbody>';
   const row = (lbl, fn, fmt) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);return`<td class="tc">${v!==null&&v!==undefined?fmt(v):'—'}</td>`;}).join('')}</tr>`;
   const rowTag = (lbl, fn, fmt, best, low=false) => `<tr><td>${lbl}</td>${rows.map(r=>{const v=fn(r);return`<td class="tc"${tag(v,best,low)}>${v!==null&&v>0?fmt(v):'—'}</td>`;}).join('')}</tr>`;
   // Variante para valores que pueden ser negativos (ej. Utilidad) — antes rowTag()
@@ -7550,6 +7559,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>💰 Resultados</strong></td></tr>`;
   h += row('Ingreso ventas', r=>r.iv, fm);
   h += row('Stock valorizado', r=>r.ivStock>0?r.ivStock:null, fm);
+  h += row('Cesión enviada (a otro corral)', r=>r.cesEnv>0?r.cesEnv:null, fm);
   h += row('(–) Costo total', r=>r.ca+r.cc, v=>'−'+fm(v));
   h += rowTagSigned('Utilidad', r=>r.util, fm, bUtil);
   h += '</tbody></table></div>';
