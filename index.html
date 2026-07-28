@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_36';
+const APP_VERSION = 'index_consolidado_4_6_155_38';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6284,15 +6284,68 @@ function egKgGanadosHastaPesada_(rodeoId, corte, stockOverride) {
   return Math.max(0, kgVendHP + kgCedidoHP + kgStockPesada - kgIng);
 }
 function egGanDiaria_(rodeoId) {
-  const pes = egPesadas_(rodeoId);
   const fi = egFechaIngreso_(rodeoId);
   const kgIng = egKgIngreso_(rodeoId);
-  if (!pes.length || !fi || !kgIng) return null;
-  // Siempre: última pesada vs kg y fecha de ingreso al corral
-  // Mide el crecimiento real desde el día 0, independiente de cuántas pesadas haya
-  const last = pes[pes.length - 1];
-  const dias = Math.round((new Date(last.fecha) - new Date(fi)) / 86400000);
-  return dias > 0 ? (Number(last.peso_prom_kg) - kgIng) / dias : null;
+  if (!fi || !kgIng) return null;
+  const fiDate = new Date(fi);
+
+  // GPD ponderada por "animal-día": cada lote que salió (venta o cesión a otro
+  // corral) ganó peso SOLO mientras estuvo en ESTE corral — desde el ingreso
+  // hasta el día que se fue, con SU PROPIO peso de salida. Antes se usaba un
+  // único punto final (la última pesada o la última venta) para todo el
+  // corral, lo cual está mal si hubo ventas en varias tandas en fechas
+  // distintas: cada tanda ganó kilos durante una cantidad de días distinta,
+  // no todas hasta la fecha de la última venta.
+  let sumKgGanado = 0, sumAnimalDias = 0;
+
+  egVentas_(rodeoId)
+    .filter(v => Number(v.peso_campo_kg) > 0 && Number(v.cant_animales) > 0)
+    .forEach(v => {
+      const cant = Number(v.cant_animales);
+      const pesoProm = Number(v.peso_campo_kg) / cant;
+      const dias = Math.round((new Date(v.fecha_salida) - fiDate) / 86400000);
+      if (dias > 0) {
+        sumKgGanado += cant * (pesoProm - kgIng);
+        sumAnimalDias += cant * dias;
+      }
+    });
+
+  // Cesión enviada a otro corral de Terminación: mismo criterio que una venta
+  // — esos kilos se ganaron EN ESTE corral hasta el día que salieron, aunque
+  // hayan salido por traslado interno en vez de venta (ver egIngresoCesionEnviada_).
+  const rodeosEngIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
+  (S.cache.movimientos || [])
+    .filter(m => (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
+      String(m.rodeo_origen_id) === String(rodeoId) &&
+      rodeosEngIds.has(String(m.rodeo_destino_id)))
+    .forEach(m => {
+      const cant = Number(m.cantidad) || 0;
+      const peso = Number(m.peso_prom_kg) || 0;
+      if (cant > 0 && peso > 0) {
+        const dias = Math.round((new Date(m.fecha) - fiDate) / 86400000);
+        if (dias > 0) {
+          sumKgGanado += cant * (peso - kgIng);
+          sumAnimalDias += cant * dias;
+        }
+      }
+    });
+
+  // Lo que TODAVÍA está en el corral (si queda stock) se pesa a la última
+  // pesada disponible, y cuenta como "animal-días" hasta esa fecha.
+  const stockActual = egStock_(rodeoId);
+  if (stockActual > 0) {
+    const pes = egPesadas_(rodeoId);
+    if (pes.length) {
+      const ultima = pes[pes.length - 1];
+      const dias = Math.round((new Date(ultima.fecha) - fiDate) / 86400000);
+      if (dias > 0) {
+        sumKgGanado += stockActual * (Number(ultima.peso_prom_kg) - kgIng);
+        sumAnimalDias += stockActual * dias;
+      }
+    }
+  }
+
+  return sumAnimalDias > 0 ? sumKgGanado / sumAnimalDias : null;
 }
 // Calcula la GPD (Ganancia de Peso Diaria) de CADA intervalo entre dos pesadas
 // consecutivas de un corral — a diferencia de egGanDiaria_() (que da un único
