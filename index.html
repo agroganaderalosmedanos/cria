@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_20';
+const APP_VERSION = 'index_consolidado_4_6_155_21';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6485,6 +6485,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         onchange="S._corteEng=this.value;render()">
       ${(S._corteEng||today())!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteEng=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
     </div>
+    <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaEngordeExcel_()" title="Descarga un Excel con cabezas y $ por corral, más el detalle crudo de movimientos, para revisar todo sin pasar de pantalla en pantalla">📊 Exportar auditoría a Excel</button>
   </div>`;
 
   // ── CÁLCULOS ECONÓMICOS ─────────────────────────────────────────────
@@ -10344,6 +10345,191 @@ function attachMargenBrutoEvents() {
 // Exporta un Excel con un resumen reproductivo por rodeo (vaca/vaquillona):
 // cuántas en servicio, cuántas tactadas, preñadas, abortos, mortandad y destete
 // — para poder comparar el desempeño de cada rodeo de un vistazo.
+async function exportarAuditoriaEngordeExcel_() {
+  toast('Generando Excel de auditoría... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    for (const ent of ['movimientos','ventas','mortandad','pesadas','egresos_recria']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+
+    const rodeosEng = rodeosEngordeValidos_();
+    const rodeosEngIds = new Set(rodeosEng.map(r => String(r.rodeo_id)));
+    const corte = S._corteEng || today();
+    const stockACorte = stockPorRodeoACorte_(corte);
+    const movsTodos = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corte);
+    const ventasTodas = (S.cache.ventas || []).filter(v => rodeosEngIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corte);
+    const tc = tipoCambioVigente_(corte);
+    const tcVal = tc ? Number(tc.valor || tc) : null;
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:B };
+    const ST_TOTALLBL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, border:B };
+    const ST_DIFF = { alignment:{horizontal:'center'}, border:B, font:{bold:true,color:{rgb:'C00000'}} };
+
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    // ── HOJA 1: Conciliación de cabezas por corral ──────────────────────
+    const headers1 = ['Corral','Campo','EI','+ Entradas (traslados)','− Salidas (traslados)','− Ventas','− Mortandad','= EF calculado','EF real (stock)','Diferencia'];
+    const filas1 = rodeosEng.map(r => {
+      const rid = String(r.rodeo_id);
+      const eiR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const entradasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const salidasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const ventasR = ventasTodas.filter(v => String(v.rodeo_id)===rid).reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id)===rid && (m.fecha||'')<=corte).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+      const efCalcR = eiR + entradasR - salidasR - ventasR - mortR;
+      const efRealR = Math.max(0, stockACorte[rid]||0);
+      return { nombre: r.nombre, campo: campoNombre(r.campo_id), eiR, entradasR, salidasR, ventasR, mortR, efCalcR, efRealR, diff: efRealR-efCalcR };
+    }).filter(f => f.eiR||f.entradasR||f.salidasR||f.ventasR||f.mortR||f.efRealR);
+    const aoa1 = [
+      [`Agroganadera Los Médanos — Auditoría Terminación (cabezas)`],
+      ['Fecha de corte', fd(corte)],
+      [],
+      headers1,
+    ];
+    filas1.forEach(f => aoa1.push([f.nombre, f.campo, f.eiR, f.entradasR, f.salidasR, f.ventasR, f.mortR, f.efCalcR, f.efRealR, f.diff]));
+    aoa1.push(['TOTAL','',
+      filas1.reduce((s,f)=>s+f.eiR,0), filas1.reduce((s,f)=>s+f.entradasR,0), filas1.reduce((s,f)=>s+f.salidasR,0),
+      filas1.reduce((s,f)=>s+f.ventasR,0), filas1.reduce((s,f)=>s+f.mortR,0), filas1.reduce((s,f)=>s+f.efCalcR,0),
+      filas1.reduce((s,f)=>s+f.efRealR,0), filas1.reduce((s,f)=>s+f.diff,0),
+    ]);
+    const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+    ws1['!cols'] = [{wch:26},{wch:14},{wch:8},{wch:14},{wch:12},{wch:10},{wch:10},{wch:12},{wch:12},{wch:11}];
+    ws1['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers1.length-1} }];
+    estilarFila_(ws1, 0, headers1.length, ST_TITULO);
+    estilarFila_(ws1, 3, headers1.length, ST_HEADER);
+    filas1.forEach((f,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers1.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws1[addr]) ws1[addr] = { t:'s', v:'' };
+        if (c<=1) ws1[addr].s = alt?ST_ROWLBL_ALT:ST_ROWLBL;
+        else if (c===9 && f.diff!==0) ws1[addr].s = ST_DIFF;
+        else ws1[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    estilarFila_(ws1, 4+filas1.length, headers1.length, ST_TOTAL);
+    if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
+    XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
+
+    // ── HOJA 2: Resumen económico por corral (ARS crudo + USD a cotización del corte) ──
+    const headers2 = ['Corral','Campo','Costo compra (ARS)','Cesión enviada (ARS)','Alimentación (ARS)','Ventas (ARS)','Stock valorizado (ARS)','Utilidad (ARS)','Cotización usada','Utilidad (U$S)'];
+    const aoa2 = [
+      [`Agroganadera Los Médanos — Auditoría Terminación (economía)`],
+      ['Fecha de corte', fd(corte)],
+      ['Nota', 'Todos los importes ARS son crudos (sin convertir). La columna U$S usa la cotización del corte para que puedas verificar la conversión vos mismo.'],
+      [],
+      headers2,
+    ];
+    const filas2 = rodeosEng.map(r => {
+      const rid = r.rodeo_id;
+      const stk = Math.max(0, stockACorte[String(rid)]||0);
+      const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corte);
+      const ultima = pes.length ? pes[pes.length-1] : null;
+      const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+      const cc = egCostoCompra_(rid);
+      const cesEnv = egIngresoCesionEnviada_(rid, corte).total;
+      const ca = egCostoAlim_(rid, corte);
+      const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
+      const ivStock = valorizarRodeo_(r, stk, pesoUltima);
+      const util = (iv+ivStock+cesEnv) - (cc+ca);
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), cc, cesEnv, ca, iv, ivStock, util };
+    }).filter(f => f.cc||f.cesEnv||f.ca||f.iv||f.ivStock);
+    filas2.forEach(f => aoa2.push([f.nombre, f.campo, Math.round(f.cc), Math.round(f.cesEnv), Math.round(f.ca), Math.round(f.iv), Math.round(f.ivStock), Math.round(f.util), tcVal||'—', tcVal?Math.round(f.util/tcVal):'—']));
+    aoa2.push(['TOTAL','',
+      Math.round(filas2.reduce((s,f)=>s+f.cc,0)), Math.round(filas2.reduce((s,f)=>s+f.cesEnv,0)), Math.round(filas2.reduce((s,f)=>s+f.ca,0)),
+      Math.round(filas2.reduce((s,f)=>s+f.iv,0)), Math.round(filas2.reduce((s,f)=>s+f.ivStock,0)), Math.round(filas2.reduce((s,f)=>s+f.util,0)),
+      tcVal||'—', tcVal?Math.round(filas2.reduce((s,f)=>s+f.util,0)/tcVal):'—',
+    ]);
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!cols'] = [{wch:26},{wch:14},{wch:15},{wch:15},{wch:14},{wch:12},{wch:16},{wch:13},{wch:12},{wch:13}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
+    estilarFila_(ws2, 0, headers2.length, ST_TITULO);
+    estilarFila_(ws2, 4, headers2.length, ST_HEADER);
+    filas2.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers2.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
+        ws2[addr].s = (c<=1) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    });
+    estilarFila_(ws2, 5+filas2.length, headers2.length, ST_TOTAL);
+    if (ws2[XLSX.utils.encode_cell({r:5+filas2.length,c:0})]) ws2[XLSX.utils.encode_cell({r:5+filas2.length,c:0})].s = ST_TOTALLBL;
+    XLSX.utils.book_append_sheet(wb, ws2, 'Resumen económico');
+
+    // ── HOJA 3: Movimientos crudos (Traslados y Saldos iniciales) de Terminación ──
+    const movsEng = movsTodos.filter(m => rodeosEngIds.has(String(m.rodeo_destino_id)) || rodeosEngIds.has(String(m.rodeo_origen_id)))
+      .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const headers3 = ['Fecha','Tipo','Corral origen','Corral destino','Cantidad','Peso prom. (kg)','Precio $/kg','Precio $/cab.','Observaciones'];
+    const aoa3 = [
+      [`Agroganadera Los Médanos — Movimientos de Terminación (crudo)`],
+      ['Fecha de corte', fd(corte)],
+      [],
+      headers3,
+    ];
+    movsEng.forEach(m => aoa3.push([
+      fd(m.fecha), m.tipo,
+      m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
+      m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
+      Number(m.cantidad)||0, Number(m.peso_prom_kg)||'—', Number(m.precio_kg)||'—', Number(m.precio_cabeza)||'—',
+      m.observaciones||'',
+    ]));
+    const ws3 = XLSX.utils.aoa_to_sheet(aoa3);
+    ws3['!cols'] = [{wch:12},{wch:20},{wch:26},{wch:26},{wch:10},{wch:14},{wch:12},{wch:12},{wch:30}];
+    ws3['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers3.length-1} }];
+    estilarFila_(ws3, 0, headers3.length, ST_TITULO);
+    estilarFila_(ws3, 3, headers3.length, ST_HEADER);
+    movsEng.forEach((m,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers3.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws3[addr]) ws3[addr] = { t:'s', v:'' };
+        ws3[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws3, 'Movimientos detalle');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Auditoria_Terminacion_${corte}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de auditoría descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
 async function exportarIndicesReproduccionExcel_() {
   toast('Generando Excel... puede tardar unos segundos', 'ok');
   try {
