@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_17';
+const APP_VERSION = 'index_consolidado_4_6_155_18';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5701,6 +5701,11 @@ function attachEngordeEvents() {
       const kgG = egKgGanadosHastaPesada_(rid);
       const gd = egGanDiaria_(rid);
       const convMS_ = egConversionMS_(rid, null, kgG); // sin corte de fecha: todo el historial de consumo del corral
+      // Cesión interna enviada a otro corral (si este corral se cerró trasladando
+      // sus animales a otro corral de Terminación en vez de vendiéndolos) — sin
+      // esto, un corral que cierra por traslado interno mostraba costo de entrada
+      // sin ningún ingreso que lo compense, dando una utilidad falsa negativa.
+      const cesEnvHist = egIngresoCesionEnviada_(rid, null);
       btn.disabled = true; btn.textContent = '⏳ Guardando...';
       try {
         await apiCall('create', { body: { entity: 'engorde_lotes', data: {
@@ -5708,7 +5713,7 @@ function attachEngordeEvents() {
           fecha_apertura: fi||today(), fecha_cierre: today(),
           animales: egCantIngresada_(rid), kg_ganados: kgG, gan_diaria: gd||'',
           costo_alim: egCostoAlim_(rid), costo_compra: egCostoCompra_(rid),
-          ing_ventas: egIngVentas_(rid),
+          ing_ventas: egIngVentas_(rid), ing_ces_enviada: cesEnvHist.total||'',
           kg_ms_consumidos: convMS_.kgMS||'', conversion_ms: convMS_.conv||'', costo_kg_ms: convMS_.costoKgMS||'',
         }}});
         invalidateCache('engorde_lotes');
@@ -5826,7 +5831,7 @@ function egLotes_() {
     animales: Number(l.animales)||0, kgGanados: Number(l.kg_ganados)||0,
     ganDiaria: (l.gan_diaria!==''&&l.gan_diaria!==undefined&&l.gan_diaria!==null) ? Number(l.gan_diaria) : null,
     costoAlim: Number(l.costo_alim)||0, costoCompra: Number(l.costo_compra)||0,
-    ingVentas: Number(l.ing_ventas)||0,
+    ingVentas: Number(l.ing_ventas)||0, ingCesEnviada: Number(l.ing_ces_enviada)||0,
     // Lotes cerrados antes de esta actualización no tienen estos tres campos —
     // quedan en null y la tabla los muestra como "—" en vez de 0 (que sería engañoso).
     conversionMS: (l.conversion_ms!==''&&l.conversion_ms!==undefined&&l.conversion_ms!==null) ? Number(l.conversion_ms) : null,
@@ -7931,7 +7936,12 @@ function buildEngordeHistorial_(rodeosEng, fm) {
   h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th class="tc">Apertura</th><th class="tc">Cierre</th><th class="tc">Días</th><th class="tc">Animales</th><th class="tc">Kg ganados</th><th class="tc">GDP</th><th class="tc">Conversión (MS)</th><th class="tc">Costo alim.</th><th class="tc">Ingreso</th><th class="tc">Utilidad</th><th></th></tr></thead><tbody>';
   lotes.forEach(l => {
     const dias = Math.round((new Date(l.fechaCierre)-new Date(l.fechaApertura))/86400000);
-    const util = l.ingVentas - l.costoCompra - l.costoAlim;
+    // Ingreso total del lote = ventas reales + cesión interna enviada a otro corral
+    // (si el corral se cerró trasladando animales en vez de vendiéndolos). Antes
+    // solo se contaba ing_ventas, dejando la utilidad falsamente negativa en los
+    // corrales que se cierran por traslado interno.
+    const ingTotalLote = l.ingVentas + (l.ingCesEnviada||0);
+    const util = ingTotalLote - l.costoCompra - l.costoAlim;
     h += `<tr>
       <td><strong>${l.nombre}</strong></td>
       <td class="tc">${fd(l.fechaApertura)}</td>
@@ -7942,7 +7952,7 @@ function buildEngordeHistorial_(rodeosEng, fm) {
       <td class="tc">${l.ganDiaria?fn(l.ganDiaria,3)+' kg/día':'—'}</td>
       <td class="tc">${l.conversionMS?fn(l.conversionMS,1)+' : 1':'—'}</td>
       <td class="tc">${fm(l.costoAlim)}</td>
-      <td class="tc">${fm(l.ingVentas)}</td>
+      <td class="tc">${fm(ingTotalLote)}${l.ingCesEnviada>0?`<div style="font-size:10px;color:var(--text3)">incl. ${fm(l.ingCesEnviada)} cesión interna</div>`:''}</td>
       <td class="tc" style="font-weight:700;color:${util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(util)}</td>
       <td><button class="btn-del" data-del-lote="${l.id}">🗑</button></td>
     </tr>`;
@@ -7950,7 +7960,7 @@ function buildEngordeHistorial_(rodeosEng, fm) {
   h += '</tbody></table></div>';
   if (lotes.length>1) {
     const promGD = lotes.filter(l=>l.ganDiaria).reduce((s,l)=>s+l.ganDiaria,0)/lotes.filter(l=>l.ganDiaria).length;
-    const promUtil = lotes.reduce((s,l)=>s+(l.ingVentas-l.costoCompra-l.costoAlim),0)/lotes.length;
+    const promUtil = lotes.reduce((s,l)=>s+(l.ingVentas+(l.ingCesEnviada||0)-l.costoCompra-l.costoAlim),0)/lotes.length;
     h += `<div class="section-label" style="margin-top:16px">Promedios históricos (${lotes.length} lotes)</div>
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-icon">📈</div><div class="kpi-label">GDP prom.</div><div class="kpi-val">${fn(promGD,3)} kg/día</div></div>
@@ -11531,6 +11541,7 @@ function iaContexto_() {
       costoAlim: egCostoAlim_(rid),
       costoCompra: egCostoCompra_(rid),
       ingVentas: egIngVentas_(rid),
+      ingCesionEnviada: egIngresoCesionEnviada_(rid, null).total,
     };
   });
 
