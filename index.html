@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_35';
+const APP_VERSION = 'index_consolidado_4_6_155_36';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6255,19 +6255,31 @@ function egKgStockEstimado_(rodeoId, corte, stockOverride) {
   const stkAntiguo = Math.max(0, stk - cantNueva);
   return stkAntiguo * Number(ultimaPesada.peso_prom_kg) + kgNuevasAjustado;
 }
-function egKgGanadosHastaPesada_(rodeoId, corte) {
+function egKgGanadosHastaPesada_(rodeoId, corte, stockOverride) {
   const pes = corte ? egPesadas_(rodeoId).filter(p=>(p.fecha||'')<=corte) : egPesadas_(rodeoId);
   if (!pes.length) return 0;
   const ultima = pes[pes.length-1];
+  const fechaLimite = corte || today();
+  // OJO — dos bugs corregidos acá:
+  // 1) Ventas y cesiones YA tienen su propio peso conocido al momento de salir
+  //    (no dependen de ninguna pesada) — antes esto solo contaba las que pasaron
+  //    HASTA LA FECHA DE LA ÚLTIMA PESADA, mientras que las columnas "Kg
+  //    vendidos"/"Kg cedidos" del resto del reporte muestran el total hasta el
+  //    CORTE. Si hubo ventas o cesiones después de la última pesada cargada,
+  //    "Kg ganados" las ignoraba y el número no cerraba contra esas columnas.
+  // 2) "kg en stock" usaba la cantidad que tenía el corral EN EL MOMENTO DE LA
+  //    PESADA (ultima.cantidad) — si después de esa pesada salieron animales por
+  //    venta o cesión, esa cantidad vieja ya no es el stock actual, y sumar el
+  //    peso de esos animales DOS VECES (una acá con la cantidad vieja, otra en
+  //    kgVendHP/kgCedidoHP) inflaba el total. Ahora usa el stock ACTUAL (al
+  //    corte), no el de la pesada.
   const kgVendHP = egVentas_(rodeoId)
-    .filter(v => String(v.fecha_salida) <= String(ultima.fecha))
+    .filter(v => String(v.fecha_salida) <= String(fechaLimite))
     .reduce((s, v) => s + (Number(v.peso_campo_kg) || 0), 0);
-  // Kg cedidos a otro corral de Terminación hasta la fecha de la pesada — esos
-  // kilos también se ganaron EN ESTE corral, igual que los vendidos, y antes
-  // no se sumaban acá: "Kg ganados" le restaba injustamente a un corral que
-  // cerró trasladando en vez de vendiendo (ver egIngresoCesionEnviada_).
-  const kgCedidoHP = egIngresoCesionEnviada_(rodeoId, ultima.fecha).kg;
-  const kgStockPesada = Number(ultima.cantidad) * Number(ultima.peso_prom_kg);
+  const kgCedidoHP = egIngresoCesionEnviada_(rodeoId, fechaLimite).kg;
+  const stockActual = stockOverride !== undefined ? stockOverride
+    : Math.max(0, (corte ? (stockPorRodeoACorte_(corte)[String(rodeoId)]||0) : egStock_(rodeoId)));
+  const kgStockPesada = stockActual * Number(ultima.peso_prom_kg);
   const kgIng = egKgIngresados_(rodeoId);
   return Math.max(0, kgVendHP + kgCedidoHP + kgStockPesada - kgIng);
 }
@@ -7007,7 +7019,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
     totKgI   += egKgIngresados_(rid);
     totKgV   += egKgVend_(rid);
     totKgStk += egKgStockEstimado_(rid, corte, Math.max(0, stockACorteCard[String(rid)]||0));
-    totKgG   += egKgGanadosHastaPesada_(rid, corte);
+    totKgG   += egKgGanadosHastaPesada_(rid, corte, Math.max(0, stockACorteCard[String(rid)]||0));
     const gdp = egGanDiaria_(rid);
     if (gdp) gdps.push(gdp);
   });
@@ -7049,7 +7061,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
     const kgI     = egKgIngresados_(rid);
     const kgV     = egKgVend_(rid);
     const kgStk   = egKgStockEstimado_(rid, corte, stock);
-    const kgG     = egKgGanadosHastaPesada_(rid, corte);
+    const kgG     = egKgGanadosHastaPesada_(rid, corte, stock);
     const gdp     = egGanDiaria_(rid);
     const gpdIntervalos = egGpdIntervalos_(rid);
     const gpdUltimoBajo = gpdIntervalos.length && gpdIntervalos[gpdIntervalos.length - 1].bajo;
@@ -7284,7 +7296,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     const gdpsTodos=[];
     rodeosEng.forEach(r=>{
       totKgI  += egKgIngresados_(r.rodeo_id);
-      totKgG  += egKgGanadosHastaPesada_(r.rodeo_id, corteCostos);
+      totKgG  += egKgGanadosHastaPesada_(r.rodeo_id, corteCostos, Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0));
       totKgV  += egKgVend_(r.rodeo_id);
       totKgStk+= egKgStockEstimado_(r.rodeo_id, corteCostos, Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0));
       totAn   += Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0);
@@ -7384,7 +7396,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoId)&&(v.fecha_salida||'')<=corteCostosUno)
     .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
   const kgV = egKgVend_(rodeoId);
-  const kgG = egKgGanadosHastaPesada_(rodeoId, corteCostosUno);
+  const kgG = egKgGanadosHastaPesada_(rodeoId, corteCostosUno, stk);
   // Stock valorizado usando precios de valorización (no precio manual)
   const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
   const kgStk = stk * (pesoUltima || kgIngProm || 0);
@@ -7626,7 +7638,7 @@ async function exportarComparacionEngordeExcel_() {
       // Kg cedidos a otro corral (traslado interno) — se separan de "Kg vendidos"
       // porque no es lo mismo, aunque ambos sean kilos que dejaron este corral.
       const kgCedido = egIngresoCesionEnviada_(rid, corteComp).kg;
-      const kgG = egKgGanadosHastaPesada_(rid, corteComp);
+      const kgG = egKgGanadosHastaPesada_(rid, corteComp, stk);
       // Antes esto se calculaba acá mismo con la lógica vieja (stock × un solo
       // peso) en vez de reusar egKgStockEstimado_ ya corregida — quedaba
       // desactualizado respecto al resto de las pantallas.
@@ -7808,7 +7820,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     // Kg cedidos a otro corral (traslado interno) — se separan de "Kg vendidos"
     // porque no es lo mismo, aunque ambos sean kilos que dejaron este corral.
     const kgCedido = egIngresoCesionEnviada_(rid, corteComp).kg;
-    const kgG = egKgGanadosHastaPesada_(rid, corteComp);
+    const kgG = egKgGanadosHastaPesada_(rid, corteComp, stk);
     // Antes esto se calculaba acá mismo con la lógica vieja (stock × un solo
     // peso) en vez de reusar egKgStockEstimado_ ya corregida.
     const kgStk = egKgStockEstimado_(rid, corteComp, stk);
