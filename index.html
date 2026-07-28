@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_39';
+const APP_VERSION = 'index_consolidado_4_6_155_40';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -7220,6 +7220,62 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
   return h;
 }
 
+// Tabla de detalle de insumos consumidos, reusable desde el resumen "todos los
+// corrales" y desde la ficha individual de Costos. Antes cada pantalla tenía
+// su propia tabla fija (sin filtro, orden fijo por fecha, y la ficha
+// individual directamente NO TENÍA ninguna tabla de detalle — solo mostraba
+// Ingresos/Egresos, sin el desglose línea por línea de qué se compró/consumió).
+// Acá se agrega: filtro por producto (para ver, por ejemplo, solo "Maíz") y
+// encabezados clickeables para ordenar por cualquier columna.
+function buildDetalleInsumosFiltrable_(filas, titulo, fm, mostrarCorral) {
+  if (!filas.length) return '';
+  const idBase = titulo.replace(/[^a-zA-Z0-9]/g,'').toLowerCase();
+  const productos = [...new Set(filas.map(f=>f.prod))].sort((a,b)=>a.localeCompare(b));
+  const filtroKey = '_costosProdFiltro_' + idBase;
+  const sortColKey = '_costosSortCol_' + idBase;
+  const sortDirKey = '_costosSortDir_' + idBase;
+  const filtro = S[filtroKey] || '';
+  const sortCol = S[sortColKey] || 'fecha';
+  const sortDir = S[sortDirKey] || 'asc';
+  const filasFiltradas = filtro ? filas.filter(f=>f.prod===filtro) : filas;
+  const sorted = filasFiltradas.slice().sort((a,b)=>{
+    const va=a[sortCol], vb=b[sortCol];
+    let c;
+    if (typeof va === 'string') c = String(va).localeCompare(String(vb));
+    else c = (Number(va)||0) - (Number(vb)||0);
+    return sortDir==='asc' ? c : -c;
+  });
+  const cols = [
+    {key:'fecha', label:'Fecha'},
+    {key:'prod', label:'Producto'},
+    ...(mostrarCorral ? [{key:'rodeo', label:'Corral'}] : []),
+    {key:'cant', label:'Cantidad', cls:'tc'},
+    {key:'costo', label:'Costo', cls:'tr'},
+  ];
+  const flecha = (key) => sortCol===key ? (sortDir==='asc'?' ▲':' ▼') : '';
+  let t = `<div class="panel">
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span>${titulo}</span>
+      <select onchange="S['${filtroKey}']=this.value;render()" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg)">
+        <option value="">Todos los productos</option>
+        ${productos.map(p=>`<option value="${p}" ${p===filtro?'selected':''}>${p}</option>`).join('')}
+      </select>
+    </div>
+    <div class="tw"><table class="dt"><thead><tr>
+      ${cols.map(c=>`<th class="${c.cls||''}" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}" onclick="S['${sortDirKey}']=(S['${sortColKey}']==='${c.key}'&&S['${sortDirKey}']==='asc')?'desc':'asc';S['${sortColKey}']='${c.key}';render()">${c.label}${flecha(c.key)}</th>`).join('')}
+    </tr></thead><tbody>`;
+  let tot=0, totCant=0;
+  sorted.forEach(d=>{
+    tot+=d.costo; totCant+=d.cant;
+    t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td>${mostrarCorral?`<td>${d.rodeo}</td>`:''}
+      <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
+  });
+  const colspanLabel = mostrarCorral ? 3 : 2;
+  t += `<tr style="background:var(--bg2);font-weight:800"><td colspan="${colspanLabel}" class="tr">TOTAL${filtro?' ('+filtro+')':''}</td>
+    <td class="tc">${fn(totCant)}</td>
+    <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
+  return t + '</tbody></table></div></div>';
+}
 function buildEngordeCostos_(rodeoId, fm) {
   if (!rodeoId) {
     // Mostrar resumen de todos los corrales
@@ -7437,25 +7493,9 @@ function buildEngordeCostos_(rodeoId, fm) {
       if (prodPorIdC[pid]?.categoria === 'Veterinaria') detalleVetC.push(row);
       else detalleAlimC.push(row);
     });
-    const buildInsumoTableCostos_ = (filas, titulo) => {
-      if (!filas.length) return '';
-      let t = `<div class="panel"><div class="panel-title">${titulo}</div>
-        <div class="tw"><table class="dt"><thead><tr>
-          <th>Fecha</th><th>Producto</th><th>Corral</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
-        </tr></thead><tbody>`;
-      let tot=0;
-      filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
-        tot+=d.costo;
-        t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
-          <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
-      });
-      t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
-        <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
-      return t+'</tbody></table></div></div>';
-    };
     h += '<div class="section-label">Detalle de insumos consumidos</div>';
-    h += buildInsumoTableCostos_(detalleAlimC, '🌾 Alimentación — detalle');
-    h += buildInsumoTableCostos_(detalleVetC,  '💉 Veterinaria — detalle');
+    h += buildDetalleInsumosFiltrable_(detalleAlimC, '🌾 Alimentación — detalle', fm, true);
+    h += buildDetalleInsumosFiltrable_(detalleVetC,  '💉 Veterinaria — detalle', fm, true);
 
     return h;
   }
@@ -7619,6 +7659,26 @@ function buildEngordeCostos_(rodeoId, fm) {
     });
     h += `<tr class="total-row"><td><strong>Total</strong></td><td class="tc">—</td><td class="tc"><strong>${fm(ca)}</strong></td><td class="tc"><strong>${fm(caHP)}</strong></td><td class="tc"><strong>${kgG>0?fm(caHP/kgG):'—'}</strong></td></tr>`;
     h += '</tbody></table></div>';
+  }
+
+  // ── Detalle línea por línea (un renglón por cada consumo cargado), con
+  // filtro por producto y encabezados clickeables para ordenar. Antes la
+  // ficha individual de un corral no tenía NADA de esto — la única tabla de
+  // insumos era el resumen agrupado por producto de arriba, sin poder ver
+  // cada carga puntual ni filtrar "solo Maíz" para revisarlo aparte.
+  const prodPorIdIndiv = Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
+  const detalleAlimIndiv = [], detalleVetIndiv = [];
+  consumosCrl.forEach(c => {
+    const pid = String(c.producto_id);
+    const importe = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
+    const row = {fecha:c.fecha, prod:prodPorIdIndiv[pid]?.nombre||'—', cant:Number(c.cantidad)||0, costo:importe};
+    if (prodPorIdIndiv[pid]?.categoria === 'Veterinaria') detalleVetIndiv.push(row);
+    else detalleAlimIndiv.push(row);
+  });
+  if (detalleAlimIndiv.length || detalleVetIndiv.length) {
+    h += '<div class="section-label" style="margin-top:16px">Detalle de insumos consumidos (línea por línea)</div>';
+    h += buildDetalleInsumosFiltrable_(detalleAlimIndiv, '🌾 Alimentación — detalle', fm, false);
+    h += buildDetalleInsumosFiltrable_(detalleVetIndiv, '💉 Veterinaria — detalle', fm, false);
   }
 
   // ── Gestión de insumos activos/inactivos para proyección ──────────────────
