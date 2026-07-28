@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_31';
+const APP_VERSION = 'index_consolidado_4_6_155_32';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -13526,7 +13526,7 @@ function buildABMCorrales_() {
             ${(!cfg.fechaInicio && fechaMov)?`<button type="button" class="abm-corral-unlock" data-field="fechaInicio" title="Cargar una fecha manual distinta a la del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
           ${fechaMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fd(fechaMov)}${(!cfg.fechaInicio)?' (en uso)':''}</div>`:''}
-          ${(cfg.fechaInicio && fechaMov && cfg.fechaInicio!==fechaMov)?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento (${fd(fechaMov)})</div>`:''}
+          ${(cfg.fechaInicio && fechaMov && cfg.fechaInicio!==fechaMov)?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:flex;align-items:center;gap:6px">⚠ Reemplaza al movimiento (${fd(fechaMov)}) <button type="button" class="abm-corral-revert" data-rid="${rid}" data-field="fechaInicio" title="Volver a usar el valor del movimiento" style="font-size:10px;padding:2px 6px;cursor:pointer;border:1px solid #92400e;border-radius:4px;background:#fff;color:#92400e">↺ usar movimiento</button></div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Cantidad ingresada</label>
@@ -13536,7 +13536,7 @@ function buildABMCorrales_() {
             ${(!cfg.stockInicial && cantMov)?`<button type="button" class="abm-corral-unlock" data-field="stockInicial" title="Cargar una cantidad manual distinta a la del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
           ${cantMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(cantMov)} cab.${(!cfg.stockInicial)?' (en uso)':''}</div>`:''}
-          ${(cfg.stockInicial && cantMov && Number(cfg.stockInicial)!==Number(cantMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento (${fn(cantMov)} cab.)</div>`:''}
+          ${(cfg.stockInicial && cantMov && Number(cfg.stockInicial)!==Number(cantMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:flex;align-items:center;gap:6px">⚠ Reemplaza al movimiento (${fn(cantMov)} cab.) <button type="button" class="abm-corral-revert" data-rid="${rid}" data-field="stockInicial" title="Volver a usar el valor del movimiento" style="font-size:10px;padding:2px 6px;cursor:pointer;border:1px solid #92400e;border-radius:4px;background:#fff;color:#92400e">↺ usar movimiento</button></div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Kg prom. de ingreso</label>
@@ -13546,7 +13546,7 @@ function buildABMCorrales_() {
             ${(!cfg.kgIngreso && kgMov)?`<button type="button" class="abm-corral-unlock" data-field="kgIngreso" title="Cargar un peso manual distinto al del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
           ${kgMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: ${fn(kgMov)} kg${(!cfg.kgIngreso)?' (en uso)':''}</div>`:''}
-          ${(cfg.kgIngreso && kgMov && Number(cfg.kgIngreso)!==Number(kgMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento (${fn(kgMov)} kg)</div>`:''}
+          ${(cfg.kgIngreso && kgMov && Number(cfg.kgIngreso)!==Number(kgMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:flex;align-items:center;gap:6px">⚠ Reemplaza al movimiento (${fn(kgMov)} kg) <button type="button" class="abm-corral-revert" data-rid="${rid}" data-field="kgIngreso" title="Volver a usar el valor del movimiento" style="font-size:10px;padding:2px 6px;cursor:pointer;border:1px solid #92400e;border-radius:4px;background:#fff;color:#92400e">↺ usar movimiento</button></div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Precio entrada ($/cab.)</label>
@@ -13556,7 +13556,7 @@ function buildABMCorrales_() {
             ${(!cfg.precioCompra && precioCabMov)?`<button type="button" class="abm-corral-unlock" data-field="precioCompra" title="Cargar un precio manual distinto al del movimiento" style="font-size:11px;padding:3px 7px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--bg2)">✏️</button>`:''}
           </div>
           ${precioCabMov?`<div style="font-size:10px;color:var(--text3);margin-top:2px">Movimiento: $ ${fn(Math.round(precioCabMov))}/cab.${(!cfg.precioCompra)?' (en uso)':''}</div>`:''}
-          ${(cfg.precioCompra && precioCabMov && Math.round(Number(cfg.precioCompra))!==Math.round(precioCabMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:inline-block">⚠ Reemplaza al movimiento ($ ${fn(Math.round(precioCabMov))}/cab.)</div>`:''}
+          ${(cfg.precioCompra && precioCabMov && Math.round(Number(cfg.precioCompra))!==Math.round(precioCabMov))?`<div style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 6px;margin-top:3px;display:flex;align-items:center;gap:6px">⚠ Reemplaza al movimiento ($ ${fn(Math.round(precioCabMov))}/cab.) <button type="button" class="abm-corral-revert" data-rid="${rid}" data-field="precioCompra" title="Volver a usar el valor del movimiento" style="font-size:10px;padding:2px 6px;cursor:pointer;border:1px solid #92400e;border-radius:4px;background:#fff;color:#92400e">↺ usar movimiento</button></div>`:''}
         </div>
 
         <div class="fg"><label style="font-size:11px">Peso objetivo (kg)</label>
@@ -13577,6 +13577,20 @@ function buildABMCorrales_() {
 }
 
 function attachABMCorralesEvents_() {
+  // Botón "↺ usar movimiento": limpia UN campo puntual y guarda al toque, sin
+  // tener que seleccionar y borrar texto a mano — justo la fricción que generó
+  // que Corral 1 y Corral 2 quedaran con excepciones manuales desactualizadas
+  // sin que nadie se diera cuenta hasta comparar contra el Dashboard.
+  document.querySelectorAll('.abm-corral-revert').forEach(btn => {
+    btn.onclick = async () => {
+      const rid = btn.dataset.rid, field = btn.dataset.field;
+      btn.disabled = true; btn.textContent = '⏳';
+      await egSaveConfig_(rid, { [field]: '' });
+      toast('Vuelto a usar el valor del movimiento', 'ok');
+      render();
+    };
+  });
+
   const btnNuevo = document.getElementById('cf-corral-save');
   if (btnNuevo) btnNuevo.onclick = async () => {
     const nombre = document.getElementById('cf-corral-nombre').value.trim();
