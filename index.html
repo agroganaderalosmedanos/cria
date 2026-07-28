@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_38';
+const APP_VERSION = 'index_consolidado_4_6_155_39';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6727,7 +6727,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
   });
 
-  const totalIngresos = totalVentas + stockValEng;
+  let totalIngresos = totalVentas + stockValEng;
 
   // Stock inicial / Cesiones recibidas de Recría
   const movs = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteEng);
@@ -6759,6 +6759,30 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     return !tieneTrasladoReal;
   });
   const totalSaldoIni = saldosIni.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
+  // Traslados INTERNOS entre corrales de la MISMA Terminación (los que arriba
+  // se excluyen de "cesionesRecTrasla" porque se cancelan solos en el agregado).
+  // Antes esto quedaba totalmente invisible en el Dashboard — no aparecía como
+  // ingreso ni como egreso en ningún lado, mientras que en Comparación sí se
+  // veían por separado ("Cesión enviada" / "Cesión interna recibida"), lo cual
+  // generaba la sensación de que los números no coincidían aunque en realidad
+  // sí cerraban (solo que acá estaban ocultos). Se muestran acá como una línea
+  // igual en Ingresos y en Egresos — no cambian el margen (se cancelan entre
+  // sí), pero ahora se ven, en vez de desaparecer sin explicación.
+  const cesionesInternas = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)) && rodeosEngIds.has(String(m.rodeo_origen_id)));
+  const totalCesionInterna = cesionesInternas.reduce((s,m)=>{
+    const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+    const cant = Number(m.cantidad)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const peso = Number(m.peso_prom_kg)||0;
+    if (precioKg && peso) return s + cant*peso*precioKg;
+    const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
+    return s + valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesoO);
+  },0);
+  // Se suma a los dos lados por igual — no cambia el margen (se cancela sola
+  // más abajo, sumándola también a totalEgresos), pero ahora aparece explícita
+  // en vez de estar oculta.
+  totalIngresos += totalCesionInterna;
   // Egresos legacy (sin Traslado real) + Traslados reales (incluye los nuevos generados
   // por el formulario de Cesiones Recría→Terminación, y los traslados directos legacy)
   const totalCesiones = cesionesRec.reduce((s,e)=>{
@@ -6816,7 +6840,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     String(s.periodo).slice(0,7) <= corteEng.slice(0,7)
   );
 
-  const totalEgresos = totalSaldoIni + totalCesiones + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
+  const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
   const margen = totalIngresos - totalEgresos;
 
   // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio.
@@ -6856,6 +6880,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div><div style="font-weight:600">📦 Stock valorizado actual</div><div style="font-size:11px;color:var(--text3)">${stockDetalleRows.length} corrales</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--green)">${fmonACorte_(stockValEng, moneda, corteEng)}</div>
         </div>
+        ${totalCesionInterna>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+          <div><div style="font-weight:600">🔄 Cesión interna (entre corrales propios)</div><div style="font-size:11px;color:var(--text3)">${cesionesInternas.length} traslados — se cancela con el mismo monto en Egresos, no afecta el margen</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totalCesionInterna)}</div>
+        </div>`:''}
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
           <div style="font-size:28px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
@@ -6874,6 +6902,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cesionesRec.length + cesionesRecTrasla.length} cesiones desde Recría</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesiones)}</div>
         </div>
+        ${totalCesionInterna>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🔄 Cesión interna recibida (de otro corral propio)</div><div style="font-size:11px;color:var(--text3)">${cesionesInternas.length} traslados — mismo monto que "Cesión interna" de Ingresos, no afecta el margen</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesionInterna)}</div>
+        </div>`:''}
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🛒 Compras de hacienda</div><div style="font-size:11px;color:var(--text3)">${comprasEng.length} compras campaña</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCompras)}</div>
@@ -7731,7 +7763,7 @@ async function exportarComparacionEngordeExcel_() {
       const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
       return {
         nombre: r.nombre, campo: campoNombre(r.campo_id), cerrado: stk===0 ? 'Sí' : 'No',
-        cantIng, stk, dias, kgIng, pesoUltima: pesoUltimaC||null,
+        cantIng, fi, stk, dias, kgIng, pesoUltima: pesoUltimaC||null,
         kgI, kgV, kgCedido, kgStk, kgG, gd,
         cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, ca, sueldoProrr, costoTotal: ca+cc+sueldoProrr, caXkg,
         iv, ivStock, cesEnv, util,
@@ -7765,7 +7797,7 @@ async function exportarComparacionEngordeExcel_() {
     const conv = v => (moneda === 'USD' && tcVal) ? v / tcVal : v;
     const monedaLabel = moneda === 'USD' ? 'U$S' : 'ARS';
 
-    const headers = ['Corral','Campo','Cerrado','Animales ingresados','Stock actual','Días hasta última pesada',
+    const headers = ['Corral','Campo','Cerrado','Animales ingresados','Fecha de ingreso','Stock actual','Días hasta última pesada',
       'Kg prom. entrada','Kg prom. última pesada','Kg ingresados','Kg vendidos','Kg cedidos (a otro corral)','Kg en stock','Kg ganados','GDP (kg/día)',
       `Cesión/compra EXTERNA (${monedaLabel})`, `Cesión INTERNA recibida (${monedaLabel})`, `Costo alimentación (${monedaLabel})`, `Sueldos prorrateados (${monedaLabel})`, `Costo total (${monedaLabel})`, `Alim./kg ganado (${monedaLabel})`,
       `Ingreso ventas (${monedaLabel})`, `Stock valorizado (${monedaLabel})`, `Cesión enviada (${monedaLabel})`, `Utilidad (${monedaLabel})`];
@@ -7777,7 +7809,7 @@ async function exportarComparacionEngordeExcel_() {
       headers,
     ];
     filas.forEach(f => aoa.push([
-      f.nombre, f.campo, f.cerrado, f.cantIng, f.stk, f.dias,
+      f.nombre, f.campo, f.cerrado, f.cantIng, f.fi?fd(f.fi):'—', f.stk, f.dias,
       f.kgIng||'—', f.pesoUltima||'—', Math.round(f.kgI), Math.round(f.kgV), Math.round(f.kgCedido), Math.round(f.kgStk), Math.round(f.kgG), f.gd?Number(f.gd.toFixed(3)):'—',
       Math.round(conv(f.ccExterno)), Math.round(conv(f.ccInterno)), Math.round(conv(f.ca)), Math.round(conv(f.sueldoProrr)), Math.round(conv(f.costoTotal)), f.caXkg?Math.round(conv(f.caXkg)):'—',
       Math.round(conv(f.iv)), Math.round(conv(f.ivStock)), Math.round(conv(f.cesEnv)), Math.round(conv(f.util)),
@@ -7911,7 +7943,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     // saber el crecimiento real, así que no tiene sentido mostrar días transcurridos.
     const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
     const cerrado = stk === 0;
-    return { r, rid, stk, cantIng, kgI, kgV, kgCedido, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, kgIng, ultima, cerrado };
+    return { r, rid, stk, cantIng, kgI, kgV, kgCedido, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, fi, kgIng, ultima, cerrado };
   });
 
   const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
@@ -7936,6 +7968,7 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
 
   h += `<tr class="total-row"><td colspan="${rows.length+1}"><strong>📦 Stock y movimiento</strong></td></tr>`;
   h += row('Animales ingresados', r=>r.cantIng, v=>fn(v,0));
+  h += row('Fecha de ingreso', r=>r.fi, v=>fd(v));
   h += row('Stock actual', r=>r.stk, v=>fn(v,0)+' cab.');
   h += row('Días hasta última pesada', r=>r.dias, v=>v+' días');
   h += row('Kg prom. entrada', r=>r.kgIng, v=>fn(v,0)+' kg');
