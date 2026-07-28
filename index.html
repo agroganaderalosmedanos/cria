@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_26';
+const APP_VERSION = 'index_consolidado_4_6_155_28';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2818,7 +2818,8 @@ function attachAbortosEvents() {
       for (const caravana of caravanas) {
         const data = { fecha, rodeo_id: rodeoId, caravana_vaca: caravana, observacion: obs };
         try {
-          await apiCall('create', { body: { entity: 'abortos', data } });
+          const abResult = await apiCall('create', { body: { entity: 'abortos', data } });
+          const abortoId = abResult && abResult.id;
           ok++;
           // Traslado automático a Vacas Venta
           const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
@@ -2837,9 +2838,17 @@ function attachAbortosEvents() {
               rodeo_destino_id: rodeoVacaVenta.rodeo_id,
               campo_destino_id: rodeoVacaVenta.campo_id,
               cantidad: 1,
-              observaciones: 'Traslado por aborto' + (caravana ? ' — caravana ' + caravana : '') + (obs ? ' — ' + obs : ''),
+              // Tag [abid:<id>] — mismo patrón que [cid:...]/[pid:...]/[erid:...] — para
+              // poder encontrar y borrar este traslado en cascada si se borra el aborto.
+              // Antes no llevaba ningún tag: borrar un aborto dejaba el traslado huérfano.
+              observaciones: `[abid:${abortoId}] Traslado por aborto` + (caravana ? ' — caravana ' + caravana : '') + (obs ? ' — ' + obs : ''),
             };
             await apiCall('create', { body: { entity: 'movimientos', data: movData } });
+          } else {
+            // Antes esto quedaba en silencio — el aborto se registraba pero la vaca
+            // no se trasladaba a ningún lado sin que Crist se enterara del motivo.
+            errores++;
+            toast(`Aborto registrado, pero no encontré un rodeo "Vacas Venta" en el campo de "${rodeoOrigen?.nombre||rodeoId}" — la vaca no se trasladó. Creá ese rodeo o movela manualmente.`, 'err');
           }
         } catch(e) { errores++; }
       }
@@ -5981,11 +5990,14 @@ function egFechaIngreso_(rodeoId) {
   const cfg = egConfig_(rodeoId);
   return cfg.fechaInicio || null;
 }
-function egKgIngreso_(rodeoId) {
+function egKgIngreso_(rodeoId, ignorarOverride) {
   // Prioridad 1: ABM de Corrales (Config Corral) — el usuario lo controla explícitamente
   // y puede corregir datos incorrectos del movimiento de entrada.
+  // ignorarOverride=true se usa SOLO para mostrar el valor "real" del movimiento como
+  // referencia en la propia ABM (sino el texto "Movimiento: X" quedaba mostrando el
+  // valor ya pisado por la excepción manual, en vez del dato crudo real).
   const cfg = egConfig_(rodeoId);
-  if (Number(cfg.kgIngreso) > 0) return Number(cfg.kgIngreso);
+  if (!ignorarOverride && Number(cfg.kgIngreso) > 0) return Number(cfg.kgIngreso);
 
   // Prioridad 2: peso_prom_kg del movimiento de entrada (Saldo inicial o Traslado)
   const movs = (S.cache.movimientos || [])
@@ -6023,7 +6035,7 @@ function egCantIngresada_(rodeoId) {
 function egKgIngresados_(rodeoId) {
   return egCantIngresada_(rodeoId) * egKgIngreso_(rodeoId);
 }
-function egCostoCompra_(rodeoId) {
+function egCostoCompra_(rodeoId, ignorarOverride) {
   const movs = S.cache.movimientos || [];
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
   // OJO: esta función SIEMPRE devuelve pesos ARS crudos, sin convertir moneda.
@@ -6037,8 +6049,13 @@ function egCostoCompra_(rodeoId) {
 
   // Prioridad 0: ABM de Corrales tiene precio de entrada → úsalo para TODOS los
   // movimientos de entrada de este corral (reemplaza el precio del movimiento).
+  // ignorarOverride=true se usa SOLO para mostrar el valor "real" del movimiento
+  // como referencia en la propia ABM — sino el texto "Movimiento: $ X/cab." quedaba
+  // mostrando el valor ya pisado por la excepción manual en vez del dato real, que
+  // es justo lo que generó la confusión con Corral 1 (mostraba "$4.800" como si
+  // fuera el movimiento, cuando en realidad esa excepción SEGUÍA activa).
   const cfg = egConfig_(rodeoId);
-  if (Number(cfg.precioCompra) > 0) {
+  if (!ignorarOverride && Number(cfg.precioCompra) > 0) {
     const cantTotal = egCantIngresada_(rodeoId);
     const precioABM = Number(cfg.precioCompra);
     return cantTotal * precioABM;
@@ -13198,10 +13215,9 @@ function buildABMCorrales_() {
   }
 
   h += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--text2)">
-    📋 Los valores que cargues acá en <strong>Config Corral</strong> tienen prioridad sobre los del movimiento de entrada (Saldo inicial / Traslado) para los cálculos del Dashboard de Terminación.
-    Los campos en gris claro (🔒) muestran el valor que trae el movimiento — tocalos solo si necesitás una <strong>excepción a propósito</strong>; el sistema te va a pedir confirmación antes de guardar.<br>
-    <strong>Si el error está en la cesión o en el movimiento, corregilo ahí</strong> (Movimientos, o el editor de cesiones) en vez de tapar el dato acá — así el registro histórico queda bien y no depende para siempre de esta excepción.
-    Usá esta pantalla para: corrales sin ningún movimiento cargado (altas previas al sistema), Peso objetivo y $/kg estimado de venta (no tienen movimiento del que tomar el dato), o simplemente para ver de un vistazo qué está usando cada corral.
+    <strong>👉 Uso normal: no hace falta tocar nada acá.</strong> El orden es: 1) creás el corral arriba (una vez) → 2) cargás el Traslado o Saldo inicial real en <strong>Movimientos</strong>, con cantidad/peso/precio. Listo. Los campos grises (🔒) de abajo se completan solos con eso.<br><br>
+    Esta pantalla es solo para <strong>casos excepcionales</strong>: un corral viejo sin movimiento cargado, o para fijar "Peso objetivo" y "$/kg estimado de venta" (que no vienen de ningún movimiento). Si tocás un campo gris y le ponés un valor manual, ese valor pasa a mandar en TODOS los cálculos del corral (Dashboard, Costos, Comparación, Proyecciones) — aunque después corrijas el movimiento real, este valor manual lo sigue tapando hasta que lo vacíes acá.<br><br>
+    <strong>Si el dato está mal, la regla es: corregilo en Movimientos, no acá</strong> — y si ya habías cargado una excepción manual antes, no te olvides de venir a vaciarla después de corregir el movimiento.
   </div>`;
 
   // Tabla de parámetros por corral
@@ -13211,17 +13227,32 @@ function buildABMCorrales_() {
     const stock = egStock_(rid);
     const campoNom = campos.find(c => String(c.campo_id) === String(r.campo_id))?.nombre || '—';
 
-    // Valores del movimiento de entrada (para mostrar como referencia)
+    // Valores del movimiento de entrada (para mostrar como referencia) — se piden
+    // ignorando cualquier excepción manual ya activa (ignorarOverride=true), sino
+    // esta misma referencia quedaba mostrando el valor ya pisado por la excepción
+    // en vez del dato real del movimiento — que es justo lo que pasó con Corral 1:
+    // decía "Movimiento: $ 4.800/cab." cuando en realidad ese $4.800 YA era la
+    // excepción manual, no el movimiento (que después se corrigió a $1.600.000).
     const fechaMov = egFechaIngreso_(rid);
     const cantMov  = egCantIngresada_(rid);
-    const kgMov    = egKgIngreso_(rid);
-    const costoMov = egCostoCompra_(rid);
+    const kgMov    = egKgIngreso_(rid, true);
+    const costoMov = egCostoCompra_(rid, true);
     const precioCabMov = cantMov > 0 ? costoMov / cantMov : 0;
+
+    // Si alguno de los 3 campos con excepción manual (stockInicial/kgIngreso/
+    // precioCompra) tiene un valor cargado Y distinto al del movimiento real, se
+    // marca acá arriba — para que se note de un vistazo sin tener que leer cada
+    // campo, que es justo lo que pasó con Corral 1 (la excepción de $4.800 quedó
+    // invisible entre el resto de los campos, todos grises y correctos).
+    const tieneExcepcion =
+      (cfg.stockInicial && Number(cfg.stockInicial) !== Number(cantMov)) ||
+      (cfg.kgIngreso && Number(cfg.kgIngreso) !== Number(kgMov)) ||
+      (cfg.precioCompra && Math.round(Number(cfg.precioCompra)) !== Math.round(precioCabMov));
 
     h += `<div class="panel" data-corral-row="${rid}" style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div>
-          <div style="font-weight:700;font-size:15px">${r.nombre}</div>
+          <div style="font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px">${r.nombre}${tieneExcepcion?'<span style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:2px 7px">⚠ excepción manual activa</span>':''}</div>
           <div style="font-size:12px;color:var(--text3)">${campoNom} · Stock actual: <strong>${fn(stock)}</strong> cab.</div>
         </div>
         <button class="btn btn-primary abm-corral-save" data-rid="${rid}" style="font-size:11px;padding:5px 14px">💾 Guardar</button>
@@ -13758,6 +13789,24 @@ function attachTableDeleteEvents(entity, idCol) {
           // El backend borra en cascada el Movimiento (Saldo inicial) asociado a
           // los terneros nacidos de esta parición — hay que refrescar movimientos
           // y stock acá también, para que no quede desactualizado en el navegador.
+          invalidateCache('movimientos');
+          await loadEntity('movimientos', true);
+          S.stock = null; await loadStock();
+        }
+        if (entity === 'abortos') {
+          // A diferencia de Pariciones (que tiene su propio endpoint de backend
+          // "registrarParicion" con cascada incluida), el traslado a Vacas Venta de
+          // un aborto se crea desde el frontend — así que la cascada de borrado
+          // también se resuelve acá: buscamos el Movimiento con el tag [abid:<id>]
+          // de este aborto y lo borramos, para no dejarlo huérfano.
+          if (!S.cache.movimientos) { try { await loadEntity('movimientos'); } catch(e) {} }
+          const movLigado = (S.cache.movimientos||[]).find(m => (m.observaciones||'').includes(`[abid:${btn.dataset.del}]`));
+          if (movLigado) {
+            try {
+              await apiCall('delete', { body: { entity: 'movimientos', id: movLigado.movimiento_id } });
+              toast('Traslado a Vacas Venta vinculado también eliminado', 'ok');
+            } catch(e) { toast('No se pudo borrar el traslado vinculado — revisalo manualmente en Movimientos.', 'err'); }
+          }
           invalidateCache('movimientos');
           await loadEntity('movimientos', true);
           S.stock = null; await loadStock();
