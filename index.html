@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_24';
+const APP_VERSION = 'index_consolidado_4_6_155_25';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -7469,6 +7469,121 @@ async function egGuardarInactivo_(rodeoId, productoId, marcarInactivo, btn) {
   }
 }
 
+async function exportarComparacionEngordeExcel_() {
+  toast('Generando Excel de comparación...', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    const corteComp = S._corteEng || today();
+    const stockACorteComp = stockPorRodeoACorte_(corteComp);
+    // Misma lógica de cálculo que buildEngordeComparacion_ — corrales activos Y
+    // cerrados (ver el fix de "tuvo animales alguna vez" en vez de "tiene ahora").
+    const rodeosEng = rodeosEngordeValidos_().filter(r => egCantIngresada_(r.rodeo_id) > 0);
+    const filas = rodeosEng.map(r => {
+      const rid = r.rodeo_id;
+      const stk = Math.max(0, stockACorteComp[String(rid)]||0);
+      const cantIng = egCantIngresada_(rid);
+      const kgI = egKgIngresados_(rid);
+      const kgV = egKgVend_(rid);
+      const kgG = egKgGanadosHastaPesada_(rid, corteComp);
+      const kgStk = stk * (egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp).slice(-1)[0]?.peso_prom_kg || egKgIngreso_(rid) || 0);
+      const ca = egCostoAlim_(rid, corteComp);
+      const cc = egCostoCompra_(rid);
+      const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
+        .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
+      const fi = egFechaIngreso_(rid);
+      const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp);
+      const ultima = pes.length ? pes[pes.length-1] : null;
+      const gd = egGanDiaria_(rid);
+      const kgIng = egKgIngreso_(rid);
+      const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha) - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria')) / kgG : null;
+      const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+      const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
+      const cesEnv = egIngresoCesionEnviada_(rid, corteComp).total;
+      const util = iv + ivStock + cesEnv - ca - cc;
+      const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
+      return {
+        nombre: r.nombre, campo: campoNombre(r.campo_id), cerrado: stk===0 ? 'Sí' : 'No',
+        cantIng, stk, dias, kgIng, pesoUltima: pesoUltimaC||null,
+        kgI, kgV, kgStk, kgG, gd,
+        cc, ca, costoTotal: ca+cc, caXkg,
+        iv, ivStock, cesEnv, util,
+      };
+    });
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+
+    const headers = ['Corral','Campo','Cerrado','Animales ingresados','Stock actual','Días hasta última pesada',
+      'Kg prom. entrada','Kg prom. última pesada','Kg ingresados','Kg vendidos','Kg en stock','Kg ganados','GDP (kg/día)',
+      'Costo de compra (ARS)','Costo alimentación (ARS)','Costo total (ARS)','Alim./kg ganado (ARS)',
+      'Ingreso ventas (ARS)','Stock valorizado (ARS)','Cesión enviada (ARS)','Utilidad (ARS)'];
+    const aoa = [
+      [`Agroganadera Los Médanos — Comparación de corrales (Terminación)`],
+      ['Fecha de corte', fd(corteComp)],
+      ['Nota', 'Todos los importes están en ARS crudo, sin convertir. Los corrales cerrados (stock 0) muestran su resultado final ya realizado.'],
+      [],
+      headers,
+    ];
+    filas.forEach(f => aoa.push([
+      f.nombre, f.campo, f.cerrado, f.cantIng, f.stk, f.dias,
+      f.kgIng||'—', f.pesoUltima||'—', f.kgI, f.kgV, Math.round(f.kgStk), Math.round(f.kgG), f.gd?Number(f.gd.toFixed(3)):'—',
+      Math.round(f.cc), Math.round(f.ca), Math.round(f.costoTotal), f.caXkg?Math.round(f.caXkg):'—',
+      Math.round(f.iv), Math.round(f.ivStock), Math.round(f.cesEnv), Math.round(f.util),
+    ]));
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = headers.map((_,i)=>({wch: i===0?26:(i===1?14:13)}));
+    ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers.length-1} }];
+    estilarFila_(ws, 0, headers.length, ST_TITULO);
+    estilarFila_(ws, 4, headers.length, ST_HEADER);
+    filas.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = (c<=2) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Comparación corrales');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Comparacion_Terminacion_${corteComp}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de comparación descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
 function buildEngordeComparacion_(rodeosEngTodos, fm) {
   if (!rodeosEngTodos.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
   const moneda = S.engordeMoneda || 'ARS';
@@ -7574,7 +7689,10 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   h += row('(–) Costo total', r=>r.ca+r.cc, v=>'−'+fm(v));
   h += rowTagSigned('Utilidad', r=>r.util, fm, bUtil);
   h += '</tbody></table></div>';
-  h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales. Los valores en <span style="color:var(--red);font-weight:700">rojo</span> son pérdida.</div>`;
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:8px">
+    <div style="font-size:11px;color:var(--muted)">Los valores en <span style="color:var(--green);font-weight:700">verde</span> indican el mejor resultado del indicador entre corrales. Los valores en <span style="color:var(--red);font-weight:700">rojo</span> son pérdida.</div>
+    <button class="btn btn-secondary btn-sm" onclick="exportarComparacionEngordeExcel_()">📊 Exportar a Excel</button>
+  </div>`;
   return h;
 }
 
