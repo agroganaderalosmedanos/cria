@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_25';
+const APP_VERSION = 'index_consolidado_4_6_155_26';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -13833,7 +13833,7 @@ function openEditModal(entity, idCol, id) {
     campo_origen_id: 'Campo origen', campo_destino_id: 'Campo destino',
     rodeo_origen_id: 'Rodeo origen', rodeo_destino_id: 'Rodeo destino',
     cantidad: 'Cantidad', observaciones: 'Observación', precio_cabeza: '💲 Precio por cabeza ($)',
-    precio_kg: '💲 Precio por kg ($) — usar solo si cargás peso_prom_kg', peso_prom_kg: '⚖️ Peso prom. de ingreso (kg)',
+    precio_kg: '💲 Precio por kg ($)', peso_prom_kg: '⚖️ Peso prom. de ingreso (kg)',
     cant_animales: 'Cantidad animales', comprador: 'Comprador', peso_campo_kg: 'Kg campo',
     precio_pactado: '$/kg pactado', campana: 'Campaña', estado: 'Estado',
     materia_seca_pct: 'Materia seca (%) — opcional, para conversión alimenticia', por_campo: 'Por campo', activo: 'Activo',
@@ -13880,6 +13880,10 @@ function openEditModal(entity, idCol, id) {
         <div class="modal-header"><h3>Editar registro</h3><button class="modal-close" id="edit-modal-close">✕</button></div>
         <div class="modal-body">
           <div class="fgrid">${fieldsHtml}</div>
+          ${entity === 'movimientos' && ('precio_cabeza' in item) && ('precio_kg' in item) ? `
+          <div id="edit-modal-precio-hint" style="margin-top:8px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:11px;color:#92400e">
+            ⚠ Cargá <strong>uno solo</strong> de los dos precios (por cabeza <em>o</em> por kg) — el que dejes en 0 se ignora. El campo que no vas a usar se pone gris solo.
+          </div>` : ''}
           ${entity === 'movimientos' && (item.tipo === 'Saldo inicial' || item.tipo === 'Traslado en bloque' || item.tipo === 'Traslado individual') ? `
           <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
             <button type="button" class="btn btn-ghost btn-sm" id="edit-modal-usar-precio-mes" style="font-size:12px;padding:4px 10px">💲 Completar precio desde Valorización de Stock</button>
@@ -13896,6 +13900,29 @@ function openEditModal(entity, idCol, id) {
   const closeModal = () => document.getElementById('edit-modal-overlay')?.remove();
   document.getElementById('edit-modal-close').onclick = closeModal;
   document.getElementById('edit-modal-cancel').onclick = closeModal;
+
+  // Bloqueo mutuo entre "Precio por cabeza" y "Precio por kg": cargar uno de los
+  // dos deja el otro gris y en 0, para que no quede ambigüedad de cuál está "en
+  // uso" al mirar el registro después (era justo lo que generó el corral con el
+  // precio equivocado — un valor viejo en el campo que no correspondía).
+  const elCab = document.getElementById('edit-precio_cabeza');
+  const elKg  = document.getElementById('edit-precio_kg');
+  if (elCab && elKg) {
+    const sync = (changed) => {
+      if (changed === 'cab' && Number(elCab.value) > 0) {
+        elKg.value = ''; elKg.disabled = true; elCab.disabled = false;
+      } else if (changed === 'kg' && Number(elKg.value) > 0) {
+        elCab.value = ''; elCab.disabled = true; elKg.disabled = false;
+      } else {
+        elKg.disabled = false; elCab.disabled = false;
+      }
+    };
+    elCab.oninput = () => sync('cab');
+    elKg.oninput = () => sync('kg');
+    // Estado inicial según lo que ya tenga cargado el registro
+    if (Number(item.precio_cabeza) > 0) elKg.disabled = true;
+    else if (Number(item.precio_kg) > 0) elCab.disabled = true;
+  }
 
   // Botón "Usar precio del mes" en modal de edición de Traslados
   const btnPrecioModal = document.getElementById('edit-modal-usar-precio-mes');
