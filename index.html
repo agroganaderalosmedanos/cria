@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_29';
+const APP_VERSION = 'index_consolidado_4_6_155_31';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1878,6 +1878,7 @@ function buildDashboard() {
         onchange="S._corteCria=this.value;render()">
       ${corteCria!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteCria=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
     </div>
+    <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaCriaExcel_()" title="Descarga un Excel con cabezas y $ por rodeo, pariciones, destetes y el detalle crudo de movimientos, para revisar todo sin pasar de pantalla en pantalla">📊 Exportar auditoría a Excel</button>
   </div>`;
 
   if (!campSelec) {
@@ -6428,7 +6429,15 @@ function buildEngorde() {
     // 5) Detalle por corral + KPIs productivos
     const _campFiltro = S._dashEngCampo || '';
     const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
-    h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm, corteEng);
+    // BUG CORREGIDO: acá se usaba `corteEng`, una variable que solo existe DENTRO de
+    // buildEngordeDashboard_ (una función distinta) — nunca estuvo definida en el
+    // scope de buildEngorde(), así que esto tiraba un ReferenceError cada vez que
+    // se renderizaba la pestaña Dashboard de Terminación. Por eso el botón
+    // "Terminación" del menú lateral no hacía nada: goto('engorde') llamaba a
+    // render(), que llamaba a buildEngorde(), que explotaba acá adentro antes de
+    // devolver el HTML — la página se quedaba congelada sin ningún aviso visible.
+    const corteEngLocal = S._corteEng || today();
+    h += buildEngordeProductivoYCorreles_(rodeosEngFiltLocal, fm, corteEngLocal);
 
     // 6) Mortandad — al final
     const rodeosEngIdsLocal = new Set(rodeosEngFiltLocal.map(r=>String(r.rodeo_id)));
@@ -10521,6 +10530,249 @@ function attachMargenBrutoEvents() {
 // Exporta un Excel con un resumen reproductivo por rodeo (vaca/vaquillona):
 // cuántas en servicio, cuántas tactadas, preñadas, abortos, mortandad y destete
 // — para poder comparar el desempeño de cada rodeo de un vistazo.
+async function exportarAuditoriaCriaExcel_() {
+  toast('Generando Excel de auditoría de Cría... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    for (const ent of ['movimientos','ventas','mortandad','pesadas','pariciones','destetes','abortos']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+
+    const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+    const rodeosCria = rodeos.filter(r => normAct_(r.actividad)==='cria');
+    const rodeosCriaIds = new Set(rodeosCria.map(r => String(r.rodeo_id)));
+    const corte = S._corteCria || today();
+    const stockACorte = stockPorRodeoACorte_(corte);
+    const movsTodos = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corte);
+    const ventasTodas = (S.cache.ventas || []).filter(v => rodeosCriaIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corte);
+    const tc = tipoCambioVigente_(corte);
+    const tcVal = tc ? Number(tc.valor || tc) : null;
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:B };
+    const ST_TOTALLBL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, border:B };
+    const ST_DIFF = { alignment:{horizontal:'center'}, border:B, font:{bold:true,color:{rgb:'C00000'}} };
+
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    // ── HOJA 1: Conciliación de cabezas por rodeo ────────────────────────
+    // EI + Nacimientos + Entradas (traslados/compras) − Salidas − Ventas − Mortandad = EF
+    // Los Saldos iniciales con tag [pid:...] son Nacimientos (Pariciones), no EI —
+    // mismo criterio que usa el Dashboard (esAltaPorParicion_).
+    const headers1 = ['Rodeo','Campo','Categoría','EI','+ Nacimientos','+ Entradas (traslados)','− Salidas (traslados)','− Ventas','− Mortandad','= EF calculado','EF real (stock)','Diferencia'];
+    const filas1 = rodeosCria.map(r => {
+      const rid = String(r.rodeo_id);
+      const saldosR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid && !esAltaPorParicion_(m));
+      const eiR = saldosR.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const nacR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid && esAltaPorParicion_(m))
+        .reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const entradasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const salidasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const ventasR = ventasTodas.filter(v => String(v.rodeo_id)===rid).reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id)===rid && (m.fecha||'')<=corte).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+      const efCalcR = eiR + nacR + entradasR - salidasR - ventasR - mortR;
+      const efRealR = Math.max(0, stockACorte[rid]||0);
+      return { nombre: r.nombre, campo: campoNombre(r.campo_id), categoria: r.categoria||'—', eiR, nacR, entradasR, salidasR, ventasR, mortR, efCalcR, efRealR, diff: efRealR-efCalcR };
+    }).filter(f => f.eiR||f.nacR||f.entradasR||f.salidasR||f.ventasR||f.mortR||f.efRealR);
+    const aoa1 = [
+      [`Agroganadera Los Médanos — Auditoría Cría (cabezas)`],
+      ['Fecha de corte', fd(corte)],
+      [],
+      headers1,
+    ];
+    filas1.forEach(f => aoa1.push([f.nombre, f.campo, f.categoria, f.eiR, f.nacR, f.entradasR, f.salidasR, f.ventasR, f.mortR, f.efCalcR, f.efRealR, f.diff]));
+    aoa1.push(['TOTAL','','',
+      filas1.reduce((s,f)=>s+f.eiR,0), filas1.reduce((s,f)=>s+f.nacR,0), filas1.reduce((s,f)=>s+f.entradasR,0), filas1.reduce((s,f)=>s+f.salidasR,0),
+      filas1.reduce((s,f)=>s+f.ventasR,0), filas1.reduce((s,f)=>s+f.mortR,0), filas1.reduce((s,f)=>s+f.efCalcR,0),
+      filas1.reduce((s,f)=>s+f.efRealR,0), filas1.reduce((s,f)=>s+f.diff,0),
+    ]);
+    const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+    ws1['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:8},{wch:12},{wch:14},{wch:12},{wch:10},{wch:10},{wch:12},{wch:12},{wch:11}];
+    ws1['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers1.length-1} }];
+    estilarFila_(ws1, 0, headers1.length, ST_TITULO);
+    estilarFila_(ws1, 3, headers1.length, ST_HEADER);
+    filas1.forEach((f,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers1.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws1[addr]) ws1[addr] = { t:'s', v:'' };
+        if (c<=2) ws1[addr].s = alt?ST_ROWLBL_ALT:ST_ROWLBL;
+        else if (c===11 && f.diff!==0) ws1[addr].s = ST_DIFF;
+        else ws1[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    estilarFila_(ws1, 4+filas1.length, headers1.length, ST_TOTAL);
+    if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
+    XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
+
+    // ── HOJA 2: Resumen económico por rodeo (ARS crudo + USD a cotización del corte) ──
+    const headers2 = ['Rodeo','Campo','Categoría','Stock inicial (ARS)','Compras (ARS)','Alimentación (ARS)','Ventas (ARS)','Stock valorizado (ARS)','Cotización usada','Ingresos−Egresos (U$S)'];
+    const aoa2 = [
+      [`Agroganadera Los Médanos — Auditoría Cría (economía)`],
+      ['Fecha de corte', fd(corte)],
+      ['Nota', 'Todos los importes ARS son crudos (sin convertir). La última columna usa la cotización del corte para que puedas verificar la conversión vos mismo.'],
+      [],
+      headers2,
+    ];
+    const filas2 = rodeosCria.map(r => {
+      const rid = r.rodeo_id;
+      const stk = Math.max(0, stockACorte[String(rid)]||0);
+      const pes = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(rid)&&(p.fecha||'')<=corte).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+      const pesoUltima = pes.length ? Number(pes[pes.length-1].peso_prom_kg)||0 : 0;
+      const saldos = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===String(rid) && !esAltaPorParicion_(m));
+      const stockIni = saldos.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
+      const compras = comprasHacGetAll_().filter(c=>(c.fecha||'')<=corte&&String(c.rodeo_id)===String(rid)).reduce((s,c)=>s+(Number(c.importe_total)||0),0);
+      const consumosR = (S.cache.consumos_insumos||[]).filter(c=>String(c.rodeo_id)===String(rid)&&(c.fecha||'')<=corte);
+      const productos = (S.catalogs&&S.catalogs.productos)||[];
+      const prodPorId = Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
+      const alim = consumosR.reduce((s,c)=>{
+        const prod = prodPorId[String(c.producto_id)];
+        return s + (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+      },0);
+      const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0),0);
+      const ivStock = valorizarRodeo_(r, stk, pesoUltima);
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), categoria: r.categoria||'—', stockIni, compras, alim, iv, ivStock };
+    }).filter(f => f.stockIni||f.compras||f.alim||f.iv||f.ivStock);
+    filas2.forEach(f => {
+      const netoARS = (f.iv+f.ivStock) - (f.stockIni+f.compras+f.alim);
+      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(f.stockIni), Math.round(f.compras), Math.round(f.alim), Math.round(f.iv), Math.round(f.ivStock), tcVal||'—', tcVal?Math.round(netoARS/tcVal):'—']);
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:15},{wch:13},{wch:14},{wch:12},{wch:16},{wch:12},{wch:16}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
+    estilarFila_(ws2, 0, headers2.length, ST_TITULO);
+    estilarFila_(ws2, 4, headers2.length, ST_HEADER);
+    filas2.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers2.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
+        ws2[addr].s = (c<=2) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws2, 'Resumen económico');
+
+    // ── HOJA 3: Pariciones (crudo) ────────────────────────────────────────
+    const pariciones = (S.cache.pariciones||[]).filter(p => rodeosCriaIds.has(String(p.rodeo_id)) && (p.fecha||'')<=corte)
+      .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const headers3 = ['Fecha','Rodeo (madres)','Nacidos vivos','Nacidos muertos','Observación'];
+    const aoa3 = [
+      [`Agroganadera Los Médanos — Pariciones (crudo)`], ['Fecha de corte', fd(corte)], [], headers3,
+    ];
+    pariciones.forEach(p => aoa3.push([fd(p.fecha), rodeoNombre(p.rodeo_id), Number(p.nacidos_vivos)||0, Number(p.nacidos_muertos)||0, p.observacion||'']));
+    aoa3.push(['TOTAL','', pariciones.reduce((s,p)=>s+(Number(p.nacidos_vivos)||0),0), pariciones.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0), '']);
+    const ws3 = XLSX.utils.aoa_to_sheet(aoa3);
+    ws3['!cols'] = [{wch:12},{wch:22},{wch:13},{wch:14},{wch:30}];
+    ws3['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers3.length-1} }];
+    estilarFila_(ws3, 0, headers3.length, ST_TITULO);
+    estilarFila_(ws3, 3, headers3.length, ST_HEADER);
+    pariciones.forEach((p,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers3.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws3[addr]) ws3[addr] = { t:'s', v:'' };
+        ws3[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    estilarFila_(ws3, 4+pariciones.length, headers3.length, ST_TOTAL);
+    if (ws3[XLSX.utils.encode_cell({r:4+pariciones.length,c:0})]) ws3[XLSX.utils.encode_cell({r:4+pariciones.length,c:0})].s = ST_TOTALLBL;
+    XLSX.utils.book_append_sheet(wb, ws3, 'Pariciones');
+
+    // ── HOJA 4: Destetes (crudo) ──────────────────────────────────────────
+    const destetes = (S.cache.destetes||[]).filter(d => rodeosCriaIds.has(String(d.rodeo_id)) && (d.fecha||'')<=corte)
+      .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const headers4 = ['Fecha','Rodeo origen','Machos','Hembras','Total','Peso prom. (kg)','Observación'];
+    const aoa4 = [
+      [`Agroganadera Los Médanos — Destetes (crudo)`], ['Fecha de corte', fd(corte)], [], headers4,
+    ];
+    destetes.forEach(d => aoa4.push([fd(d.fecha), rodeoNombre(d.rodeo_id), Number(d.machos)||0, Number(d.hembras)||0, Number(d.total)||0, Number(d.peso_prom_kg)||'—', d.observacion||'']));
+    aoa4.push(['TOTAL','', destetes.reduce((s,d)=>s+(Number(d.machos)||0),0), destetes.reduce((s,d)=>s+(Number(d.hembras)||0),0), destetes.reduce((s,d)=>s+(Number(d.total)||0),0), '', '']);
+    const ws4 = XLSX.utils.aoa_to_sheet(aoa4);
+    ws4['!cols'] = [{wch:12},{wch:22},{wch:9},{wch:9},{wch:9},{wch:14},{wch:30}];
+    ws4['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers4.length-1} }];
+    estilarFila_(ws4, 0, headers4.length, ST_TITULO);
+    estilarFila_(ws4, 3, headers4.length, ST_HEADER);
+    destetes.forEach((d,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers4.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws4[addr]) ws4[addr] = { t:'s', v:'' };
+        ws4[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    estilarFila_(ws4, 4+destetes.length, headers4.length, ST_TOTAL);
+    if (ws4[XLSX.utils.encode_cell({r:4+destetes.length,c:0})]) ws4[XLSX.utils.encode_cell({r:4+destetes.length,c:0})].s = ST_TOTALLBL;
+    XLSX.utils.book_append_sheet(wb, ws4, 'Destetes');
+
+    // ── HOJA 5: Movimientos crudos (Traslados y Saldos iniciales) de Cría ────
+    const movsCria = movsTodos.filter(m => rodeosCriaIds.has(String(m.rodeo_destino_id)) || rodeosCriaIds.has(String(m.rodeo_origen_id)))
+      .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const headers5 = ['Fecha','Tipo','Rodeo origen','Rodeo destino','Cantidad','Peso prom. (kg)','Precio $/kg','Precio $/cab.','¿Es nacimiento?','Observaciones'];
+    const aoa5 = [
+      [`Agroganadera Los Médanos — Movimientos de Cría (crudo)`], ['Fecha de corte', fd(corte)], [], headers5,
+    ];
+    movsCria.forEach(m => aoa5.push([
+      fd(m.fecha), m.tipo,
+      m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
+      m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
+      Number(m.cantidad)||0, Number(m.peso_prom_kg)||'—', Number(m.precio_kg)||'—', Number(m.precio_cabeza)||'—',
+      esAltaPorParicion_(m) ? 'Sí' : 'No',
+      m.observaciones||'',
+    ]));
+    const ws5 = XLSX.utils.aoa_to_sheet(aoa5);
+    ws5['!cols'] = [{wch:12},{wch:20},{wch:22},{wch:22},{wch:10},{wch:14},{wch:12},{wch:12},{wch:14},{wch:30}];
+    ws5['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers5.length-1} }];
+    estilarFila_(ws5, 0, headers5.length, ST_TITULO);
+    estilarFila_(ws5, 3, headers5.length, ST_HEADER);
+    movsCria.forEach((m,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers5.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws5[addr]) ws5[addr] = { t:'s', v:'' };
+        ws5[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws5, 'Movimientos detalle');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Auditoria_Cria_${corte}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de auditoría de Cría descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
 async function exportarAuditoriaEngordeExcel_() {
   toast('Generando Excel de auditoría... puede tardar unos segundos', 'ok');
   try {
