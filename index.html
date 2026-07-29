@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_42';
+const APP_VERSION = 'index_consolidado_4_6_155_45';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -469,6 +469,14 @@ function normAct_(s) { return String(s||'').trim().toLowerCase().normalize('NFD'
 // (el mismo que usa el backend para el borrado en cascada), o — para Pariciones
 // cargadas ANTES de que ese tag existiera — el texto fijo "Nacimiento — parición"
 // que registrarParicionConTerneros() siempre puso al principio de observaciones.
+// Formatea un importe que YA está convertido a la moneda correcta (no vuelve
+// a dividir por ninguna cotización) — se usa junto con funciones que hacen la
+// conversión POR TRANSACCIÓN internamente (ver convertirAMoneda_ más abajo),
+// para no reintroducir el bug de doble conversión que ya se corrigió en otro
+// lado del sistema.
+function fnMoneda_(v, moneda) {
+  return (moneda === 'USD' ? 'U$D ' : '$ ') + fn(Math.round(v||0));
+}
 function esAltaPorParicion_(m) {
   if (!m || m.tipo !== 'Saldo inicial') return false;
   const obs = String(m.observaciones || '');
@@ -1920,7 +1928,16 @@ function buildDashboard() {
   // 1. Ventas de la campaña (rodeos de Cría)
   const rodeosCriaIds = new Set(rodeosCriaFilt.map(r=>String(r.rodeo_id)));
   const ventasCria = ventas.filter(v => rodeosCriaIds.has(String(v.rodeo_id)));
-  const totalVentas = ventasCria.reduce((s,v) => s + (Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0), 0);
+  // Cotización DEL DÍA DE CADA VENTA, no la de hoy — mismo criterio aplicado en
+  // Terminación (egIngVentas_/egCostoCompra_): una venta de hace 5 meses valía
+  // una cantidad de dólares específica ESE día, no lo que indica la cotización
+  // actual. Sumar en pesos y convertir el total al final con la cotización de
+  // hoy mezclaría meses distintos a un tipo de cambio que no corresponde a
+  // ninguno de ellos.
+  const totalVentas = ventasCria.reduce((s,v) => {
+    const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+    return s + convertirAMoneda_(importeARS, v.fecha_salida, _criaMoneda);
+  }, 0);
 
   // 2. Cesiones a Recría/Engorde (movimientos de traslado desde rodeos Cría a Recría/Engorde)
   const rodeosPorId = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
@@ -1937,21 +1954,24 @@ function buildDashboard() {
     const cant     = Number(m.cantidad)||0;
     const peso     = Number(m.peso_prom_kg)||0;
     const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    let importeARS;
     if (precioKg && peso) {
-      return s + cant * peso * precioKg;
+      importeARS = cant * peso * precioKg;
     } else if (precioKg && !peso) {
       // Tiene precio pero no peso — buscar peso de última pesada del rodeo
       const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       const pesoFallback = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
-      return s + cant * pesoFallback * precioKg;
+      importeARS = cant * pesoFallback * precioKg;
     } else {
       // Sin precio — valorizar con precios de stock del mes
       const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
       const cat = (rodeo?.categoria||'').toLowerCase().trim();
       const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       const pesoP = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
-      return s + valorizarRodeo_(rodeo||{categoria:cat}, cant, pesoP);
+      importeARS = valorizarRodeo_(rodeo||{categoria:cat}, cant, pesoP);
     }
+    // Cotización DEL DÍA DE LA CESIÓN, no la de hoy.
+    return s + convertirAMoneda_(importeARS, m.fecha, _criaMoneda);
   }, 0);
 
   // 3. Stock valorizado actual (rodeos Cría)
@@ -1973,7 +1993,7 @@ function buildDashboard() {
     stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
   });
 
-  let stockValCria = 0;
+  let stockValCriaARS = 0;
   const stockDetalleRows = [];
   rodeosCriaFilt.forEach(r => {
     const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
@@ -1981,9 +2001,14 @@ function buildDashboard() {
     const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
     const val = valorizarRodeo_(r, stock, pesoP);
-    stockValCria += val;
+    stockValCriaARS += val;
     if (val > 0 || stock > 0) stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
   });
+  // "Stock valorizado" es un ítem de BALANCE (lo que valen los animales que
+  // quedan HOY/al corte) — se convierte una sola vez a la cotización del
+  // corte, a diferencia de los ítems de FLUJO (ventas, cesiones, compras,
+  // consumos) que se convierten cada uno a la cotización de SU PROPIA fecha.
+  const stockValCria = convertirAMoneda_(stockValCriaARS, corteCria, _criaMoneda);
 
   const totalIngresos = totalVentas + totalCesiones + stockValCria;
 
@@ -2001,7 +2026,7 @@ function buildDashboard() {
     if (campSelecField && String(m.campo_destino_id) !== String(campSelecField)) return false;
     return true;
   });
-  const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + valorMovimientoEntrada_(m).total, 0);
+  const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, _criaMoneda), 0);
 
   // Altas por Parición (nacimientos) del período — mismo universo de rodeos/campo
   // que saldosIniciales, pero solo los que tienen el tag [pid:...].
@@ -2020,12 +2045,13 @@ function buildDashboard() {
     if (!rodeoDest) return s;
     const pesadasDest = pesadas.filter(p=>String(p.rodeo_id)===String(rodeoDest.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoDest = pesadasDest[0] ? Number(pesadasDest[0].peso_prom_kg)||0 : 0;
-    return s + valorizarRodeo_(rodeoDest, Number(m.cantidad)||0, pesoDest);
+    const importeARS = valorizarRodeo_(rodeoDest, Number(m.cantidad)||0, pesoDest);
+    return s + convertirAMoneda_(importeARS, m.fecha, _criaMoneda);
   }, 0);
 
   // 2. Compras hacienda de la campaña (rodeos Cría)
   const comprasCria = comprasH.filter(c => c.campana===campSelec && (!campSelecField || String(c.campo_id)===String(campSelecField)));
-  const totalCompras = comprasCria.reduce((s,c) => s+(Number(c.importe_total)||0), 0);
+  const totalCompras = comprasCria.reduce((s,c) => s + convertirAMoneda_(Number(c.importe_total)||0, c.fecha, _criaMoneda), 0);
 
   // 3. Insumos consumidos campaña (alimentación y veterinaria) en rodeos Cría
   const prodPorId = Object.fromEntries((productos||[]).map(p=>[String(p.producto_id),p]));
@@ -2035,7 +2061,9 @@ function buildDashboard() {
   consumosCria.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
     const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-    const costo = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const costoARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    // Cotización DEL DÍA DEL CONSUMO, no la de hoy.
+    const costo = convertirAMoneda_(costoARS, c.fecha, _criaMoneda);
     if (cat.includes('veterin')||cat.includes('sanid')) {
       totalVeter += costo;
       detalleVetCria.push({fecha:c.fecha,prod:prod?.nombre||'—',cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
@@ -2051,7 +2079,7 @@ function buildDashboard() {
   const totalSueldosCria = sueldoTotalActividad_('cria', s =>
     (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
     String(s.periodo).slice(0,7) <= corteCria.slice(0,7)
-  );
+  , _criaMoneda);
 
   const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
@@ -2115,25 +2143,25 @@ function buildDashboard() {
             <div style="font-weight:600">💰 Ventas de hacienda</div>
             <div style="font-size:11px;color:var(--text3)">${ventasCria.length} ventas liquidadas</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmCria_(totalVentas)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(totalVentas,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">🔄 Cesiones a Recría/Engorde</div>
             <div style="font-size:11px;color:var(--text3)">${cesiones.length} traslados valorizados</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmCria_(totalCesiones)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(totalCesiones,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
           <div>
             <div style="font-weight:600">📦 Stock valorizado actual</div>
             <div style="font-size:11px;color:var(--text3)">${haPrecios ? (stockDetalleRows.length + ' rodeos') : '⚠ Sin precios configurados'}</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fmonACorte_(stockValCria, _criaMoneda, corteCria)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(stockValCria,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-          <div style="font-size:28px;font-weight:800;color:var(--green)">${fmCria_(totalIngresos)}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--green)">${fnMoneda_(totalIngresos,_criaMoneda)}</div>
         </div>
       </div>
     </div>
@@ -2147,33 +2175,33 @@ function buildDashboard() {
             <div style="font-weight:600">🐄 Stock inicial</div>
             <div style="font-size:11px;color:var(--text3)">${saldosIniciales.length} rodeos — precio/cabeza cargado</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalSaldoInicial)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSaldoInicial,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">🛒 Compras de hacienda</div>
             <div style="font-size:11px;color:var(--text3)">${comprasCria.length} compras campaña ${campSelec}</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalCompras)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalCompras,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🌿 Alimentación e insumos</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalAlim>0?fmCria_(totalAlim):'—'}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalAlim>0?fnMoneda_(totalAlim,_criaMoneda):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">💉 Veterinaria</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalVeter>0?fmCria_(totalVeter):'—'}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalVeter>0?fnMoneda_(totalVeter,_criaMoneda):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">👤 Sueldos imputados a Cría</div>
             <div style="font-size:11px;color:var(--text3)">histórico total de sueldos × % Cría</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fmCria_(totalSueldosCria)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSueldosCria,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-          <div style="font-size:28px;font-weight:800;color:var(--clay)">${fmCria_(totalEgresos)}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--clay)">${fnMoneda_(totalEgresos,_criaMoneda)}</div>
         </div>
       </div>
     </div>
@@ -2187,7 +2215,7 @@ function buildDashboard() {
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Cría ${campSelec}</div>
       <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos (excluye insumos por configurar)</div>
     </div>
-    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fmCria_(Math.abs(margen))}</div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fnMoneda_(Math.abs(margen),_criaMoneda)}</div>
   </div>`;
 
   if (margenPorHa !== null || camposCriaSinHa) {
@@ -2196,7 +2224,7 @@ function buildDashboard() {
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)">Margen Bruto / ha</div>
         <div style="font-size:11px;color:var(--text3);margin-top:3px">${campSelecField?campoNombre(campSelecField):'Todos los campos con Cría'} · ${fn(haCria,0)} ha${camposCriaSinHa?' · ⚠ hay campos sin hectáreas cargadas, no entran en la suma':''}</div>
       </div>
-      <div style="font-size:24px;font-weight:800;color:${margenColor}">${margenPorHa!==null?(margenPorHa>=0?'':'-')+fmCria_(Math.abs(margenPorHa)):'—'}</div>
+      <div style="font-size:24px;font-weight:800;color:${margenColor}">${margenPorHa!==null?(margenPorHa>=0?'':'-')+fnMoneda_(Math.abs(margenPorHa),_criaMoneda):'—'}</div>
     </div>`;
   }
 
@@ -2225,7 +2253,7 @@ function buildDashboard() {
       <td colspan="3" class="tr">TOTAL EF</td>
       <td class="tc">${fn(stockDetalleRows.reduce((s,r)=>s+r.stock,0))} cab.</td>
       <td colspan="2"></td>
-      <td class="tr" style="color:var(--green-text);font-size:15px">${fmonACorte_(stockValCria, _criaMoneda, corteCria)}</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValCria, _criaMoneda)}</td>
     </tr>`;
     h += '</tbody></table></div></div>';
   }
@@ -2360,10 +2388,10 @@ function buildDashboard() {
     filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
       tot+=d.costo;
       t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
-        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fmCria_(d.costo)}</strong></td></tr>`;
+        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fnMoneda_(d.costo,_criaMoneda)}</strong></td></tr>`;
     });
     t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
-      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmCria_(tot)}</td></tr>`;
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(tot,_criaMoneda)}</td></tr>`;
     return t+'</tbody></table></div></div>';
   };
   if (detalleAlimCria.length) h += buildInsumoTableCria_(detalleAlimCria, '🌿 Alimentación e insumos — detalle');
@@ -4222,11 +4250,13 @@ function buildRecriaDashboard() {
 
   // INGRESOS
   // 1. Ventas directas de Recría
+  // Cotización DEL DÍA DE CADA VENTA, no la de hoy — mismo criterio ya aplicado
+  // en Cría y Terminación (ver comentarios en egCostoCompra_/totalVentas de Cría).
   let ingVentas = 0;
   const detalleVentas = [];
   ventas.forEach(v=>{
     const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
-    ingVentas += imp;
+    ingVentas += convertirAMoneda_(imp, v.fecha_salida, moneda);
     detalleVentas.push({ fecha: v.fecha_salida, rodeo: rodeoNombre(v.rodeo_id), cant: Number(v.cant_animales)||0, importe: imp });
   });
 
@@ -4256,25 +4286,25 @@ function buildRecriaDashboard() {
       imp = valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
     }
     const kgTot = cant*peso;
-    ingCesionEng += imp;
+    // Cotización DEL DÍA DE LA CESIÓN, no la de hoy.
+    ingCesionEng += convertirAMoneda_(imp, e.fecha, moneda);
     detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant, kg: kgTot, importe: imp, sinPrecio: !precioKg });
   });
 
   // 3. Stock valorizado a la fecha de corte
-  let stockValRecria = 0;
-  // Antes usaba S.stock (siempre "hoy", calculado por el backend) — ahora usa
-  // stockACorteRecria, calculado localmente respetando la fecha de corte elegida.
-  // Se sigue recorriendo todosRodeosRecria (no solo resumenRecria) para no perder
-  // rodeos que el backend pudiera omitir.
+  let stockValRecriaARS = 0;
   const stockDetalleRec_ = [];
   todosRodeosRecria.forEach(r=>{
     const stock = Math.max(0, stockACorteRecria[String(r.rodeo_id)]||0);
     if (!stock) return;
     const pesoP = ultimaPesadaACorte_(r.rodeo_id, corteRecria);
     const val = valorizarRodeo_(rodeosAll.find(x=>String(x.rodeo_id)===String(r.rodeo_id))||r, stock, pesoP);
-    stockValRecria += val;
+    stockValRecriaARS += val;
     stockDetalleRec_.push({nombre:r.nombre, stock, pesoP, val});
   });
+  // "Stock valorizado" es un ítem de BALANCE — se convierte una sola vez a la
+  // cotización del corte, a diferencia de los ítems de FLUJO de arriba/abajo.
+  const stockValRecria = convertirAMoneda_(stockValRecriaARS, corteRecria, moneda);
 
   const totalIngresos = ingVentas + ingCesionEng + stockValRecria;
 
@@ -4303,22 +4333,25 @@ function buildRecriaDashboard() {
       pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
       total=valorizarRodeo_(or||{},cant,pesoUsado);
     }
-    egCesionCria += total;
+    egCesionCria += convertirAMoneda_(total, m.fecha, moneda);
     detalleCesCria.push({ fecha: m.fecha, rodeo: rodeoNombre(m.rodeo_destino_id), total: cant, kg: cant*(pesoUsado||0), importe: total });
   });
 
   // 2. Compra externa (movimientos hacia rodeos de recría con precio)
   let egCompraExterna = 0;
   movs.filter(m=>rodeosIdsFilt.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual').forEach(m=>{
-    egCompraExterna += (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0);
+    const importeARS = (Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0);
+    egCompraExterna += convertirAMoneda_(importeARS, m.fecha, moneda);
   });
 
   // 3. Alimentación y veterinaria
+  // Cotización DEL DÍA DE CADA CONSUMO, no la de hoy.
   let egAlim = 0, egVet = 0;
   const detalleAlim = [], detalleVet = [];
   consumos.forEach(c=>{
     const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
-    const costo = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const costoARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const costo = convertirAMoneda_(costoARS, c.fecha, moneda);
     if (prod&&prod.categoria==='Veterinaria') {
       egVet += costo;
       detalleVet.push({fecha:c.fecha,prod:prod.nombre,cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
@@ -4335,12 +4368,13 @@ function buildRecriaDashboard() {
   const egSueldos = sueldoTotalActividad_('recria', s =>
     (!campSelec || String(s.campo_id) === String(campSelec)) &&
     String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
-  );
+  , moneda);
 
   // 5. Stock inicial (EI) — saldos iniciales de rodeos de Recría
+  // Cotización DEL DÍA DE CADA Saldo inicial, no la de hoy.
   const egEI = movs
     .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
-    .reduce((s,m) => s+valorMovimientoEntrada_(m).total, 0);
+    .reduce((s,m) => s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
 
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
@@ -4406,10 +4440,10 @@ function buildRecriaDashboard() {
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title" style="color:var(--green-text)">📈 Ingresos</div>
       <table class="dt" style="margin-bottom:12px"><tbody>
-        <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fmM(ingVentas)}</strong></td></tr>
-        <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fmM(ingCesionEng)}</strong></td></tr>
-        <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fmonACorte_(stockValRecria, moneda, corteRecria)}</strong></td></tr>
-        <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fmM(totalIngresos)}</strong></td></tr>
+        <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fnMoneda_(ingVentas,moneda)}</strong></td></tr>
+        <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fnMoneda_(ingCesionEng,moneda)}</strong></td></tr>
+        <tr><td>📦 Stock valorizado actual</td><td class="tr"><strong>${fnMoneda_(stockValRecria,moneda)}</strong></td></tr>
+        <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fnMoneda_(totalIngresos,moneda)}</strong></td></tr>
       </tbody></table>
     </div>
 
@@ -4417,13 +4451,13 @@ function buildRecriaDashboard() {
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title" style="color:var(--red)">📉 Egresos</div>
       <table class="dt" style="margin-bottom:12px"><tbody>
-        <tr><td>📦 Stock inicial (EI)</td><td class="tr"><strong>${fmM(egEI)}</strong></td></tr>
-        <tr><td>⬅ Cesión desde Cría</td><td class="tr"><strong>${fmM(egCesionCria)}</strong></td></tr>
-        ${egCompraExterna>0?`<tr><td>🛒 Compra externa</td><td class="tr"><strong>${fmM(egCompraExterna)}</strong></td></tr>`:''}
-        <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fmM(egAlim)}</strong></td></tr>
-        <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fmM(egVet)}</strong></td></tr>
-        <tr><td>👷 Sueldos</td><td class="tr"><strong>${fmM(egSueldos)}</strong></td></tr>
-        <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red);font-size:20px"><strong>${fmM(totalEgresos)}</strong></td></tr>
+        <tr><td>📦 Stock inicial (EI)</td><td class="tr"><strong>${fnMoneda_(egEI,moneda)}</strong></td></tr>
+        <tr><td>⬅ Cesión desde Cría</td><td class="tr"><strong>${fnMoneda_(egCesionCria,moneda)}</strong></td></tr>
+        ${egCompraExterna>0?`<tr><td>🛒 Compra externa</td><td class="tr"><strong>${fnMoneda_(egCompraExterna,moneda)}</strong></td></tr>`:''}
+        <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fnMoneda_(egAlim,moneda)}</strong></td></tr>
+        <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fnMoneda_(egVet,moneda)}</strong></td></tr>
+        <tr><td>👷 Sueldos</td><td class="tr"><strong>${fnMoneda_(egSueldos,moneda)}</strong></td></tr>
+        <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red);font-size:20px"><strong>${fnMoneda_(totalEgresos,moneda)}</strong></td></tr>
       </tbody></table>
     </div>
   </div>`;
@@ -4433,9 +4467,9 @@ function buildRecriaDashboard() {
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div>
         <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto Recría</div>
-        ${margenPorKg!==null?`<div style="font-size:12px;color:${mc};margin-top:2px">${fmM(margenPorKg)}/kg ganado</div>`:''}
+        ${margenPorKg!==null?`<div style="font-size:12px;color:${mc};margin-top:2px">${fnMoneda_(margenPorKg,moneda)}/kg ganado</div>`:''}
       </div>
-      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fmM(Math.abs(margen))}</div>
+      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fnMoneda_(Math.abs(margen),moneda)}</div>
     </div>
   </div>`;
 
@@ -4446,7 +4480,7 @@ function buildRecriaDashboard() {
           <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)">Margen Bruto / ha — Recría</div>
           <div style="font-size:11px;color:var(--text3);margin-top:3px">${campSelec?campoNombre(campSelec):'Todos los campos con Recría'} · ${fn(haRecria,0)} ha${camposRecriaSinHa?' · ⚠ hay campos sin hectáreas cargadas, no entran en la suma':''}</div>
         </div>
-        <div style="font-size:24px;font-weight:800;color:${mc}">${margenPorHaRecria!==null?(margenPorHaRecria>=0?'':'-')+fmM(Math.abs(margenPorHaRecria)):'—'}</div>
+        <div style="font-size:24px;font-weight:800;color:${mc}">${margenPorHaRecria!==null?(margenPorHaRecria>=0?'':'-')+fnMoneda_(Math.abs(margenPorHaRecria),moneda):'—'}</div>
       </div>
     </div>`;
   }
@@ -4455,8 +4489,8 @@ function buildRecriaDashboard() {
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-icon">🐄</div><div class="kpi-label">Rodeos activos</div><div class="kpi-val">${rodeosIdsFilt.size}</div></div>
       <div class="kpi"><div class="kpi-icon">⚖</div><div class="kpi-label">Kg ganado total</div><div class="kpi-val">${kgGanadoTotal>0?fn(Math.round(kgGanadoTotal))+' kg':'—'}</div><div class="kpi-sub">${cabezasConPesada>0?fn(cabezasConPesada)+' cab. con 2+ pesadas':''}</div></div>
-      ${costoPorKg!==null?`<div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo/kg ganado</div><div class="kpi-val">${fmM(costoPorKg)}</div></div>`:''}
-      ${margenPorKg!==null?`<div class="kpi"><div class="kpi-icon">${margenPorKg>=0?'📈':'📉'}</div><div class="kpi-label">Margen/kg ganado</div><div class="kpi-val ${margenPorKg>=0?'kpi-pos':'kpi-neg'}">${fmM(margenPorKg)}</div></div>`:''}
+      ${costoPorKg!==null?`<div class="kpi"><div class="kpi-icon">💲</div><div class="kpi-label">Costo/kg ganado</div><div class="kpi-val">${fnMoneda_(costoPorKg,moneda)}</div></div>`:''}
+      ${margenPorKg!==null?`<div class="kpi"><div class="kpi-icon">${margenPorKg>=0?'📈':'📉'}</div><div class="kpi-label">Margen/kg ganado</div><div class="kpi-val ${margenPorKg>=0?'kpi-pos':'kpi-neg'}">${fnMoneda_(margenPorKg,moneda)}</div></div>`:''}
     </div>
   </div>`;
 
@@ -4478,7 +4512,7 @@ function buildRecriaDashboard() {
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
       <td class="tc">${fn(stockDetalleRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td></td>
-      <td class="tr" style="color:var(--green-text);font-size:15px">${fmonACorte_(stockValRecria, moneda, corteRecria)}</td></tr>`;
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValRecria,moneda)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
 
@@ -4615,10 +4649,10 @@ function buildRecriaDashboard() {
     filas.slice().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(d=>{
       tot+=d.costo;
       t+=`<tr><td>${fd(d.fecha)}</td><td>${d.prod}</td><td>${d.rodeo}</td>
-        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fmM(d.costo)}</strong></td></tr>`;
+        <td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fnMoneda_(d.costo,moneda)}</strong></td></tr>`;
     });
     t+=`<tr style="background:var(--bg2);font-weight:800"><td colspan="4" class="tr">TOTAL</td>
-      <td class="tr" style="color:var(--clay-text);font-size:15px">${fmM(tot)}</td></tr>`;
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(tot,moneda)}</td></tr>`;
     return t+'</tbody></table></div></div>';
   };
   if (detalleAlim.length) h += buildInsumoTableRec_(detalleAlim, '🌿 Alimentación e insumos — detalle');
@@ -5726,15 +5760,19 @@ function attachEngordeEvents() {
       // sus animales a otro corral de Terminación en vez de vendiéndolos) — sin
       // esto, un corral que cierra por traslado interno mostraba costo de entrada
       // sin ningún ingreso que lo compense, dando una utilidad falsa negativa.
-      const cesEnvHist = egIngresoCesionEnviada_(rid, null);
+      // OJO: se fuerza 'ARS' en todo lo que se guarda acá — el registro de
+      // Historial no debe depender de qué moneda estaba elegida en pantalla en
+      // el momento puntual de tocar "Guardar"; queda en pesos crudos siempre,
+      // y cada pantalla que lo lea después decide cómo mostrarlo.
+      const cesEnvHist = egIngresoCesionEnviada_(rid, null, 'ARS');
       btn.disabled = true; btn.textContent = '⏳ Guardando...';
       try {
         await apiCall('create', { body: { entity: 'engorde_lotes', data: {
           rodeo_id: rid, nombre: r.nombre,
           fecha_apertura: fi||today(), fecha_cierre: today(),
           animales: egCantIngresada_(rid), kg_ganados: kgG, gan_diaria: gd||'',
-          costo_alim: egCostoAlim_(rid), costo_compra: egCostoCompra_(rid),
-          ing_ventas: egIngVentas_(rid), ing_ces_enviada: cesEnvHist.total||'',
+          costo_alim: egCostoAlim_(rid, null, null, 'ARS'), costo_compra: egCostoCompra_(rid, false, 'ARS'),
+          ing_ventas: egIngVentas_(rid, 'ARS'), ing_ces_enviada: cesEnvHist.total||'',
           kg_ms_consumidos: convMS_.kgMS||'', conversion_ms: convMS_.conv||'', costo_kg_ms: convMS_.costoKgMS||'',
         }}});
         invalidateCache('engorde_lotes');
@@ -5964,23 +6002,34 @@ function egCostoPromProducto_(productoId) {
   const costo = compras.reduce((s, c) => s + (Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0), 0);
   return cant > 0 ? costo / cant : 0;
 }
-function egCostoAlim_(rodeoId, hastaFecha, categoria) {
+function egCostoAlim_(rodeoId, hastaFecha, categoria, monedaOverride) {
   const productos = (S.catalogs && S.catalogs.productos) || [];
+  const moneda = monedaOverride || S.engordeMoneda || 'ARS';
+  // Cotización DEL DÍA DE CADA CONSUMO, no la de hoy — un kilo de maíz
+  // consumido hace 4 meses costó una cantidad de dólares específica ESE día,
+  // no lo que indica la cotización actual. Sumar primero en pesos y convertir
+  // recién al final con la cotización de hoy mezclaría meses distintos a un
+  // tipo de cambio que no corresponde a ninguno de ellos.
   return egConsumos_(rodeoId, hastaFecha).reduce((s, c) => {
     if (categoria) {
       const prod = productos.find(p => String(p.producto_id) === String(c.producto_id));
       if (!prod || prod.categoria !== categoria) return s;
     }
     // Usar precio vigente a la fecha del consumo (no promedio global)
-    return s + (Number(c.cantidad) || 0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const importeARS = (Number(c.cantidad) || 0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    return s + convertirAMoneda_(importeARS, c.fecha, moneda);
   }, 0);
 }
 function egKgVend_(rodeoId) {
   return egVentas_(rodeoId).reduce((s, v) => s + (Number(v.peso_campo_kg) || 0), 0);
 }
-function egIngVentas_(rodeoId) {
+function egIngVentas_(rodeoId, monedaOverride) {
+  const moneda = monedaOverride || S.engordeMoneda || 'ARS';
+  // Cotización del día DE CADA VENTA — la plata de una venta de hace 3 meses
+  // valía otra cantidad de dólares ese día, no la de hoy.
   return egVentas_(rodeoId).reduce((s, v) => {
-    return s + (Number(v.importe_liq) || (Number(v.precio_pactado) * (Number(v.peso_campo_kg) || 0)) || 0);
+    const importeARS = Number(v.importe_liq) || (Number(v.precio_pactado) * (Number(v.peso_campo_kg) || 0)) || 0;
+    return s + convertirAMoneda_(importeARS, v.fecha_salida, moneda);
   }, 0);
 }
 function egFechaIngreso_(rodeoId) {
@@ -6068,30 +6117,32 @@ function egKgIngresados_(rodeoId) {
   const cfg = egConfig_(rodeoId);
   return (Number(cfg.stockInicial)||0) * (Number(cfg.kgIngreso)||0);
 }
-function egCostoCompra_(rodeoId, ignorarOverride) {
+function egCostoCompra_(rodeoId, ignorarOverride, monedaOverride) {
   const movs = S.cache.movimientos || [];
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
-  // OJO: esta función SIEMPRE devuelve pesos ARS crudos, sin convertir moneda.
-  // Antes convertía internamente a `moneda` (S.engordeMoneda) con convertirAMoneda_,
-  // pero las 7 pantallas que la usan (Costos, Comparación, Proyección, Historial,
-  // IA, etc.) muestran el resultado con fm()/egFmon_(), que TAMBIÉN convierte —
-  // en modo U$S esto dividía dos veces por la cotización, mostrando "Costo de
-  // compra" ~1300 veces más chico de lo real. Comparación ya tenía un parche
-  // local (aArs_) para este mismo problema — se corrige acá de raíz para que
-  // ninguna pantalla lo sufra, y aArs_ queda como no-operación inofensiva.
+  const moneda = monedaOverride || S.engordeMoneda || 'ARS';
+  // OJO — cotización DEL DÍA DE CADA MOVIMIENTO, no la de hoy: un Saldo inicial
+  // cargado hace 7 meses representó una cantidad de dólares específica ESE día,
+  // no lo que indica la cotización actual. (Nota histórica: antes esta función
+  // devolvía ARS crudo y dejaba que fm()/egFmon_() convirtiera UNA sola vez con
+  // la cotización de HOY al mostrar — eso arregló el bug de doble conversión,
+  // pero mezclaba meses distintos a un tipo de cambio que no correspondía a
+  // ninguno. Ahora se convierte cada movimiento con SU PROPIA fecha, y se suma
+  // ya en la moneda final — las pantallas que muestran este resultado deben
+  // usar fnMoneda_(), NO fm()/egFmon_(), para no volver a convertir de más.)
 
   // Prioridad 0: ABM de Corrales tiene precio de entrada → úsalo para TODOS los
   // movimientos de entrada de este corral (reemplaza el precio del movimiento).
   // ignorarOverride=true se usa SOLO para mostrar el valor "real" del movimiento
-  // como referencia en la propia ABM — sino el texto "Movimiento: $ X/cab." quedaba
-  // mostrando el valor ya pisado por la excepción manual en vez del dato real, que
-  // es justo lo que generó la confusión con Corral 1 (mostraba "$4.800" como si
-  // fuera el movimiento, cuando en realidad esa excepción SEGUÍA activa).
+  // como referencia en la propia ABM.
   const cfg = egConfig_(rodeoId);
   if (!ignorarOverride && Number(cfg.precioCompra) > 0) {
     const cantTotal = egCantIngresada_(rodeoId);
     const precioABM = Number(cfg.precioCompra);
-    return cantTotal * precioABM;
+    // Sin una fecha propia (es un valor manual, no un movimiento), se usa la
+    // fecha de ingreso del corral como mejor referencia disponible.
+    const fechaRef = egFechaIngreso_(rodeoId) || today();
+    return convertirAMoneda_(cantTotal * precioABM, fechaRef, moneda);
   }
 
   function costoExplicito_(m) {
@@ -6106,7 +6157,7 @@ function egCostoCompra_(rodeoId, ignorarOverride) {
 
   // Saldo inicial × precio (cabeza o kg)
   const saldos = movs.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
-  const costoSaldo = saldos.reduce((s,m)=>s+costoExplicito_(m),0);
+  const costoSaldo = saldos.reduce((s,m)=>s+convertirAMoneda_(costoExplicito_(m), m.fecha, moneda),0);
 
   // Traslados recibidos: si el traslado trae precio cargado manualmente (cabeza o kg)
   // (ej: el origen ya no tiene su propio Saldo inicial, o el traslado representa
@@ -6117,13 +6168,16 @@ function egCostoCompra_(rodeoId, ignorarOverride) {
   const costoCesion = cesiones.reduce((s,m)=>{
     const cant = Number(m.cantidad)||0;
     const explicito = costoExplicito_(m);
+    let costoARS;
     if (explicito > 0) {
-      return s + explicito;
+      costoARS = explicito;
+    } else {
+      const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
+      const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
+      costoARS = valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
     }
-    const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
-    const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
-    return s+valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
+    return s + convertirAMoneda_(costoARS, m.fecha, moneda);
   },0);
 
   return costoSaldo + costoCesion;
@@ -6137,8 +6191,8 @@ function egCostoCompra_(rodeoId, ignorarOverride) {
 // esto solo lo separa para que Comparación/Excel puedan reconciliar directo
 // contra el Dashboard sin tener que restar "Cesión enviada" a mano — antes,
 // "Costo de compra" mezclaba las dos cosas en una sola columna sin avisar.
-function egCostoCompraDesglose_(rodeoId, ignorarOverride) {
-  const total = egCostoCompra_(rodeoId, ignorarOverride);
+function egCostoCompraDesglose_(rodeoId, ignorarOverride, monedaOverride) {
+  const total = egCostoCompra_(rodeoId, ignorarOverride, monedaOverride);
   const cfg = egConfig_(rodeoId);
   if (!ignorarOverride && Number(cfg.precioCompra) > 0) {
     // Con excepción manual activa no hay forma de saber qué parte del total
@@ -6149,6 +6203,7 @@ function egCostoCompraDesglose_(rodeoId, ignorarOverride) {
   const movs = S.cache.movimientos || [];
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
   const rodeosEngIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
+  const moneda = monedaOverride || S.engordeMoneda || 'ARS';
   function costoExplicito_(m) {
     const cant = Number(m.cantidad) || 0;
     const peso = Number(m.peso_prom_kg) || 0;
@@ -6159,7 +6214,7 @@ function egCostoCompraDesglose_(rodeoId, ignorarOverride) {
     return 0;
   }
   const saldos = movs.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rodeoId));
-  const costoSaldo = saldos.reduce((s,m)=>s+costoExplicito_(m),0); // Saldo inicial siempre es "externo"
+  const costoSaldo = saldos.reduce((s,m)=>s+convertirAMoneda_(costoExplicito_(m), m.fecha, moneda),0); // Saldo inicial siempre es "externo"
   const cesiones = movs.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_destino_id)===String(rodeoId));
   let interno = 0, externoCesiones = 0;
   cesiones.forEach(m => {
@@ -6174,6 +6229,7 @@ function egCostoCompraDesglose_(rodeoId, ignorarOverride) {
       const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
       costoMov = valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
     }
+    costoMov = convertirAMoneda_(costoMov, m.fecha, moneda);
     if (rodeosEngIds.has(String(m.rodeo_origen_id))) interno += costoMov;
     else externoCesiones += costoMov;
   });
@@ -6192,11 +6248,13 @@ function egCostoCompraDesglose_(rodeoId, ignorarOverride) {
 // consolidados (Dashboard / "todos los corrales" / Margen Bruto), porque ahí el
 // movimiento ya se cancela solo (ver el filtro !rodeosEngIds.has(origen) agregado
 // en buildEngordeDashboard_ y en el resumen "todos los corrales" de esta función).
-function egIngresoCesionEnviada_(rodeoId, hastaFecha) {
-  // Igual que egCostoCompra_: devuelve SIEMPRE pesos ARS crudos, sin convertir
-  // moneda acá adentro — quien llama la usa con fm(), que ya hace la única
-  // conversión correcta al mostrar (o la guarda cruda en Sheets, como en el
-  // "Guardar en historial", donde también debe quedar en ARS).
+function egIngresoCesionEnviada_(rodeoId, hastaFecha, monedaOverride) {
+  // Cotización DEL DÍA DE CADA TRASLADO — igual que egCostoCompra_. Se puede
+  // forzar 'ARS' con monedaOverride para el guardado en Historial, que debe
+  // quedar en pesos crudos sin importar qué moneda esté elegida en pantalla
+  // en el momento de guardar (si no, el valor guardado dependería de un
+  // detalle de la UI al momento de tocar el botón, no de la operación en sí).
+  const moneda = monedaOverride || S.engordeMoneda || 'ARS';
   const movs = (S.cache.movimientos || []).filter(m =>
     (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
     String(m.rodeo_origen_id) === String(rodeoId) &&
@@ -6225,7 +6283,7 @@ function egIngresoCesionEnviada_(rodeoId, hastaFecha) {
     }
     if (peso) kg += c * peso;
     cant += c;
-    total += importeARS;
+    total += convertirAMoneda_(importeARS, m.fecha, moneda);
   });
   return { total, cant, kg };
 }
@@ -7104,6 +7162,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
 
 function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
   corte = corte || today();
+  const moneda = S.engordeMoneda || 'ARS';
   const stockACorteCard = stockPorRodeoACorte_(corte);
   const fn_ = (v,d=0) => fn(v,d);
   let totAn=0, totKgI=0, totKgV=0, totKgStk=0, totKgG=0;
@@ -7171,7 +7230,7 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
     const costoAlim = costoTotalAlimVet - costoVet;
     const ingVentas = egIngVentas_(rid);
     const pesoUltimaCard = egPesadas_(rid).filter(p=>(p.fecha||'')<=corte).slice(-1)[0]?.peso_prom_kg || 0;
-    const ivStk     = valorizarRodeo_(r, stock, pesoUltimaCard);
+    const ivStk     = convertirAMoneda_(valorizarRodeo_(r, stock, pesoUltimaCard), corte, moneda);
     // Antes faltaban acá los dos lados de una cesión interna entre corrales:
     // el costo de entrada (cc, lo que este corral pagó por lo que recibió —
     // sea de otro corral o de Recría) y la cesión enviada (cesEnv, lo que este
@@ -7208,19 +7267,19 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
         :(convMS_.motivoSinDato && convMS_.motivoSinDato.includes('% de materia seca')?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Conversión (MS)</div>
         <div style="text-align:right;font-weight:600;color:var(--text3)" title="${convMS_.motivoSinDato}">⚠ falta % MS</div>`:'')}
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo entrada</div>
-        <div style="text-align:right;font-weight:600">${cc>0?fm(cc):'—'}</div>
+        <div style="text-align:right;font-weight:600">${cc>0?fnMoneda_(cc,moneda):'—'}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo alim.</div>
-        <div style="text-align:right;font-weight:600">${fm(costoAlim)}</div>
+        <div style="text-align:right;font-weight:600">${fnMoneda_(costoAlim,moneda)}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Costo vet.</div>
-        <div style="text-align:right;font-weight:600;color:var(--blue)">${fm(costoVet)}</div>
+        <div style="text-align:right;font-weight:600;color:var(--blue)">${fnMoneda_(costoVet,moneda)}</div>
         <div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Ingreso ventas</div>
-        <div style="text-align:right;font-weight:600">${fm(ingVentas)}</div>
+        <div style="text-align:right;font-weight:600">${fnMoneda_(ingVentas,moneda)}</div>
         ${cesEnv>0?`<div style="color:var(--text2);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.04em">Cesión enviada</div>
-        <div style="text-align:right;font-weight:600;color:var(--green)">${fm(cesEnv)}</div>`:''}
+        <div style="text-align:right;font-weight:600;color:var(--green)">${fnMoneda_(cesEnv,moneda)}</div>`:''}
       </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Resultado</div>
-        <div style="font-size:16px;font-weight:800;color:${resultado>=0?'var(--green)':'var(--red)'}">${fm(resultado)}</div>
+        <div style="font-size:16px;font-weight:800;color:${resultado>=0?'var(--green)':'var(--red)'}">${fnMoneda_(resultado,moneda)}</div>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:4px">
         Ingresados: ${fn(kgI+stock)} cab. &nbsp;·&nbsp; Kg ingr.: ${fn(kgI)} &nbsp;·&nbsp; Kg stock: ${fn(kgStk)}
@@ -7303,6 +7362,7 @@ function buildEngordeCostos_(rodeoId, fm) {
     // el del Dashboard, que también suma todos. Los corrales en 0 se ven aparte en
     // Historial, pero sin restarlos de este total.
     const corteCostos = S._corteEng || today();
+    const monedaTodos = S.engordeMoneda || 'ARS';
     const stockACorteCostos = stockPorRodeoACorte_(corteCostos);
     let totalAlim=0,totalVeter=0,totCaHP=0;
     rodeosEng.forEach(r => {
@@ -7319,22 +7379,31 @@ function buildEngordeCostos_(rodeoId, fm) {
       totCaHP += egCostoAlim_(r.rodeo_id, ultimaR?.fecha) - egCostoAlim_(r.rodeo_id, ultimaR?.fecha, 'Veterinaria');
     });
     // Calcular ingresos consolidados
-    let totalVentas=0, totalStock=0;
+    let totalVentas=0, totalStockARS=0;
     rodeosEng.forEach(r => {
       const ventasCorte = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(r.rodeo_id) && (v.fecha_salida||'')<=corteCostos);
-      totalVentas += ventasCorte.reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
+      // Cotización DEL DÍA DE CADA VENTA, no la de hoy.
+      totalVentas += ventasCorte.reduce((s,v)=>{
+        const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0;
+        return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaTodos);
+      },0);
       const pesCorte = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(r.rodeo_id) && (p.fecha||'')<=corteCostos)
         .sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
       const ultima = pesCorte.length ? pesCorte[pesCorte.length-1] : null;
       const pesoP = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
       const stockCorte = Math.max(0, stockACorteCostos[String(r.rodeo_id)]||0);
-      totalStock += valorizarRodeo_(r, stockCorte, pesoP);
+      totalStockARS += valorizarRodeo_(r, stockCorte, pesoP);
     });
+    // "Stock valorizado" es un ítem de BALANCE (todos a la misma fecha de corte) —
+    // se puede convertir una sola vez al final, es matemáticamente idéntico a
+    // convertir cada corral por separado ya que todos usan la misma fecha.
+    const totalStock = convertirAMoneda_(totalStockARS, corteCostos, monedaTodos);
     // Stock inicial y cesiones
     const movsTodos = (S.cache.movimientos || []).filter(m=>(m.fecha||'')<=corteCostos);
     const rodeosEngIds2 = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
     const saldosIni2 = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&rodeosEngIds2.has(String(m.rodeo_destino_id)));
-    const totalSaldoIni = saldosIni2.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
+    // Cotización DEL DÍA DE CADA Saldo inicial, no la de hoy.
+    const totalSaldoIni = saldosIni2.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaTodos),0);
     const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
     // MISMA fuente de verdad que usa el Dashboard (antes, acá se auto-valorizaba
     // SIEMPRE por categoría/peso del rodeo de origen, ignorando el precio real que
@@ -7354,12 +7423,11 @@ function buildEngordeCostos_(rodeoId, fm) {
       );
       return !tieneTrasladoReal;
     });
-    // OJO — mismo bug que egCostoCompra_ y totalSaldoIni (ver comentarios ahí):
-    // esto se pre-convertía a moneda acá y DE NUEVO en fm() al mostrarlo, y
-    // además mezclaba ARS crudo con ya-convertido en totalEgresos/margen. Ahora
-    // todo queda en ARS crudo hasta el display.
+    // Cotización DEL DÍA DE CADA CESIÓN, no la de hoy — mismo criterio que
+    // egCostoCompra_/totalSaldoIni de arriba.
     const totalCesiones2 = cesionesRecLegacy2.reduce((s,e)=>{
-      return s + (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+      const importeARS = (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+      return s + convertirAMoneda_(importeARS, e.fecha, monedaTodos);
     },0) + cesiones2.reduce((s,m)=>{
       const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
       const cant = Number(m.cantidad)||0;
@@ -7373,15 +7441,16 @@ function buildEngordeCostos_(rodeoId, fm) {
         const pesoO = pesO[0]?Number(pesO[0].peso_prom_kg)||0:0;
         costoARS = valorizarRodeo_(rodeoO||{categoria:'novillo'},cant,pesoO);
       }
-      return s+costoARS;
+      return s+convertirAMoneda_(costoARS, m.fecha, monedaTodos);
     },0);
     const cantCesionesTotal2 = cesiones2.length + cesionesRecLegacy2.length;
 
     const totalIngresos = totalVentas + totalStock;
+    // Sueldos: se convierte cada uno a la cotización DE SU PROPIO período (mes).
     const totalSueldosEngCostos = sueldoTotalActividad_('engorde', s =>
       (!campFiltro || String(s.campo_id)===String(campFiltro)) &&
       String(s.periodo).slice(0,7) <= corteCostos.slice(0,7)
-    );
+    , monedaTodos);
     const totalEgresos  = totalSaldoIni + totalCesiones2 + totalAlim + totalVeter + totalSueldosEngCostos;
     const margen = totalIngresos - totalEgresos;
     const mc = margen>=0?'var(--green)':'var(--red)';
@@ -7394,15 +7463,15 @@ function buildEngordeCostos_(rodeoId, fm) {
         <div style="display:flex;flex-direction:column;gap:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div style="font-weight:600">💰 Ventas de hacienda</div>
-            <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totalVentas)}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(totalVentas,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
             <div style="font-weight:600">📦 Stock valorizado actual</div>
-            <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(totalStock)}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(totalStock,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
             <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-            <div style="font-size:28px;font-weight:800;color:var(--green)">${fm(totalIngresos)}</div>
+            <div style="font-size:28px;font-weight:800;color:var(--green)">${fnMoneda_(totalIngresos,monedaTodos)}</div>
           </div>
         </div>
       </div>
@@ -7411,27 +7480,27 @@ function buildEngordeCostos_(rodeoId, fm) {
         <div style="display:flex;flex-direction:column;gap:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div><div style="font-weight:600">🐄 Stock inicial</div><div style="font-size:11px;color:var(--text3)">${saldosIni2.length} rodeos × precio/cab</div></div>
-            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSaldoIni)}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSaldoIni,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div><div style="font-weight:600">🔄 Cesiones de Recría</div><div style="font-size:11px;color:var(--text3)">${cantCesionesTotal2} cesiones desde Recría</div></div>
-            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalCesiones2)}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalCesiones2,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostos)}) — suma de todos los corrales, cada uno hasta su última pesada: ${fm(totCaHP)}</div></div>
-            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalAlim)}</div>
+            <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostos)}) — suma de todos los corrales, cada uno hasta su última pesada: ${fnMoneda_(totCaHP,monedaTodos)}</div></div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalAlim,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div style="font-weight:600">💉 Veterinaria</div>
-            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalVeter)}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalVeter,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
             <div style="font-weight:600">👤 Sueldos Engorde</div>
-            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(totalSueldosEngCostos)}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSueldosEngCostos,monedaTodos)}</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
             <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-            <div style="font-size:28px;font-weight:800;color:var(--clay)">${fm(totalEgresos)}</div>
+            <div style="font-size:28px;font-weight:800;color:var(--clay)">${fnMoneda_(totalEgresos,monedaTodos)}</div>
           </div>
         </div>
       </div>
@@ -7441,7 +7510,7 @@ function buildEngordeCostos_(rodeoId, fm) {
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen Bruto — Terminación</div>
         <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos</div>
       </div>
-      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fm(Math.abs(margen))}</div>
+      <div style="font-size:32px;font-weight:800;color:${mc}">${margen>=0?'':'-'}${fnMoneda_(Math.abs(margen),monedaTodos)}</div>
     </div>`;
     // KPIs productivos consolidados
     let totKgI=0,totKgG=0,totKgV=0,totKgStk=0,totAn=0;
@@ -7464,7 +7533,7 @@ function buildEngordeCostos_(rodeoId, fm) {
       <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">GDP promedio</div><div style="font-size:18px;font-weight:700">${gdpPromTodos?fn(gdpPromTodos,3)+' kg/día':'—'}</div></div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg vendidos</div><div style="font-size:18px;font-weight:700">${fn(totKgV)}</div></div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg en stock</div><div style="font-size:18px;font-weight:700">${fn(totKgStk)}</div><div style="font-size:10px;color:var(--text3)">${fn(totAn)} anim.</div></div>
-      ${caXkgTodos?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fm(caXkgTodos)}</div></div>`:''}
+      ${caXkgTodos?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fnMoneda_(caXkgTodos,monedaTodos)}</div></div>`:''}
     </div>`;
 
     h += '<div class="section-label">Detalle por corral — seleccioná uno para ver el análisis completo</div>';
@@ -7479,9 +7548,9 @@ function buildEngordeCostos_(rodeoId, fm) {
         <td><strong>${r.nombre}</strong></td>
         <td>${campoNombre(r.campo_id)}</td>
         <td class="tc">${fn(stk)}</td>
-        <td class="tr">${fm(cAlim)}</td>
-        <td class="tr">${fm(cVet)}</td>
-        <td class="tr"><strong>${fm(cTot)}</strong></td>
+        <td class="tr">${fnMoneda_(cAlim,monedaTodos)}</td>
+        <td class="tr">${fnMoneda_(cVet,monedaTodos)}</td>
+        <td class="tr"><strong>${fnMoneda_(cTot,monedaTodos)}</strong></td>
       </tr>`;
     });
     h += '</tbody></table></div>';
@@ -7515,6 +7584,7 @@ function buildEngordeCostos_(rodeoId, fm) {
   // Misma fecha de corte que el Dashboard y el resumen de "todos los corrales" —
   // antes esta ficha de un corral puntual no la tenía en cuenta para nada.
   const corteCostosUno = S._corteEng || today();
+  const monedaUno = S.engordeMoneda || 'ARS';
   const cfg = egConfig_(rodeoId);
   const stk = Math.max(0, (stockPorRodeoACorte_(corteCostosUno)[String(rodeoId)])||0);
   const pes = egPesadas_(rodeoId).filter(p=>(p.fecha||'')<=corteCostosUno);
@@ -7529,20 +7599,26 @@ function buildEngordeCostos_(rodeoId, fm) {
   const caVet  = egCostoAlim_(rodeoId, corteCostosUno, 'Veterinaria');
   const caAlim = ca - caVet; // costo alimentación total (sin veterinaria)
   const cc = egCostoCompra_(rodeoId);
+  // Cotización DEL DÍA DE CADA VENTA — no la de hoy (ver egCostoCompra_/
+  // egCostoAlim_ para el mismo criterio ya aplicado ahí).
   const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoId)&&(v.fecha_salida||'')<=corteCostosUno)
-    .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
+    .reduce((s,v)=>{
+      const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0;
+      return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaUno);
+    },0);
   const kgV = egKgVend_(rodeoId);
   const kgG = egKgGanadosHastaPesada_(rodeoId, corteCostosUno, stk);
   // Stock valorizado usando precios de valorización (no precio manual)
   const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
   const kgStk = stk * (pesoUltima || kgIngProm || 0);
+  // "Stock valorizado" es un ítem de BALANCE (lo que valen los animales que
+  // quedan HOY/al corte) — se convierte una sola vez, a la cotización del
+  // corte, a diferencia de los ítems de FLUJO (compras, cesiones, ventas,
+  // alimentación) que se convierten cada uno a la cotización de SU PROPIA
+  // fecha. Ambos criterios son correctos para lo que representan.
   const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
-  // OJO: mismo problema que egCostoCompra_ — antes esto se pre-convertía a
-  // `moneda` acá y DE NUEVO en fm() al mostrarlo (doble conversión en modo
-  // U$S), y encima ivTotal sumaba ARS crudo (iv) + ya-convertido (ivStock) en
-  // la misma cuenta. Ahora todo queda en ARS crudo hasta el display.
-  const ivStock = ivStockARS;
-  const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo
+  const ivStock = convertirAMoneda_(ivStockARS, corteCostosUno, monedaUno);
+  const stkPrecio = pesoUltima > 0 ? ivStockARS / Math.max(stk * pesoUltima, 1) : 0; // $/kg efectivo, siempre en ARS
   // Cesión interna enviada a otro corral de Terminación (ej: para cerrar este
   // corral) — ver egIngresoCesionEnviada_. Es la contracara del "Costo de entrada"
   // (cc) que ya se reconoce en el corral que RECIBE.
@@ -7552,10 +7628,11 @@ function buildEngordeCostos_(rodeoId, fm) {
   // costo de sueldos en la ficha de ESTE corral, se prorratea el sueldo de Engorde
   // del campo según la proporción de animales ingresados de este corral sobre el total
   // de animales ingresados a Engorde en ese mismo campo (mismo criterio para todos los corrales).
+  // Se convierte cada sueldo a la cotización DE SU PROPIO período (mes), no la de hoy.
   const sueldoEngordeCampo = sueldoTotalActividad_('engorde', s =>
     String(s.campo_id) === String(r.campo_id) &&
     String(s.periodo).slice(0,7) <= String(corteCostosUno).slice(0,7)
-  );
+  , monedaUno);
   const corralesDelMismoCampo = rodeosEngordeValidos_().filter(rr => String(rr.campo_id) === String(r.campo_id));
   const totalAnimEngCampo = corralesDelMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
   const sueldoProrrateado = totalAnimEngCampo > 0 ? sueldoEngordeCampo * (cantIng / totalAnimEngCampo) : 0;
@@ -7587,19 +7664,19 @@ function buildEngordeCostos_(rodeoId, fm) {
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">💰 Ventas de hacienda</div><div style="font-size:11px;color:var(--text3)">${fn(kgV,0)} kg vendidos</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(iv)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(iv,monedaUno)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
           <div><div style="font-weight:600">📦 Stock valorizado</div><div style="font-size:11px;color:var(--text3)">${fn(stk,0)} anim. · ${pesoUltima?fn(pesoUltima,0)+' kg prom. (última pesada)':'sin pesada — precio/cab'}</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${ivStock>0?fm(ivStock):'—'}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${ivStock>0?fnMoneda_(ivStock,monedaUno):'—'}</div>
         </div>
         ${cesEnv.total > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
           <div><div style="font-weight:600">🔄 Cesión interna enviada</div><div style="font-size:11px;color:var(--text3)">${fn(cesEnv.cant,0)} anim. · ${fn(cesEnv.kg,0)} kg → otro corral</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--green)">${fm(cesEnv.total)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(cesEnv.total,monedaUno)}</div>
         </div>` : ''}
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--green-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL INGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--green)">${fm(ivTotal)}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--green)">${fnMoneda_(ivTotal,monedaUno)}</div>
         </div>
       </div>
     </div>
@@ -7608,23 +7685,23 @@ function buildEngordeCostos_(rodeoId, fm) {
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">🐄 Stock inicial / Costo entrada</div><div style="font-size:11px;color:var(--text3)">${fn(cantIng,0)} anim. × ${fn(kgIngProm,0)} kg prom.</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${cc>0?fm(cc):'—'}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${cc>0?fnMoneda_(cc,monedaUno):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostosUno)})${ultima?`<br>hasta última pesada (${fd(ultima.fecha)}): ${fm(caHPAlim)}`:''}</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caAlim)}</div>
+          <div><div style="font-weight:600">🌾 Alimentación</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostosUno)})${ultima?`<br>hasta última pesada (${fd(ultima.fecha)}): ${fnMoneda_(caHPAlim,monedaUno)}`:''}</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(caAlim,monedaUno)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">💉 Veterinaria</div><div style="font-size:11px;color:var(--text3)">total hasta el corte (${fd(corteCostosUno)})</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fm(caVet)}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(caVet,monedaUno)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
           <div><div style="font-weight:600">👤 Sueldos (prorrateado)</div><div style="font-size:11px;color:var(--text3)">${totalAnimEngCampo>0?fn(cantIng,0)+' de '+fn(totalAnimEngCampo,0)+' anim. del campo':'sin animales en el campo'}</div></div>
-          <div style="font-size:18px;font-weight:700;color:var(--clay)">${sueldoProrrateado>0?fm(sueldoProrrateado):'—'}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${sueldoProrrateado>0?fnMoneda_(sueldoProrrateado,monedaUno):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
-          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fm(costoTotal)}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--clay)">${fnMoneda_(costoTotal,monedaUno)}</div>
         </div>
       </div>
     </div>
@@ -7636,9 +7713,9 @@ function buildEngordeCostos_(rodeoId, fm) {
   h += `<div style="background:${margenBg2};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
     <div>
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — ${r.nombre}</div>
-      <div style="font-size:11px;color:var(--text2);margin-top:3px">${ivTotal>0?egPct_(util,ivTotal)+' sobre ingresos':''} ${breakEven?'· Break-even: '+fm(breakEven)+'/kg':''}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:3px">${ivTotal>0?egPct_(util,ivTotal)+' sobre ingresos':''} ${breakEven?'· Break-even: '+fnMoneda_(breakEven,monedaUno)+'/kg':''}</div>
     </div>
-    <div style="font-size:32px;font-weight:800;color:${margenColor}">${util>=0?'':'-'}${fm(Math.abs(util))}</div>
+    <div style="font-size:32px;font-weight:800;color:${margenColor}">${util>=0?'':'-'}${fnMoneda_(Math.abs(util),monedaUno)}</div>
   </div>`;
 
   // KPIs productivos compactos
@@ -7648,9 +7725,9 @@ function buildEngordeCostos_(rodeoId, fm) {
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">GDP</div><div style="font-size:18px;font-weight:700">${ganDiaria!==null?fn(ganDiaria,3)+' kg/día':'—'}</div><div style="font-size:10px;color:var(--text3)">${fi&&ultima?fd(fi)+' → '+fd(ultima.fecha):''}</div></div>
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg vendidos</div><div style="font-size:18px;font-weight:700">${fn(kgV,0)}</div></div>
     <div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Kg en stock</div><div style="font-size:18px;font-weight:700">${fn(kgStk,0)}</div><div style="font-size:10px;color:var(--text3)">${fn(stk,0)} anim.</div></div>
-    ${caXkg?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fm(caXkg)}</div></div>`:''}
+    ${caXkg?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Alim./kg ganado</div><div style="font-size:18px;font-weight:700">${fnMoneda_(caXkg,monedaUno)}</div></div>`:''}
     <div style="background:var(--gold-bg);border-radius:8px;padding:10px 16px;min-width:180px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gold-text)">Conversión (MS)</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${convAlim?fn(convAlim,1)+' : 1':'—'}</div><div style="font-size:10px;color:var(--text3)">${convAlim?(costoKgMS?fm(costoKgMS)+' por kg MS':'⚠ hay alimentos sin % MS'):(motivoSinConv||'kg MS por kg ganado')}</div></div>
-    ${precVentaProm?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Precio venta prom.</div><div style="font-size:18px;font-weight:700">${fm(precVentaProm)}/kg</div></div>`:''}
+    ${precVentaProm?`<div style="background:var(--bg2);border-radius:8px;padding:10px 16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2)">Precio venta prom.</div><div style="font-size:18px;font-weight:700">${fnMoneda_(precVentaProm,monedaUno)}/kg</div></div>`:''}
   </div>`;
 
   // Tabla de costos por alimento
@@ -7668,7 +7745,7 @@ function buildEngordeCostos_(rodeoId, fm) {
       const costoHP = egConsumos_(rodeoId, ultima?.fecha).filter(c=>String(c.producto_id)===String(pid)).reduce((s,c)=>s+(Number(c.cantidad)||0)*cUnit,0);
       h += `<tr><td>${prod?.nombre||'Producto '+pid}</td><td class="tc">${fn(cant)} ${prod?.unidad||''}</td><td class="tc">${fm(costoTot)}</td><td class="tc">${fm(costoHP)}</td><td class="tc">${kgG>0?fm(costoHP/kgG):'—'}</td></tr>`;
     });
-    h += `<tr class="total-row"><td><strong>Total</strong></td><td class="tc">—</td><td class="tc"><strong>${fm(ca)}</strong></td><td class="tc"><strong>${fm(caHP)}</strong></td><td class="tc"><strong>${kgG>0?fm(caHP/kgG):'—'}</strong></td></tr>`;
+    h += `<tr class="total-row"><td><strong>Total</strong></td><td class="tc">—</td><td class="tc"><strong>${fnMoneda_(ca,monedaUno)}</strong></td><td class="tc"><strong>${fnMoneda_(caHP,monedaUno)}</strong></td><td class="tc"><strong>${kgG>0?fnMoneda_(caHP/kgG,monedaUno):'—'}</strong></td></tr>`;
     h += '</tbody></table></div>';
   }
 
@@ -7799,15 +7876,20 @@ async function exportarComparacionEngordeExcel_() {
       // peso) en vez de reusar egKgStockEstimado_ ya corregida — quedaba
       // desactualizado respecto al resto de las pantallas.
       const kgStk = egKgStockEstimado_(rid, corteComp, stk);
-      const ca = egCostoAlim_(rid, corteComp);
-      const cc = egCostoCompra_(rid);
+      // OJO — se fuerza 'ARS' acá abajo: este Excel ya hace SU PROPIA conversión
+      // a la moneda elegida más adelante (con conv()), a la cotización del
+      // corte — todavía no está migrado a conversión por transacción (fecha de
+      // cada movimiento), así que hay que evitar que estas funciones conviertan
+      // dos veces. Queda pendiente migrarlo igual que Dashboard/Costos.
+      const ca = egCostoAlim_(rid, corteComp, null, 'ARS');
+      const cc = egCostoCompra_(rid, false, 'ARS');
       // Desglose de dónde viene ese costo de entrada: externo (Recría/compra
       // directa, lo que el Dashboard cuenta) vs. interno (de otro corral de
       // Terminación, lo que el Dashboard excluye porque se cancela con la
       // "Cesión enviada" del corral que lo mandó). Antes "Costo de compra" los
       // mezclaba en una sola columna, y por eso el total no sumaba directo
       // contra el Dashboard sin restar "Cesión enviada" a mano.
-      const ccDesg = egCostoCompraDesglose_(rid);
+      const ccDesg = egCostoCompraDesglose_(rid, false, 'ARS');
       const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
         .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
       const fi = egFechaIngreso_(rid);
@@ -7815,10 +7897,10 @@ async function exportarComparacionEngordeExcel_() {
       const ultima = pes.length ? pes[pes.length-1] : null;
       const gd = egGanDiaria_(rid);
       const kgIng = egKgIngreso_(rid);
-      const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha) - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria')) / kgG : null;
+      const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha, null, 'ARS') - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria', 'ARS')) / kgG : null;
       const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
       const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
-      const cesEnv = egIngresoCesionEnviada_(rid, corteComp).total;
+      const cesEnv = egIngresoCesionEnviada_(rid, corteComp, 'ARS').total;
       // Antes faltaba acá el sueldo prorrateado (Costos individual sí lo resta) —
       // por eso la Utilidad total de Comparación quedaba sistemáticamente más alta
       // que la del Dashboard, justo por el monto de sueldos. Mismo criterio de
@@ -7980,9 +8062,13 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     // Antes esto se calculaba acá mismo con la lógica vieja (stock × un solo
     // peso) en vez de reusar egKgStockEstimado_ ya corregida.
     const kgStk = egKgStockEstimado_(rid, corteComp, stk);
-    const ca = egCostoAlim_(rid, corteComp);
-    const cc = egCostoCompra_(rid);
-    const ccDesg = egCostoCompraDesglose_(rid);
+    // OJO — se fuerza 'ARS' acá: esta pantalla usa fm() (conversión única a la
+    // cotización del corte) para mostrar estos valores — todavía no está
+    // migrada a conversión por transacción como Dashboard/Costos. Queda
+    // pendiente migrarla en la próxima pasada.
+    const ca = egCostoAlim_(rid, corteComp, null, 'ARS');
+    const cc = egCostoCompra_(rid, false, 'ARS');
+    const ccDesg = egCostoCompraDesglose_(rid, false, 'ARS');
     const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
       .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
     const fi = egFechaIngreso_(rid);
@@ -7990,14 +8076,14 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
     const ultima = pes.length ? pes[pes.length-1] : null;
     const gd = egGanDiaria_(rid);
     const kgIng = egKgIngreso_(rid);
-    const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha) - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria')) / kgG : null;
+    const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha, null, 'ARS') - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria', 'ARS')) / kgG : null;
     const ccXkg = kgG > 0 ? cc / kgG : null;
     const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
     const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
     // Cesión enviada a otro corral (ej: se cerró consolidando en otro) — sin
     // esto, un corral cerrado por traslado interno mostraba pérdida falsa acá
     // igual que ya corregimos en Costos y en las tarjetas del Dashboard.
-    const cesEnv = egIngresoCesionEnviada_(rid, corteComp).total;
+    const cesEnv = egIngresoCesionEnviada_(rid, corteComp, 'ARS').total;
     // Antes faltaba acá el sueldo prorrateado (Costos individual sí lo resta) —
     // por eso la Utilidad total de Comparación quedaba sistemáticamente más alta
     // que la del Dashboard, justo por el monto de sueldos. Mismo criterio de
@@ -8234,8 +8320,8 @@ function buildEngordeCierre_(rodeoId, fm) {
     }
     const hoy = today();
     const diasHastaSalida = fSalida ? Math.max(0, Math.round((new Date(fSalida)-new Date(hoy))/86400000)) : null;
-    const caAcum = egCostoAlim_(rid);
-    const cc = egCostoCompra_(rid);
+    const caAcum = egCostoAlim_(rid, null, null, 'ARS');
+    const cc = egCostoCompra_(rid, false, 'ARS');
     const hace30 = new Date(hoy); hace30.setDate(hace30.getDate()-30);
     const f30 = hace30.toISOString().slice(0,10);
     const todosConsumos = egConsumos_(rid);
@@ -8276,7 +8362,7 @@ function buildEngordeCierre_(rodeoId, fm) {
     // caAcum sigue disponible para cálculos históricos completos si se necesita
     const stkP = Number(cfg.precioStock||0);
     const ivProyect = stkP>0 ? stk*pesoObj*stkP : null;
-    const ivVentas = egIngVentas_(rid);
+    const ivVentas = egIngVentas_(rid, 'ARS');
     const ivTotal = ivProyect!==null ? ivVentas+ivProyect : null;
     const utilProyect = ivTotal!==null&&costoFinal!==null ? ivTotal-costoFinal : null;
     const border = utilProyect!==null?(utilProyect>=0?'var(--green)':'var(--red)'):'var(--border)';
@@ -8406,8 +8492,8 @@ function buildEngordeCierre_(rodeoId, fm) {
         fSalida2 = d.toISOString().slice(0,10);
       }
       const diasHasta2 = fSalida2 ? Math.max(0,Math.round((new Date(fSalida2)-new Date(today()))/86400000)) : null;
-      const caAcum2 = egCostoAlim_(rid);
-      const cc2 = egCostoCompra_(rid);
+      const caAcum2 = egCostoAlim_(rid, null, null, 'ARS');
+      const cc2 = egCostoCompra_(rid, false, 'ARS');
       const todosC2 = egConsumos_(rid);
       const hace302 = new Date(today()); hace302.setDate(hace302.getDate()-30);
       const f302 = hace302.toISOString().slice(0,10);
@@ -8446,7 +8532,7 @@ function buildEngordeCierre_(rodeoId, fm) {
       // mezclaba ARS crudo (egIngVentas_, cc2, caAcum2) con ya-convertido
       // (ivStk2) en la misma resta. Ahora todo queda en ARS crudo.
       totIvProyect += ivStk2;
-      const util2 = egIngVentas_(rid) + ivStk2 - (cc2+caAcum2+(costoProyect2||0));
+      const util2 = egIngVentas_(rid, 'ARS') + ivStk2 - (cc2+caAcum2+(costoProyect2||0));
       totUtil += util2; countUtil++;
     });
 
@@ -11232,9 +11318,11 @@ async function exportarAuditoriaEngordeExcel_() {
       const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corte);
       const ultima = pes.length ? pes[pes.length-1] : null;
       const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
-      const cc = egCostoCompra_(rid);
-      const cesEnv = egIngresoCesionEnviada_(rid, corte).total;
-      const ca = egCostoAlim_(rid, corte);
+      // Se fuerza 'ARS' — este Excel convierte con su propio wrapper (convEngAudit)
+      // a la cotización del corte; todavía no migrado a conversión por transacción.
+      const cc = egCostoCompra_(rid, false, 'ARS');
+      const cesEnv = egIngresoCesionEnviada_(rid, corte, 'ARS').total;
+      const ca = egCostoAlim_(rid, corte, null, 'ARS');
       const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
       const ivStock = valorizarRodeo_(r, stk, pesoUltima);
       const util = (iv+ivStock+cesEnv) - (cc+ca);
@@ -12563,10 +12651,10 @@ function iaContexto_() {
       gdp: gd,
       diasEnCorral: dias,
       kgGanados: egKgGanadosHastaPesada_(rid),
-      costoAlim: egCostoAlim_(rid),
-      costoCompra: egCostoCompra_(rid),
-      ingVentas: egIngVentas_(rid),
-      ingCesionEnviada: egIngresoCesionEnviada_(rid, null).total,
+      costoAlim: egCostoAlim_(rid, null, null, 'ARS'),
+      costoCompra: egCostoCompra_(rid, false, 'ARS'),
+      ingVentas: egIngVentas_(rid, 'ARS'),
+      ingCesionEnviada: egIngresoCesionEnviada_(rid, null, 'ARS').total,
     };
   });
 
@@ -13848,7 +13936,7 @@ function buildABMCorrales_() {
     const fechaMov = egFechaIngreso_(rid);
     const cantMov  = egCantIngresada_(rid);
     const kgMov    = egKgIngreso_(rid, true);
-    const costoMov = egCostoCompra_(rid, true);
+    const costoMov = egCostoCompra_(rid, true, 'ARS');
     const precioCabMov = cantMov > 0 ? costoMov / cantMov : 0;
 
     // Si alguno de los 3 campos con excepción manual (stockInicial/kgIngreso/
