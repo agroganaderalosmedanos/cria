@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_62';
+const APP_VERSION = 'index_consolidado_4_6_155_63';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -12066,12 +12066,21 @@ async function exportarAuditoriaMargenBrutoExcel_() {
     estilarFila_(ws1, 5+filas1.length, headers1.length, ST_TOTAL);
     XLSX.utils.book_append_sheet(wb, ws1, 'Resumen consolidado');
 
-    // ── HOJA 2: Detalle por actividad (ARS crudo — ver nota) ──────────────
-    const headers2 = ['Actividad','Rubro','Importe (ARS)'];
+    // ── HOJA 2: Detalle por actividad (respeta el selector de moneda) ──────
+    const monedaExport = S.margenBrutoMoneda || 'ARS';
+    const monedaLabelExport = monedaExport === 'USD' ? 'U$S' : 'ARS';
+    // OJO: estos valores vienen de S._result*.detalle, que están SIEMPRE en ARS
+    // crudo (ver comentario en cada Dashboard). Acá se convierten con una ÚNICA
+    // cotización (la del corte) si corresponde — no por transacción como la
+    // Hoja 1 — porque este detalle no guarda la fecha de cada movimiento
+    // individual. Por eso puede no coincidir centavo a centavo con la Hoja 1 en
+    // modo U$S; para auditar con precisión por transacción, usá el Excel de
+    // cada actividad (Cría/Recría/Terminación).
+    const headers2 = ['Actividad','Rubro',`Importe (${monedaLabelExport})`];
     const aoa2 = [
       [`Agroganadera Los Médanos — Detalle por actividad`],
       ['Fecha de corte', fd(corte)],
-      ['Nota', 'Este detalle línea por línea todavía se calcula con la cotización del corte, no por transacción — para auditar U$S con precisión, usá el Excel de auditoría de cada actividad (Cría/Recría/Terminación) y la Hoja 1 de este archivo.'],
+      ['Nota', `Importes en ${monedaLabelExport === 'U$S' ? `dólares, convertidos con la cotización del corte (${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'}) — no por transacción, a diferencia de la Hoja 1` : 'pesos ARS crudos'}. Para auditar U$S con precisión por transacción, usá el Excel de auditoría de cada actividad (Cría/Recría/Terminación).`],
       [],
       headers2,
     ];
@@ -12102,7 +12111,7 @@ async function exportarAuditoriaMargenBrutoExcel_() {
     filas2.push({ act:'Terminación', rubro:'Veterinaria', val:-rE.egVet });
     if (rE.egOtros>0) filas2.push({ act:'Terminación', rubro:'Otros insumos', val:-rE.egOtros });
     filas2.push({ act:'Terminación', rubro:'Sueldos', val:-rE.egSueldos });
-    filas2.forEach(f => aoa2.push([f.act, f.rubro, Math.round(f.val||0)]));
+    filas2.forEach(f => aoa2.push([f.act, f.rubro, Math.round(convertirAMoneda_(f.val||0, corte, monedaExport))]));
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
     ws2['!cols'] = [{wch:16},{wch:28},{wch:18}];
     ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
