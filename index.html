@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_60';
+const APP_VERSION = 'index_consolidado_4_6_155_62';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10494,8 +10494,9 @@ function buildMargenBruto() {
   const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
   h += `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
-  h += `<button class="no-print" onclick="S.margenBrutoMoneda=S.margenBrutoMoneda==='USD'?'ARS':'USD';render()"
-    style="margin-left:auto;padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
+  h += `<button class="no-print btn btn-secondary btn-sm" onclick="exportarAuditoriaMargenBrutoExcel_()" style="margin-left:auto" title="Descarga un Excel con el resumen consolidado (ARS y U$S) y el detalle por actividad, para auditar sin pasar de pantalla en pantalla">📊 Exportar a Excel</button>
+  <button class="no-print" onclick="S.margenBrutoMoneda=S.margenBrutoMoneda==='USD'?'ARS':'USD';render()"
+    style="padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--blue);color:#fff">
     💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
   </button></div>`;
 
@@ -10719,7 +10720,7 @@ function buildMargenBruto() {
       </div>
       <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px;background:${mb2};border:2px solid ${mc}">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:${mc};letter-spacing:.04em">Utilidad total</div>
-        <div style="font-size:22px;font-weight:800;color:${mc};margin-top:6px">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</div>
+        <div style="font-size:22px;font-weight:800;color:${mc};margin-top:6px">${marTotal>=0?'':'-'}${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))}</div>
       </div>
       <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.04em">Margen s/ ingresos</div>
@@ -11974,6 +11975,158 @@ async function exportarAuditoriaRecriaExcel_() {
     a.click();
     URL.revokeObjectURL(url);
     toast('✓ Excel de auditoría de Recría descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
+async function exportarAuditoriaMargenBrutoExcel_() {
+  toast('Generando Excel de Margen Bruto Ganadero... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    // Recalcular las tres actividades a la fecha de corte global, igual que hace
+    // buildMargenBruto() — se descarta el HTML que devuelven, solo interesa el
+    // efecto de dejar actualizados S._resultCria/_resultRecria/_resultEng.
+    buildDashboard();
+    buildRecriaDashboard();
+    buildEngordeDashboard_(rodeosEngordeValidos_(), p => egFmon_(p, S.engordeMoneda||'ARS'));
+    if (!S._resultCria || !S._resultRecria || !S._resultEng) {
+      toast('Faltan datos de alguna actividad — visitá Cría, Recría y Terminación primero', 'err');
+      return;
+    }
+    const corte = S._corteGlobal || today();
+    const tc = tipoCambioVigente_(corte);
+    const tcVal = tc ? Number(tc.valor || tc) : null;
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:B };
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+    const rC = S._resultCria, rR = S._resultRecria, rE = S._resultEng;
+
+    // ── HOJA 1: Resumen consolidado (ARS y U$S lado a lado) ──────────────
+    // U$S acá SIEMPRE es por transacción (cada movimiento a su propia cotización,
+    // no la del corte) — es el mismo criterio que ya usa cada Dashboard
+    // individual y esta misma pantalla de Margen Bruto.
+    const headers1 = ['Actividad','Ingresos (ARS)','Egresos (ARS)','Margen (ARS)','Ingresos (U$S)','Egresos (U$S)','Margen (U$S)'];
+    const filas1 = [
+      { n:'Cría', ing:rC.ing, eg:rC.eg, mar:rC.margen, ingU:rC.ingUSD, egU:rC.egUSD, marU:rC.margenUSD },
+      { n:'Recría', ing:rR.ing, eg:rR.eg, mar:rR.margen, ingU:rR.ingUSD, egU:rR.egUSD, marU:rR.margenUSD },
+      { n:'Terminación', ing:rE.ing, eg:rE.eg, mar:rE.margen, ingU:rE.ingUSD, egU:rE.egUSD, marU:rE.margenUSD },
+    ];
+    const aoa1 = [
+      [`Agroganadera Los Médanos — Margen Bruto Ganadero`],
+      ['Fecha de corte', fd(corte)],
+      ['Nota', `Los importes en U$S se calculan convirtiendo CADA MOVIMIENTO a la cotización de su propia fecha (no la del corte) — mismo criterio que cada Dashboard individual. Cotización del corte, de referencia: ${tcVal?fn(tcVal,2):'no disponible'}.`],
+      [],
+      headers1,
+    ];
+    filas1.forEach(f => aoa1.push([f.n, Math.round(f.ing), Math.round(f.eg), Math.round(f.mar), Math.round(f.ingU||0), Math.round(f.egU||0), Math.round(f.marU||0)]));
+    aoa1.push(['TOTAL',
+      Math.round(filas1.reduce((s,f)=>s+f.ing,0)), Math.round(filas1.reduce((s,f)=>s+f.eg,0)), Math.round(filas1.reduce((s,f)=>s+f.mar,0)),
+      Math.round(filas1.reduce((s,f)=>s+(f.ingU||0),0)), Math.round(filas1.reduce((s,f)=>s+(f.egU||0),0)), Math.round(filas1.reduce((s,f)=>s+(f.marU||0),0)),
+    ]);
+    const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+    ws1['!cols'] = [{wch:16},{wch:18},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15}];
+    ws1['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers1.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers1.length-1} }];
+    estilarFila_(ws1, 0, headers1.length, ST_TITULO);
+    estilarFila_(ws1, 4, headers1.length, ST_HEADER);
+    filas1.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers1.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws1[addr]) ws1[addr] = { t:'s', v:'' };
+        ws1[addr].s = (c===0) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    });
+    estilarFila_(ws1, 5+filas1.length, headers1.length, ST_TOTAL);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Resumen consolidado');
+
+    // ── HOJA 2: Detalle por actividad (ARS crudo — ver nota) ──────────────
+    const headers2 = ['Actividad','Rubro','Importe (ARS)'];
+    const aoa2 = [
+      [`Agroganadera Los Médanos — Detalle por actividad`],
+      ['Fecha de corte', fd(corte)],
+      ['Nota', 'Este detalle línea por línea todavía se calcula con la cotización del corte, no por transacción — para auditar U$S con precisión, usá el Excel de auditoría de cada actividad (Cría/Recría/Terminación) y la Hoja 1 de este archivo.'],
+      [],
+      headers2,
+    ];
+    const filas2 = [];
+    filas2.push({ act:'Cría', rubro:'Ventas de hacienda', val:rC.ingVentas });
+    filas2.push({ act:'Cría', rubro:'Cesiones a Recría/Engorde', val:rC.ingCesiones });
+    filas2.push({ act:'Cría', rubro:'Stock valorizado (EF)', val:rC.ef });
+    filas2.push({ act:'Cría', rubro:'Stock inicial (EI)', val:-rC.ei });
+    filas2.push({ act:'Cría', rubro:'Compras de hacienda', val:-rC.compras });
+    filas2.push({ act:'Cría', rubro:'Alimentación', val:-rC.egAlim });
+    filas2.push({ act:'Cría', rubro:'Veterinaria', val:-rC.egVet });
+    filas2.push({ act:'Cría', rubro:'Sueldos', val:-rC.egSueldos });
+    filas2.push({ act:'Recría', rubro:'Ventas directas', val:rR.ingVentas });
+    filas2.push({ act:'Recría', rubro:'Cesión a Terminación', val:rR.ingCesEng });
+    filas2.push({ act:'Recría', rubro:'Stock valorizado (EF)', val:rR.ef });
+    filas2.push({ act:'Recría', rubro:'Stock inicial (EI)', val:-rR.ei });
+    filas2.push({ act:'Recría', rubro:'Cesión recibida de Cría', val:-rR.egCesionCria });
+    if (rR.egCompraExt>0) filas2.push({ act:'Recría', rubro:'Compra externa', val:-rR.egCompraExt });
+    filas2.push({ act:'Recría', rubro:'Alimentación', val:-rR.egAlim });
+    filas2.push({ act:'Recría', rubro:'Veterinaria', val:-rR.egVet });
+    filas2.push({ act:'Recría', rubro:'Sueldos', val:-rR.egSueldos });
+    filas2.push({ act:'Terminación', rubro:'Ventas de hacienda', val:rE.ingVentas });
+    filas2.push({ act:'Terminación', rubro:'Stock valorizado (EF)', val:rE.ef });
+    filas2.push({ act:'Terminación', rubro:'Stock inicial (EI)', val:-rE.ei });
+    filas2.push({ act:'Terminación', rubro:'Cesión recibida de Recría', val:-rE.egCesiones });
+    filas2.push({ act:'Terminación', rubro:'Compra de hacienda', val:-rE.egCompras });
+    filas2.push({ act:'Terminación', rubro:'Alimentación', val:-rE.egAlim });
+    filas2.push({ act:'Terminación', rubro:'Veterinaria', val:-rE.egVet });
+    if (rE.egOtros>0) filas2.push({ act:'Terminación', rubro:'Otros insumos', val:-rE.egOtros });
+    filas2.push({ act:'Terminación', rubro:'Sueldos', val:-rE.egSueldos });
+    filas2.forEach(f => aoa2.push([f.act, f.rubro, Math.round(f.val||0)]));
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!cols'] = [{wch:16},{wch:28},{wch:18}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
+    estilarFila_(ws2, 0, headers2.length, ST_TITULO);
+    estilarFila_(ws2, 4, headers2.length, ST_HEADER);
+    filas2.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers2.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
+        ws2[addr].s = (c<=1) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws2, 'Detalle por actividad');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Margen_Bruto_Ganadero_${corte}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de Margen Bruto Ganadero descargado', 'ok');
   } catch(err) {
     console.error(err);
     toast('Error al generar el Excel: ' + err.message, 'err');
