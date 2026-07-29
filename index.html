@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_40';
+const APP_VERSION = 'index_consolidado_4_6_155_42';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -473,6 +473,17 @@ function esAltaPorParicion_(m) {
   if (!m || m.tipo !== 'Saldo inicial') return false;
   const obs = String(m.observaciones || '');
   return /\[pid:\d+\]/.test(obs) || /^Nacimiento\s*—\s*parici[oó]n/i.test(obs);
+}
+
+// Valida que un valor del campo "campaña" tenga forma real de campaña
+// ("2025/2026"), no un texto suelto cargado por error en ese campo (ej: una
+// nota que debería haber ido en "observación"). Los selectores de campaña
+// arman su lista juntando los valores ÚNICOS que aparecen en Ventas/Compras/
+// Consumos — sin este filtro, cualquier texto cargado ahí por error aparece
+// como si fuera una campaña más, ensuciando el desplegable para siempre hasta
+// que alguien lo note y corrija el registro de origen a mano.
+function esCampanaValida_(c) {
+  return /^\d{4}\/\d{4}$/.test(String(c||'').trim());
 }
 
 // Clasifica los Traslados que entran/salen de un conjunto de rodeos (una actividad)
@@ -1343,7 +1354,7 @@ function buildComprasHacienda() {
   const campanas = [...new Set([
     ...compras.map(c => c.campana),
     ...((S.cache.ventas||[]).map(v => v.campana))
-  ].filter(Boolean))].sort((a,b) => b.localeCompare(a));
+  ].filter(Boolean).filter(esCampanaValida_))].sort((a,b) => b.localeCompare(a));
   const categorias = [...new Set([
     ...compras.map(c => c.categoria).filter(Boolean),
     'Vaca','Toro','Torito','Ternero','Ternera','Vaquillona','Novillito','Novillo','Vaca venta'
@@ -1823,7 +1834,7 @@ function buildDashboard() {
     ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
     ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
     ...(S.cache.consumos_insumos||[]).map(c=>c.campana).filter(Boolean),
-  ])].sort((a,b)=>b.localeCompare(a));
+  ].filter(esCampanaValida_))].sort((a,b)=>b.localeCompare(a));
 
   const campSelec = S._dashCampana || campanas[0] || '';
   const campSelecField = S._dashCampo || '';
@@ -6659,7 +6670,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const campanas = [...new Set([
     ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
     ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
-  ])].sort((a,b)=>b.localeCompare(a));
+  ].filter(esCampanaValida_))].sort((a,b)=>b.localeCompare(a));
   const campSelec = S._dashEngCampana || campanas[0] || '';
   const campSelecField = S._dashEngCampo || '';
   const campos = (S.catalogs && S.catalogs.campos) || [];
@@ -7227,9 +7238,9 @@ function buildEngordeProductivoYCorreles_(rodeosEngFilt, fm, corte) {
 // Ingresos/Egresos, sin el desglose línea por línea de qué se compró/consumió).
 // Acá se agrega: filtro por producto (para ver, por ejemplo, solo "Maíz") y
 // encabezados clickeables para ordenar por cualquier columna.
-function buildDetalleInsumosFiltrable_(filas, titulo, fm, mostrarCorral) {
+function buildDetalleInsumosFiltrable_(filas, titulo, fm, mostrarCorral, idSuffix) {
   if (!filas.length) return '';
-  const idBase = titulo.replace(/[^a-zA-Z0-9]/g,'').toLowerCase();
+  const idBase = (titulo + '_' + (idSuffix||'')).replace(/[^a-zA-Z0-9]/g,'').toLowerCase();
   const productos = [...new Set(filas.map(f=>f.prod))].sort((a,b)=>a.localeCompare(b));
   const filtroKey = '_costosProdFiltro_' + idBase;
   const sortColKey = '_costosSortCol_' + idBase;
@@ -7494,8 +7505,8 @@ function buildEngordeCostos_(rodeoId, fm) {
       else detalleAlimC.push(row);
     });
     h += '<div class="section-label">Detalle de insumos consumidos</div>';
-    h += buildDetalleInsumosFiltrable_(detalleAlimC, '🌾 Alimentación — detalle', fm, true);
-    h += buildDetalleInsumosFiltrable_(detalleVetC,  '💉 Veterinaria — detalle', fm, true);
+    h += buildDetalleInsumosFiltrable_(detalleAlimC, '🌾 Alimentación — detalle', fm, true, 'todos-los-corrales');
+    h += buildDetalleInsumosFiltrable_(detalleVetC,  '💉 Veterinaria — detalle', fm, true, 'todos-los-corrales');
 
     return h;
   }
@@ -7677,8 +7688,8 @@ function buildEngordeCostos_(rodeoId, fm) {
   });
   if (detalleAlimIndiv.length || detalleVetIndiv.length) {
     h += '<div class="section-label" style="margin-top:16px">Detalle de insumos consumidos (línea por línea)</div>';
-    h += buildDetalleInsumosFiltrable_(detalleAlimIndiv, '🌾 Alimentación — detalle', fm, false);
-    h += buildDetalleInsumosFiltrable_(detalleVetIndiv, '💉 Veterinaria — detalle', fm, false);
+    h += buildDetalleInsumosFiltrable_(detalleAlimIndiv, `🌾 Alimentación — detalle (${r.nombre})`, fm, false, rodeoId);
+    h += buildDetalleInsumosFiltrable_(detalleVetIndiv, `💉 Veterinaria — detalle (${r.nombre})`, fm, false, rodeoId);
   }
 
   // ── Gestión de insumos activos/inactivos para proyección ──────────────────
@@ -8679,7 +8690,7 @@ function buildVentas() {
       <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe estimado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
       <div class="fg"><label>Campaña</label>
         <input type="text" id="ve-campana" placeholder="Ej: 2025/2026" list="ve-campana-list" value="${ultimaCampanaVentas_()}">
-        <datalist id="ve-campana-list">${[...new Set((S.cache.ventas||[]).map(v=>v.campana).filter(Boolean))].map(c=>`<option value="${c}">`).join('')}</datalist>
+        <datalist id="ve-campana-list">${[...new Set((S.cache.ventas||[]).map(v=>v.campana).filter(Boolean).filter(esCampanaValida_))].map(c=>`<option value="${c}">`).join('')}</datalist>
         <div style="font-size:11px;color:var(--text3);margin-top:3px">Precargada con la última campaña usada — cambiala solo si esta venta corresponde a otro ciclo.</div>
       </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
@@ -8890,7 +8901,7 @@ function buildInsumos() {
       </div>
       <div class="fg" id="in-campana-wrap" style="display:none;min-width:220px"><label>Campaña <span class="opt">(opcional — gasto para un servicio futuro)</span></label>
         <input type="text" id="in-campana" placeholder="Ej: Servicio 2026/2027" list="in-campana-list">
-        <datalist id="in-campana-list">${[...new Set((S.cache.consumos_insumos || []).map(c => c.campana).filter(Boolean))].map(c => `<option value="${c}">`).join('')}</datalist>
+        <datalist id="in-campana-list">${[...new Set((S.cache.consumos_insumos || []).map(c => c.campana).filter(Boolean).filter(esCampanaValida_))].map(c => `<option value="${c}">`).join('')}</datalist>
       </div>
       <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
     </div>
@@ -10961,12 +10972,18 @@ async function exportarAuditoriaCriaExcel_() {
     if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
     XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
 
-    // ── HOJA 2: Resumen económico por rodeo (ARS crudo + USD a cotización del corte) ──
-    const headers2 = ['Rodeo','Campo','Categoría','Stock inicial (ARS)','Compras (ARS)','Alimentación (ARS)','Ventas (ARS)','Stock valorizado (ARS)','Cotización usada','Ingresos−Egresos (U$S)'];
+    // ── HOJA 2: Resumen económico por rodeo (respeta el selector "Ver en ARS/U$S" de la pantalla) ──
+    // Antes esto exportaba siempre en ARS crudo sin mirar el selector de moneda
+    // de Cría (S.criaMoneda, distinto del de Terminación) — mismo bug que ya
+    // habíamos corregido en el Excel de Comparación de Terminación.
+    const monedaCria = S.criaMoneda || 'ARS';
+    const convCria = v => (monedaCria === 'USD' && tcVal) ? v / tcVal : v;
+    const monedaLabelCria = monedaCria === 'USD' ? 'U$S' : 'ARS';
+    const headers2 = ['Rodeo','Campo','Categoría', `Stock inicial (${monedaLabelCria})`, `Compras (${monedaLabelCria})`, `Alimentación (${monedaLabelCria})`, `Ventas (${monedaLabelCria})`, `Stock valorizado (${monedaLabelCria})`, 'Cotización usada', `Ingresos−Egresos (${monedaLabelCria})`];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría Cría (economía)`],
       ['Fecha de corte', fd(corte)],
-      ['Nota', 'Todos los importes ARS son crudos (sin convertir). La última columna usa la cotización del corte para que puedas verificar la conversión vos mismo.'],
+      ['Nota', `Importes en ${monedaLabelCria === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}, igual que la pantalla.`],
       [],
       headers2,
     ];
@@ -10991,7 +11008,7 @@ async function exportarAuditoriaCriaExcel_() {
     }).filter(f => f.stockIni||f.compras||f.alim||f.iv||f.ivStock);
     filas2.forEach(f => {
       const netoARS = (f.iv+f.ivStock) - (f.stockIni+f.compras+f.alim);
-      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(f.stockIni), Math.round(f.compras), Math.round(f.alim), Math.round(f.iv), Math.round(f.ivStock), tcVal||'—', tcVal?Math.round(netoARS/tcVal):'—']);
+      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(convCria(f.stockIni)), Math.round(convCria(f.compras)), Math.round(convCria(f.alim)), Math.round(convCria(f.iv)), Math.round(convCria(f.ivStock)), tcVal?fn(tcVal,2):'—', Math.round(convCria(netoARS))]);
     });
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
     ws2['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:15},{wch:13},{wch:14},{wch:12},{wch:16},{wch:12},{wch:16}];
@@ -11197,12 +11214,15 @@ async function exportarAuditoriaEngordeExcel_() {
     if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
     XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
 
-    // ── HOJA 2: Resumen económico por corral (ARS crudo + USD a cotización del corte) ──
-    const headers2 = ['Corral','Campo','Costo compra (ARS)','Cesión enviada (ARS)','Alimentación (ARS)','Ventas (ARS)','Stock valorizado (ARS)','Utilidad (ARS)','Cotización usada','Utilidad (U$S)'];
+    // ── HOJA 2: Resumen económico por corral (respeta el selector "Ver en ARS/U$S") ──
+    const monedaEngAudit = S.engordeMoneda || 'ARS';
+    const convEngAudit = v => (monedaEngAudit === 'USD' && tcVal) ? v / tcVal : v;
+    const monedaLabelEngAudit = monedaEngAudit === 'USD' ? 'U$S' : 'ARS';
+    const headers2 = ['Corral','Campo', `Costo compra (${monedaLabelEngAudit})`, `Cesión enviada (${monedaLabelEngAudit})`, `Alimentación (${monedaLabelEngAudit})`, `Ventas (${monedaLabelEngAudit})`, `Stock valorizado (${monedaLabelEngAudit})`, `Utilidad (${monedaLabelEngAudit})`, 'Cotización usada', `Utilidad (${monedaLabelEngAudit})`];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría Terminación (economía)`],
       ['Fecha de corte', fd(corte)],
-      ['Nota', 'Todos los importes ARS son crudos (sin convertir). La columna U$S usa la cotización del corte para que puedas verificar la conversión vos mismo.'],
+      ['Nota', `Importes en ${monedaLabelEngAudit === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}, igual que la pantalla.`],
       [],
       headers2,
     ];
@@ -11220,11 +11240,11 @@ async function exportarAuditoriaEngordeExcel_() {
       const util = (iv+ivStock+cesEnv) - (cc+ca);
       return { nombre:r.nombre, campo:campoNombre(r.campo_id), cc, cesEnv, ca, iv, ivStock, util };
     }).filter(f => f.cc||f.cesEnv||f.ca||f.iv||f.ivStock);
-    filas2.forEach(f => aoa2.push([f.nombre, f.campo, Math.round(f.cc), Math.round(f.cesEnv), Math.round(f.ca), Math.round(f.iv), Math.round(f.ivStock), Math.round(f.util), tcVal||'—', tcVal?Math.round(f.util/tcVal):'—']));
+    filas2.forEach(f => aoa2.push([f.nombre, f.campo, Math.round(convEngAudit(f.cc)), Math.round(convEngAudit(f.cesEnv)), Math.round(convEngAudit(f.ca)), Math.round(convEngAudit(f.iv)), Math.round(convEngAudit(f.ivStock)), Math.round(convEngAudit(f.util)), tcVal?fn(tcVal,2):'—', Math.round(convEngAudit(f.util))]));
     aoa2.push(['TOTAL','',
-      Math.round(filas2.reduce((s,f)=>s+f.cc,0)), Math.round(filas2.reduce((s,f)=>s+f.cesEnv,0)), Math.round(filas2.reduce((s,f)=>s+f.ca,0)),
-      Math.round(filas2.reduce((s,f)=>s+f.iv,0)), Math.round(filas2.reduce((s,f)=>s+f.ivStock,0)), Math.round(filas2.reduce((s,f)=>s+f.util,0)),
-      tcVal||'—', tcVal?Math.round(filas2.reduce((s,f)=>s+f.util,0)/tcVal):'—',
+      Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.cc,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.cesEnv,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.ca,0))),
+      Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.iv,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.ivStock,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.util,0))),
+      tcVal?fn(tcVal,2):'—', Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.util,0))),
     ]);
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
     ws2['!cols'] = [{wch:26},{wch:14},{wch:15},{wch:15},{wch:14},{wch:12},{wch:16},{wch:13},{wch:12},{wch:13}];
