@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_45';
+const APP_VERSION = 'index_consolidado_4_6_155_46';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2011,6 +2011,50 @@ function buildDashboard() {
   const stockValCria = convertirAMoneda_(stockValCriaARS, corteCria, _criaMoneda);
 
   const totalIngresos = totalVentas + totalCesiones + stockValCria;
+  // ── Totales SIEMPRE EN ARS, para S._resultCria (que lee Margen Bruto Ganadero) ──
+  // Los totales de arriba (totalVentas, totalCesiones, stockValCria...) ahora se
+  // convierten a la moneda que tenga elegida ESTE dashboard (S.criaMoneda) — pero
+  // Margen Bruto Ganadero suma S._resultCria.ing + S._resultRecria.ing + S._resultEng.ing
+  // como si fueran todos la misma moneda. Si cada dashboard tuviera una moneda
+  // distinta elegida (uno en U$S, otro en ARS), esa suma mezclaría dólares con
+  // pesos sin ningún aviso. Por eso acá se recalculan en ARS crudo, SIEMPRE,
+  // para que lo que se guarda en S._resultCria sea previsible sin importar qué
+  // esté mirando el usuario en pantalla en este momento.
+  const totalVentasARS = ventasCria.reduce((s,v) => s + (Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0), 0);
+  const totalCesionesARS = cesiones.reduce((s,m) => {
+    const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    if (precioKg && peso) return s + cant*peso*precioKg;
+    if (precioKg && !peso) {
+      const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return s + cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+    }
+    const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+    const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    return s + valorizarRodeo_(rodeo||{categoria:(rodeo?.categoria||'').toLowerCase()}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+  }, 0);
+  const totalIngresosARS = totalVentasARS + totalCesionesARS + stockValCriaARS;
+  const totalSaldoInicialARS = saldosIniciales.reduce((s,m) => s + valorMovimientoEntrada_(m).total, 0);
+  const nacImpCriaARS = altasParicionCria.reduce((s,m) => {
+    const rodeoDest = rodeosPorId[String(m.rodeo_destino_id)];
+    if (!rodeoDest) return s;
+    const pd = pesadas.filter(p=>String(p.rodeo_id)===String(rodeoDest.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    return s + valorizarRodeo_(rodeoDest, Number(m.cantidad)||0, pd[0]?Number(pd[0].peso_prom_kg)||0:0);
+  }, 0);
+  const totalComprasARS = comprasCria.reduce((s,c) => s+(Number(c.importe_total)||0), 0);
+  let totalAlimARS = 0, totalVeterARS = 0;
+  consumosCria.forEach(c => {
+    const prod = prodPorId[String(c.producto_id)];
+    const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const costoARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    if (cat.includes('veterin')||cat.includes('sanid')) totalVeterARS += costoARS; else totalAlimARS += costoARS;
+  });
+  const totalSueldosCriaARS = sueldoTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) <= corteCria.slice(0,7)
+  ); // sin moneda → siempre ARS
+  const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS;
+  const margenARS = totalIngresosARS - totalEgresosARS;
 
   // ── EGRESOS ─────────────────────────────────────────────────────────
   // 1. Stock inicial (saldos iniciales de rodeos Cría, filtrado por campo)
@@ -2119,13 +2163,15 @@ function buildDashboard() {
   const ventasCabCria = ventasCria.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
   const mortCabCria = mortandadCria.filter(m => rodeosCriaIds.has(String(m.rodeo_id))).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
-  // Guardar resultados para que Resultados Económicos los lea directamente
+  // Guardar resultados para que Resultados Económicos los lea directamente —
+  // SIEMPRE EN ARS (ver comentario en totalIngresosARS más arriba), no en la
+  // moneda que tenga elegida este dashboard en particular.
   S._resultCria = {
-    ing: totalIngresos, eg: totalEgresos, margen,
-    ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria,
-    ei: totalSaldoInicial, compras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria,
+    ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
+    ingVentas: totalVentasARS, ingCesiones: totalCesionesARS, ef: stockValCriaARS,
+    ei: totalSaldoInicialARS, compras: totalComprasARS, egAlim: totalAlimARS, egVet: totalVeterARS, egSueldos: totalSueldosCriaARS,
     cantVentas: ventasCria.length,
-    eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: nacImpCria,
+    eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: nacImpCriaARS,
     comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
     ventasCab: ventasCabCria, mortCab: mortCabCria,
   };
@@ -4379,6 +4425,57 @@ function buildRecriaDashboard() {
   const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
   const margen = totalIngresos - totalEgresos;
 
+  // ── Totales SIEMPRE EN ARS, para S._resultRecria (lee Margen Bruto Ganadero) ──
+  // Mismo motivo que en Cría: los de arriba se convierten a la moneda que tenga
+  // elegida ESTE dashboard (S.rcDashMoneda) — Margen Bruto necesita algo
+  // previsible sin importar qué esté mirando el usuario en este momento.
+  const ingVentasARS = ventas.reduce((s,v)=> s + (Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0), 0);
+  const ingCesionEngARS = egresos.filter(e=>e.destino==='Engorde').reduce((s,e)=>{
+    const cant=Number(e.cant_animales)||0; let peso=Number(e.peso_prom_kg)||0;
+    const precioKg=Number(e.precio_kg_cesion)||0;
+    if (precioKg&&peso) return s + cant*peso*precioKg;
+    const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+    if (precioKg) return s + cant*peso*precioKg;
+    const origen = rodeosTodos().find(r=>String(r.rodeo_id)===String(e.rodeo_id));
+    return s + valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
+  }, 0);
+  const totalIngresosARS = ingVentasARS + ingCesionEngARS + stockValRecriaARS;
+  const egCesionCriaARS = movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
+  }).reduce((s,m)=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    if (precioKg&&peso) return s + cant*peso*precioKg;
+    if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return s + cant*(pp[0]?Number(pp[0].peso_prom_kg)||0:0)*precioKg;
+    }
+    const or=rodeosAllMap[String(m.rodeo_origen_id)];
+    const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    return s + valorizarRodeo_(or||{},cant,pp[0]?Number(pp[0].peso_prom_kg)||0:0);
+  }, 0);
+  const egCompraExternaARS = movs.filter(m=>rodeosIdsFilt.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual')
+    .reduce((s,m)=>s+(Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), 0);
+  let egAlimARS = 0, egVetARS = 0;
+  consumos.forEach(c=>{
+    const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
+    const costoARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    if (prod&&prod.categoria==='Veterinaria') egVetARS += costoARS; else egAlimARS += costoARS;
+  });
+  const egSueldosARS = sueldoTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
+  ); // sin moneda → siempre ARS
+  const egEIARS = movs
+    .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
+    .reduce((s,m) => s+valorMovimientoEntrada_(m).total, 0);
+  const totalEgresosARS = egEIARS + egCesionCriaARS + egCompraExternaARS + egAlimARS + egVetARS + egSueldosARS;
+  const margenARS = totalIngresosARS - totalEgresosARS;
+
   // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
   // Misma lógica que en Cría: si hay un campo elegido, usa sus hectáreas; si
   // está en "todos los campos", suma las hectáreas de los campos que tienen
@@ -4407,11 +4504,12 @@ function buildRecriaDashboard() {
   const ventasCabRecria = ventas.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
   const mortCabRecria = mortandad.filter(m => todosRodeosRecriaIds.has(String(m.rodeo_id))).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
-  // Guardar resultados para Resultados Económicos
+  // Guardar resultados para Resultados Económicos — SIEMPRE EN ARS (ver
+  // comentario en totalIngresosARS más arriba).
   S._resultRecria = {
-    ing: totalIngresos, eg: totalEgresos, margen,
-    ingVentas, ingCesEng: ingCesionEng, ef: stockValRecria,
-    ei: egEI, egCesionCria, egCompraExt: egCompraExterna, egAlim, egVet, egSueldos,
+    ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
+    ingVentas: ingVentasARS, ingCesEng: ingCesionEngARS, ef: stockValRecriaARS,
+    ei: egEIARS, egCesionCria: egCesionCriaARS, egCompraExt: egCompraExternaARS, egAlim: egAlimARS, egVet: egVetARS, egSueldos: egSueldosARS,
     eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0, nacImp: 0,
     comprasCab: clasRec.compras, cesRecCab: clasRec.cesionesRecibidas, cesEnvCab: clasRec.cesionesEnviadas,
     ventasCab: ventasCabRecria, mortCab: mortCabRecria,
