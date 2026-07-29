@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_53';
+const APP_VERSION = 'index_consolidado_4_6_155_54';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -11795,55 +11795,99 @@ async function exportarAuditoriaEngordeExcel_() {
     if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
     XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
 
-    // ── HOJA 2: Resumen económico por corral (respeta el selector "Ver en ARS/U$S") ──
+    // ── HOJA 2: Resumen económico (mismo formato unificado que Cría y Recría —
+    // bloque RESUMEN CAMPAÑA arriba, con los mismos rubros que se ven en el
+    // Dashboard, y detalle por corral abajo). Antes esta hoja no tenía resumen
+    // (solo la tabla por corral), mezclaba en una sola columna "Costo compra"
+    // el costo externo (Recría/compra directa) con el interno (cesión de otro
+    // corral propio — la contracara de "Cesión enviada", que sí estaba), y no
+    // tenía Sueldos en ningún lado. Ahora, además, cada movimiento se convierte
+    // a la cotización DE SU PROPIA FECHA, no la del corte.
     const monedaEngAudit = S.engordeMoneda || 'ARS';
-    const convEngAudit = v => (monedaEngAudit === 'USD' && tcVal) ? v / tcVal : v;
     const monedaLabelEngAudit = monedaEngAudit === 'USD' ? 'U$S' : 'ARS';
-    const headers2 = ['Corral','Campo', `Costo compra (${monedaLabelEngAudit})`, `Cesión enviada (${monedaLabelEngAudit})`, `Alimentación (${monedaLabelEngAudit})`, `Ventas (${monedaLabelEngAudit})`, `Stock valorizado (${monedaLabelEngAudit})`, `Utilidad (${monedaLabelEngAudit})`, 'Cotización usada', `Utilidad (${monedaLabelEngAudit})`];
+
+    const resVentasEng = ventasTodas.reduce((s,v)=>{
+      const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0;
+      return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaEngAudit);
+    },0);
+    const resCesEnvEng = rodeosEng.reduce((s,r)=>s+egIngresoCesionEnviada_(r.rodeo_id, corte).total, 0);
+    let resStockValARS = 0;
+    rodeosEng.forEach(r=>{
+      const stk = Math.max(0, stockACorte[String(r.rodeo_id)]||0);
+      const pes = egPesadas_(r.rodeo_id).filter(p=>(p.fecha||'')<=corte);
+      const pesoUltima = pes.length ? Number(pes[pes.length-1].peso_prom_kg)||0 : 0;
+      resStockValARS += valorizarRodeo_(r, stk, pesoUltima);
+    });
+    const resStockValEng = convertirAMoneda_(resStockValARS, corte, monedaEngAudit);
+    const resIngresosEng = resVentasEng + resCesEnvEng + resStockValEng;
+
+    const resCostoExtEng = rodeosEng.reduce((s,r)=>s+egCostoCompraDesglose_(r.rodeo_id).externo, 0);
+    const resCostoIntEng = rodeosEng.reduce((s,r)=>s+egCostoCompraDesglose_(r.rodeo_id).interno, 0);
+    const resAlimEng = rodeosEng.reduce((s,r)=>s+(egCostoAlim_(r.rodeo_id, corte) - egCostoAlim_(r.rodeo_id, corte, 'Veterinaria')), 0);
+    const resVetEng = rodeosEng.reduce((s,r)=>s+egCostoAlim_(r.rodeo_id, corte, 'Veterinaria'), 0);
+    const resSueldosEng = sueldoTotalActividad_('engorde', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaEngAudit);
+    const resEgresosEng = resCostoExtEng + resCostoIntEng + resAlimEng + resVetEng + resSueldosEng;
+    const resMargenEng = resIngresosEng - resEgresosEng;
+
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría Terminación (economía)`],
       ['Fecha de corte', fd(corte)],
-      ['Nota', `Importes en ${monedaLabelEngAudit === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}, igual que la pantalla.`],
+      ['Nota', `Importes en ${monedaLabelEngAudit === 'U$S' ? 'dólares — cada movimiento convertido a la cotización DE SU PROPIA FECHA, no la del corte' : 'pesos ARS crudos'}. Esta hoja debe coincidir con el Dashboard. "Costo interno" y "Cesión interna enviada" son las dos caras de traslados entre corrales propios — se cancelan entre sí y no afectan el margen.`],
       [],
-      headers2,
+      ['RESUMEN CAMPAÑA', `(${monedaLabelEngAudit})`],
+      ['💰 Ventas de hacienda', Math.round(resVentasEng)],
+      ['🔄 Cesión interna enviada (a otro corral)', Math.round(resCesEnvEng)],
+      ['📦 Stock valorizado actual', Math.round(resStockValEng)],
+      ['TOTAL INGRESOS', Math.round(resIngresosEng)],
+      ['🐄 Costo entrada EXTERNO (Stock inicial + Recría)', Math.round(resCostoExtEng)],
+      ['🔄 Costo entrada INTERNO (de otro corral)', Math.round(resCostoIntEng)],
+      ['🌾 Alimentación', Math.round(resAlimEng)],
+      ['💉 Veterinaria', Math.round(resVetEng)],
+      ['👤 Sueldos Engorde', Math.round(resSueldosEng)],
+      ['TOTAL EGRESOS', Math.round(resEgresosEng)],
+      ['MARGEN', Math.round(resMargenEng)],
+      [],
     ];
+    const detalleLabelIdxEng = aoa2.length;
+    aoa2.push(['DETALLE POR CORRAL']);
+    const headers2 = ['Corral','Campo', `Costo entrada EXTERNO (${monedaLabelEngAudit})`, `Costo entrada INTERNO (${monedaLabelEngAudit})`, `Cesión enviada (${monedaLabelEngAudit})`, `Alimentación (${monedaLabelEngAudit})`, `Veterinaria (${monedaLabelEngAudit})`, `Ventas (${monedaLabelEngAudit})`, `Stock valorizado (${monedaLabelEngAudit})`];
+    aoa2.push(headers2);
+    const filaHeaderIdxEng = aoa2.length - 1;
     const filas2 = rodeosEng.map(r => {
       const rid = r.rodeo_id;
       const stk = Math.max(0, stockACorte[String(rid)]||0);
       const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corte);
       const ultima = pes.length ? pes[pes.length-1] : null;
       const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
-      // Se fuerza 'ARS' — este Excel convierte con su propio wrapper (convEngAudit)
-      // a la cotización del corte; todavía no migrado a conversión por transacción.
-      const cc = egCostoCompra_(rid, false, 'ARS');
-      const cesEnv = egIngresoCesionEnviada_(rid, corte, 'ARS').total;
-      const ca = egCostoAlim_(rid, corte, null, 'ARS');
-      const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
-      const ivStock = valorizarRodeo_(r, stk, pesoUltima);
-      const util = (iv+ivStock+cesEnv) - (cc+ca);
-      return { nombre:r.nombre, campo:campoNombre(r.campo_id), cc, cesEnv, ca, iv, ivStock, util };
-    }).filter(f => f.cc||f.cesEnv||f.ca||f.iv||f.ivStock);
-    filas2.forEach(f => aoa2.push([f.nombre, f.campo, Math.round(convEngAudit(f.cc)), Math.round(convEngAudit(f.cesEnv)), Math.round(convEngAudit(f.ca)), Math.round(convEngAudit(f.iv)), Math.round(convEngAudit(f.ivStock)), Math.round(convEngAudit(f.util)), tcVal?fn(tcVal,2):'—', Math.round(convEngAudit(f.util))]));
-    aoa2.push(['TOTAL','',
-      Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.cc,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.cesEnv,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.ca,0))),
-      Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.iv,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.ivStock,0))), Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.util,0))),
-      tcVal?fn(tcVal,2):'—', Math.round(convEngAudit(filas2.reduce((s,f)=>s+f.util,0))),
-    ]);
+      const ccDesg = egCostoCompraDesglose_(rid);
+      const cesEnv = egIngresoCesionEnviada_(rid, corte).total;
+      const ca = egCostoAlim_(rid, corte) - egCostoAlim_(rid, corte, 'Veterinaria');
+      const cv = egCostoAlim_(rid, corte, 'Veterinaria');
+      const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>{
+        const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0;
+        return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaEngAudit);
+      },0);
+      const ivStock = convertirAMoneda_(valorizarRodeo_(r, stk, pesoUltima), corte, monedaEngAudit);
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), ccExt: ccDesg.externo, ccInt: ccDesg.interno, cesEnv, ca, cv, iv, ivStock };
+    }).filter(f => f.ccExt||f.ccInt||f.cesEnv||f.ca||f.cv||f.iv||f.ivStock);
+    filas2.forEach(f => {
+      aoa2.push([f.nombre, f.campo, Math.round(f.ccExt), Math.round(f.ccInt), Math.round(f.cesEnv), Math.round(f.ca), Math.round(f.cv), Math.round(f.iv), Math.round(f.ivStock)]);
+    });
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:26},{wch:14},{wch:15},{wch:15},{wch:14},{wch:12},{wch:16},{wch:13},{wch:12},{wch:13}];
-    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
+    ws2['!cols'] = [{wch:26},{wch:14},{wch:16},{wch:16},{wch:14},{wch:14},{wch:12},{wch:12},{wch:16}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }, { s:{r:detalleLabelIdxEng,c:0}, e:{r:detalleLabelIdxEng,c:headers2.length-1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
-    estilarFila_(ws2, 4, headers2.length, ST_HEADER);
+    estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
+    for (let i=5;i<=15;i++) estilarFila_(ws2, i, 2, ST_ROW);
+    estilarFila_(ws2, filaHeaderIdxEng, headers2.length, ST_HEADER);
     filas2.forEach((f,i) => {
-      const r0 = 5+i, alt = i%2===1;
+      const r0 = filaHeaderIdxEng+1+i, alt = i%2===1;
       for (let c=0;c<headers2.length;c++) {
         const addr = XLSX.utils.encode_cell({r:r0,c});
         if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
         ws2[addr].s = (c<=1) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
       }
     });
-    estilarFila_(ws2, 5+filas2.length, headers2.length, ST_TOTAL);
-    if (ws2[XLSX.utils.encode_cell({r:5+filas2.length,c:0})]) ws2[XLSX.utils.encode_cell({r:5+filas2.length,c:0})].s = ST_TOTALLBL;
     XLSX.utils.book_append_sheet(wb, ws2, 'Resumen económico');
 
     // ── HOJA 3: Movimientos crudos (Traslados y Saldos iniciales) de Terminación ──
