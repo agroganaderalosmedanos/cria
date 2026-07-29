@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_57';
+const APP_VERSION = 'index_consolidado_4_6_155_58';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -888,6 +888,18 @@ async function goto(page) {
     if (!S.cache.sueldos)            { try { await loadEntity('sueldos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.mortandad)          { try { await loadEntity('mortandad'); } catch (err) { /* silencioso */ } }
     if (!S.cache.pesadas)            { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
+    // OJO — bug corregido acá: a esta pantalla le faltaban tres entidades que
+    // SÍ carga cada Dashboard individual (Cría en particular) antes de calcular
+    // sus totales — compras_hacienda (sin esto, "Compras de hacienda" da $0),
+    // productos (sin esto, egPrecioVigenteProducto_ no encuentra precio y
+    // "Alimentación" también da $0) y rodeo_productos. Si el usuario entraba
+    // directo a Margen Bruto sin haber visitado antes cada Dashboard individual
+    // en esa misma sesión (con esos caches ya tibios de esa visita), el cálculo
+    // "silencioso" que hace esta pantalla corría con datos incompletos —
+    // subestimando Egresos de las tres actividades por igual.
+    if (!S.cache.compras_hacienda)   { try { await loadEntity('compras_hacienda'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.productos)          { try { await loadEntity('productos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.rodeo_productos)    { try { await loadEntity('rodeo_productos'); } catch (err) { /* silencioso */ } }
     if (!S.stock)                    { try { await loadStock(); } catch (err) { /* silencioso */ } }
     if (!S.dashboard)                { try { await loadDashboard(); } catch (err) { /* silencioso */ } }
     if (S.corralesTipoCambio === undefined) {
