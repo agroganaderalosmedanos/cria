@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_59';
+const APP_VERSION = 'index_consolidado_4_6_155_60';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10602,9 +10602,9 @@ function buildMargenBruto() {
 
   if (tabMB === 'reporte') {
     const acts = [
-      { nombre: 'Cría',        ing: rCria.ing, eg: rCria.eg, margen: rCria.margen, color: 'var(--green)', colorHex: getComputedStyle(document.documentElement).getPropertyValue('--green').trim()||'#2f6b3f', emoji: '🐄' },
-      { nombre: 'Recría',      ing: rRec.ing,  eg: rRec.eg,  margen: rRec.margen,  color: 'var(--gold)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--gold').trim()||'#b8860b', emoji: '🌱' },
-      { nombre: 'Terminación', ing: rEng.ing,  eg: rEng.eg,  margen: rEng.margen,  color: 'var(--clay)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--clay').trim()||'#a8512f', emoji: '🏭' },
+      { nombre: 'Cría',        ing: rCria.ing, eg: rCria.eg, margen: rCria.margen, ingUSD: rCria.ingUSD, egUSD: rCria.egUSD, margenUSD: rCria.margenUSD, color: 'var(--green)', colorHex: getComputedStyle(document.documentElement).getPropertyValue('--green').trim()||'#2f6b3f', emoji: '🐄' },
+      { nombre: 'Recría',      ing: rRec.ing,  eg: rRec.eg,  margen: rRec.margen,  ingUSD: rRec.ingUSD, egUSD: rRec.egUSD, margenUSD: rRec.margenUSD, color: 'var(--gold)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--gold').trim()||'#b8860b', emoji: '🌱' },
+      { nombre: 'Terminación', ing: rEng.ing,  eg: rEng.eg,  margen: rEng.margen,  ingUSD: rEng.ingUSD, egUSD: rEng.egUSD, margenUSD: rEng.margenUSD, color: 'var(--clay)',  colorHex: getComputedStyle(document.documentElement).getPropertyValue('--clay').trim()||'#a8512f', emoji: '🏭' },
     ];
     const margenPct = ingTotal>0 ? (marTotal/ingTotal*100) : 0;
     const uidCh = 'ch'+Math.random().toString(36).slice(2,8);
@@ -10636,7 +10636,7 @@ function buildMargenBruto() {
       const y = a.margen>=0 ? baseY-h : baseY;
       const fillUrl = a.margen>=0 ? `url(#gradBar${uidCh}${i})` : `url(#gradBarNeg${uidCh})`;
       barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="6" fill="${fillUrl}" stroke="${a.margen>=0?a.colorHex:'#8c1d17'}" stroke-width="1"/>`;
-      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-11:y+h+24}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</text>`;
+      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-11:y+h+24}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMBTotal(Math.abs(a.margen),Math.abs(a.margenUSD))}</text>`;
       barsSvg += `<text x="${x+barW/2}" y="${baseY+26}" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text2)">${a.emoji} ${a.nombre}</text>`;
     });
     barsSvg += `</svg>`;
@@ -10766,9 +10766,9 @@ function buildMargenBruto() {
           const colorA = a.margen>=0?'var(--green-text)':'var(--red-text)';
           return `<tr>
             <td style="font-weight:600">${a.emoji} ${a.nombre}</td>
-            <td class="tc">${fmMB(a.ing)}</td>
-            <td class="tc">${fmMB(a.eg)}</td>
-            <td class="tc" style="font-weight:700;color:${colorA}">${a.margen>=0?'':'-'}${fmMB(Math.abs(a.margen))}</td>
+            <td class="tc">${fmMBTotal(a.ing,a.ingUSD)}</td>
+            <td class="tc">${fmMBTotal(a.eg,a.egUSD)}</td>
+            <td class="tc" style="font-weight:700;color:${colorA}">${a.margen>=0?'':'-'}${fmMBTotal(Math.abs(a.margen),Math.abs(a.margenUSD))}</td>
             <td class="tc" style="color:${colorA}">${pctA.toFixed(1)}%</td>
           </tr>`;
         }).join('')}
@@ -10776,7 +10776,7 @@ function buildMargenBruto() {
           <td>Total consolidado</td>
           <td class="tc">${fmMBTotal(ingTotal,ingTotalUSD)}</td>
           <td class="tc">${fmMBTotal(egTotal,egTotalUSD)}</td>
-          <td class="tc" style="color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</td>
+          <td class="tc" style="color:${mc}">${marTotal>=0?'':'-'}${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))}</td>
           <td class="tc" style="color:${mc}">${margenPct.toFixed(1)}%</td>
         </tr>
       </tbody></table>
@@ -11004,7 +11004,7 @@ function buildMargenBruto() {
 
     const bulletsAnalisis = [
       `Al ${fd(corteGlobal)}, el resultado consolidado de Agroganadera Los Médanos arroja una utilidad ${marTotal>=0?'':'negativa '}de ${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))} sobre ingresos totales de ${fmMBTotal(ingTotal,ingTotalUSD)}, equivalente a un margen del ${margenPct.toFixed(1)}% sobre ingresos.`,
-      `${mejorAct.emoji} ${mejorAct.nombre} fue la actividad más rentable del período con ${fmMB(mejorAct.margen)}${peorAct.margen<0?`, mientras que ${peorAct.emoji} ${peorAct.nombre} cerró con un resultado negativo de ${fmMB(Math.abs(peorAct.margen))}`:''}.`,
+      `${mejorAct.emoji} ${mejorAct.nombre} fue la actividad más rentable del período con ${fmMBTotal(mejorAct.margen,mejorAct.margenUSD)}${peorAct.margen<0?`, mientras que ${peorAct.emoji} ${peorAct.nombre} cerró con un resultado negativo de ${fmMBTotal(Math.abs(peorAct.margen),Math.abs(peorAct.margenUSD))}`:''}.`,
       `En cuanto a la hacienda, ${tendenciaTxt}, con ${fn(pariVivosTot)} nacimientos vivos registrados en el período${pariMuertosTot>0?` (y ${fn(pariMuertosTot)} nacidos muertos)`:''}.`,
       sanidadTxt,
     ];
@@ -11097,7 +11097,7 @@ function buildMargenBruto() {
           <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${mc}">Margen bruto ganadero total</div>
           <div style="font-size:12px;color:${mc};margin-top:2px">Al ${fd(corteGlobal)}</div>
         </div>
-        <div style="font-size:36px;font-weight:800;color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</div>
+        <div style="font-size:36px;font-weight:800;color:${mc}">${marTotal>=0?'':'-'}${fmMBTotal(marTotal,marTotalUSD)}</div>
       </div>
     </div>`;
 
@@ -11105,10 +11105,10 @@ function buildMargenBruto() {
     h += `<div class="panel" style="padding:14px 16px">
       <div class="panel-title" style="font-size:12px">🔍 Verificación — suma de los 3 márgenes individuales</div>
       <div class="tw"><table class="dt"><tbody>
-        <tr><td>🐄 Cría</td><td class="tr" style="color:${rCria.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rCria.margen>=0?'':'-'}${fmMB(Math.abs(rCria.margen))}</td></tr>
-        <tr><td>🌱 Recría</td><td class="tr" style="color:${rRec.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rRec.margen>=0?'':'-'}${fmMB(Math.abs(rRec.margen))}</td></tr>
-        <tr><td>🏭 Terminación</td><td class="tr" style="color:${rEng.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rEng.margen>=0?'':'-'}${fmMB(Math.abs(rEng.margen))}</td></tr>
-        <tr style="background:${mb2}"><td><strong>Suma de los 3</strong></td><td class="tr" style="color:${mc};font-weight:800">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</td></tr>
+        <tr><td>🐄 Cría</td><td class="tr" style="color:${rCria.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rCria.margen>=0?'':'-'}${fmMBTotal(Math.abs(rCria.margen),Math.abs(rCria.margenUSD))}</td></tr>
+        <tr><td>🌱 Recría</td><td class="tr" style="color:${rRec.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rRec.margen>=0?'':'-'}${fmMBTotal(Math.abs(rRec.margen),Math.abs(rRec.margenUSD))}</td></tr>
+        <tr><td>🏭 Terminación</td><td class="tr" style="color:${rEng.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rEng.margen>=0?'':'-'}${fmMBTotal(Math.abs(rEng.margen),Math.abs(rEng.margenUSD))}</td></tr>
+        <tr style="background:${mb2}"><td><strong>Suma de los 3</strong></td><td class="tr" style="color:${mc};font-weight:800">${marTotal>=0?'':'-'}${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))}</td></tr>
       </tbody></table></div>
     </div>`;
 
@@ -11118,9 +11118,9 @@ function buildMargenBruto() {
 
     // Ranking
     const acts = [
-      { n:'🐄 Cría', ing:rCria.ing, eg:rCria.eg, mar:rCria.margen },
-      { n:'🌱 Recría', ing:rRec.ing, eg:rRec.eg, mar:rRec.margen },
-      { n:'🏭 Terminación', ing:rEng.ing, eg:rEng.eg, mar:rEng.margen },
+      { n:'🐄 Cría', ing:rCria.ing, eg:rCria.eg, mar:rCria.margen, ingUSD:rCria.ingUSD, egUSD:rCria.egUSD, marUSD:rCria.margenUSD },
+      { n:'🌱 Recría', ing:rRec.ing, eg:rRec.eg, mar:rRec.margen, ingUSD:rRec.ingUSD, egUSD:rRec.egUSD, marUSD:rRec.margenUSD },
+      { n:'🏭 Terminación', ing:rEng.ing, eg:rEng.eg, mar:rEng.margen, ingUSD:rEng.ingUSD, egUSD:rEng.egUSD, marUSD:rEng.margenUSD },
     ].sort((a,b)=>b.mar-a.mar);
 
     h += `<div class="panel"><div class="panel-title">📊 Resultado por actividad</div>
@@ -11131,8 +11131,8 @@ function buildMargenBruto() {
       const pct = marTotal!==0?(a.mar/Math.abs(marTotal)*100).toFixed(1):'—';
       const cm  = a.mar>=0?'var(--green)':'var(--red)';
       h += `<tr><td><strong>${['🥇','🥈','🥉'][i]||''} ${a.n}</strong></td>
-        <td class="tc">${fmMB(a.ing)}</td><td class="tc">${fmMB(a.eg)}</td>
-        <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMB(Math.abs(a.mar))}</td>
+        <td class="tc">${fmMBTotal(a.ing,a.ingUSD)}</td><td class="tc">${fmMBTotal(a.eg,a.egUSD)}</td>
+        <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMBTotal(Math.abs(a.mar),Math.abs(a.marUSD))}</td>
         <td class="tc"><span class="pill ${a.mar>=0?'pill-green':'pill-red'}">${pct}%</span></td>
       </tr>`;
     });
@@ -11192,9 +11192,9 @@ function buildMargenBruto() {
     }
 
     const rents = [
-      { n:'🐄 Cría', mar:rCria.margen, eg:rCria.eg, stock:Object.values(stockPorAct('Cría')).reduce((s,v)=>s+v,0) },
-      { n:'🌱 Recría', mar:rRec.margen, eg:rRec.eg, stock:Object.values(stockPorAct('Recría')).reduce((s,v)=>s+v,0) },
-      { n:'🏭 Terminación', mar:rEng.margen, eg:rEng.eg, stock:Object.values(stockPorAct('Engorde')).reduce((s,v)=>s+v,0) },
+      { n:'🐄 Cría', mar:rCria.margen, marUSD:rCria.margenUSD, eg:rCria.eg, stock:Object.values(stockPorAct('Cría')).reduce((s,v)=>s+v,0) },
+      { n:'🌱 Recría', mar:rRec.margen, marUSD:rRec.margenUSD, eg:rRec.eg, stock:Object.values(stockPorAct('Recría')).reduce((s,v)=>s+v,0) },
+      { n:'🏭 Terminación', mar:rEng.margen, marUSD:rEng.margenUSD, eg:rEng.eg, stock:Object.values(stockPorAct('Engorde')).reduce((s,v)=>s+v,0) },
     ].sort((a,b)=>b.mar-a.mar);
 
     h += `<div class="panel"><div class="panel-title">🏆 Ranking de rentabilidad</div>
@@ -11202,18 +11202,18 @@ function buildMargenBruto() {
         <th>#</th><th>Actividad</th><th class="tc">Margen total</th><th class="tc">Margen/cabeza</th><th class="tc">ROI</th>
       </tr></thead><tbody>`;
     rents.forEach((a,i)=>{
-      const marCab=a.stock>0?a.mar/a.stock:null, roi=a.eg>0?(a.mar/a.eg*100):null, cm=a.mar>=0?'var(--green)':'var(--red)';
+      const marCab=a.stock>0?a.mar/a.stock:null, marCabUSD=a.stock>0?(a.marUSD||0)/a.stock:null, roi=a.eg>0?(a.mar/a.eg*100):null, cm=a.mar>=0?'var(--green)':'var(--red)';
       h+=`<tr><td style="font-size:20px">${['🥇','🥈','🥉'][i]}</td><td><strong>${a.n}</strong></td>
-        <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMB(Math.abs(a.mar))}</td>
-        <td class="tc">${marCab!==null?`<span style="color:${cm};font-weight:600">${a.mar>=0?'':'-'}${fmMB(Math.abs(marCab))}/cab</span>`:'—'}</td>
+        <td class="tc" style="color:${cm};font-weight:700">${a.mar>=0?'':'-'}${fmMBTotal(Math.abs(a.mar),Math.abs(a.marUSD))}</td>
+        <td class="tc">${marCab!==null?`<span style="color:${cm};font-weight:600">${a.mar>=0?'':'-'}${fmMBTotal(Math.abs(marCab),Math.abs(marCabUSD))}/cab</span>`:'—'}</td>
         <td class="tc">${roi!==null?`<span class="pill ${roi>=0?'pill-green':'pill-red'}">${roi.toFixed(1)}%</span>`:'—'}</td></tr>`;
     });
     const mejor=rents[0], peor=rents[rents.length-1];
     h+=`</tbody></table><div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:13px;line-height:1.7">
       <strong>Análisis:</strong>
       <ul style="margin:6px 0 0 0;padding-left:20px">
-        <li>La actividad más rentable fue <strong>${mejor.n}</strong> con ${fmMB(mejor.mar)}.</li>
-        <li>${peor.mar<0?`<strong>${peor.n}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.`:'Las tres actividades tuvieron resultado positivo.'}</li>
+        <li>La actividad más rentable fue <strong>${mejor.n}</strong> con ${fmMBTotal(mejor.mar,mejor.marUSD)}.</li>
+        <li>${peor.mar<0?`<strong>${peor.n}</strong> tuvo resultado negativo de ${fmMBTotal(Math.abs(peor.mar),Math.abs(peor.marUSD))}.`:'Las tres actividades tuvieron resultado positivo.'}</li>
         <li>${marTotal>=0?`Margen ganadero total positivo: <strong>${fmMBTotal(marTotal,marTotalUSD)}</strong>.`:`Margen ganadero total negativo: <strong>-${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))}</strong>.`}</li>
       </ul>
     </div></div>`;
