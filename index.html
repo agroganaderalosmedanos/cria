@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_54';
+const APP_VERSION = 'index_consolidado_4_6_155_56';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2164,11 +2164,64 @@ function buildDashboard() {
   const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
+  // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN (no con la cotización
+  // del corte) — para que Margen Bruto Ganadero pueda sumar directamente estos
+  // valores en modo U$S, en vez de convertir el TOTAL en pesos con una sola
+  // cotización. Esas dos cuentas dan distinto si la cotización se movió durante
+  // la campaña: convertir cada movimiento a su propia fecha y sumar NO es lo
+  // mismo que sumar todo en pesos y convertir el total al final con la
+  // cotización de hoy. Por eso el Dashboard de cada actividad (que sí convierte
+  // por transacción) no coincidía en dólares con Margen Bruto Ganadero (que
+  // convertía el agregado en pesos con una sola cotización), aunque en pesos
+  // cerraban perfecto.
+  const totalVentasUSD = ventasCria.reduce((s,v) => {
+    const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+    return s + convertirAMoneda_(importeARS, v.fecha_salida, 'USD');
+  }, 0);
+  const totalCesionesUSD = cesiones.reduce((s,m) => {
+    const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    let importeARS;
+    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    else if (precioKg && !peso) {
+      const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+    } else {
+      const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+      const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = valorizarRodeo_(rodeo||{categoria:(rodeo?.categoria||'').toLowerCase()}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, 'USD');
+  }, 0);
+  // "Stock valorizado" es un ítem de BALANCE — se convierte una sola vez, a la
+  // cotización del corte (igual que en el Dashboard), no por transacción.
+  const stockValCriaUSD = convertirAMoneda_(stockValCriaARS, corteCria, 'USD');
+  const totalIngresosUSD = totalVentasUSD + totalCesionesUSD + stockValCriaUSD;
+  const totalSaldoInicialUSD = saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
+  const totalComprasUSD = comprasCria.reduce((s,c) => s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, 'USD'), 0);
+  let totalAlimUSD = 0, totalVeterUSD = 0;
+  consumosCria.forEach(c => {
+    const prod = prodPorId[String(c.producto_id)];
+    const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const costoARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const costoUSD = convertirAMoneda_(costoARS, c.fecha, 'USD');
+    if (cat.includes('veterin')||cat.includes('sanid')) totalVeterUSD += costoUSD; else totalAlimUSD += costoUSD;
+  });
+  const totalSueldosCriaUSD = sueldoTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) <= corteCria.slice(0,7)
+  , 'USD');
+  const totalEgresosUSD = totalSaldoInicialUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalSueldosCriaUSD;
+  const margenUSD = totalIngresosUSD - totalEgresosUSD;
+
   // Guardar resultados para que Resultados Económicos los lea directamente —
   // SIEMPRE EN ARS (ver comentario en totalIngresosARS más arriba), no en la
-  // moneda que tenga elegida este dashboard en particular.
+  // moneda que tenga elegida este dashboard en particular. ingUSD/egUSD/
+  // margenUSD quedan aparte, ya convertidos por transacción, para que Margen
+  // Bruto Ganadero los use directo en modo U$S sin volver a convertir.
   S._resultCria = {
     ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
+    ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: totalVentasARS, ingCesiones: totalCesionesARS, ef: stockValCriaARS,
     ei: totalSaldoInicialARS, compras: totalComprasARS, egAlim: totalAlimARS, egVet: totalVeterARS, egSueldos: totalSueldosCriaARS,
     cantVentas: ventasCria.length,
@@ -4498,6 +4551,72 @@ function buildRecriaDashboard() {
   const totalEgresosARS = egEIARS + egCesionCriaARS + egCompraExternaARS + egAlimARS + egVetARS + egSueldosARS;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
+  // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN — mismo motivo que
+  // en Cría (ver comentario ahí): para que Margen Bruto Ganadero sume estos
+  // valores directo en modo U$S, en vez de convertir el agregado en pesos con
+  // una sola cotización (lo cual no da lo mismo que convertir cada movimiento
+  // a su propia fecha, si la cotización se movió durante la campaña).
+  const ingVentasUSD = ventas.reduce((s,v)=>{
+    const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+    return s + convertirAMoneda_(importeARS, v.fecha_salida, 'USD');
+  }, 0);
+  const ingCesionEngUSD = egresos.filter(e=>e.destino==='Engorde').reduce((s,e)=>{
+    const cant=Number(e.cant_animales)||0; let peso=Number(e.peso_prom_kg)||0;
+    const precioKg=Number(e.precio_kg_cesion)||0;
+    let importeARS;
+    if (precioKg&&peso) importeARS = cant*peso*precioKg;
+    else {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      if (precioKg) importeARS = cant*peso*precioKg;
+      else {
+        const origen = rodeosTodos().find(r=>String(r.rodeo_id)===String(e.rodeo_id));
+        importeARS = valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
+      }
+    }
+    return s + convertirAMoneda_(importeARS, e.fecha, 'USD');
+  }, 0);
+  const stockValRecriaUSD = convertirAMoneda_(stockValRecriaARS, corteRecria, 'USD');
+  const totalIngresosUSD = ingVentasUSD + ingCesionEngUSD + stockValRecriaUSD;
+  const egCesionCriaUSD = movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
+  }).reduce((s,m)=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    let importeARS;
+    if (precioKg&&peso) importeARS = cant*peso*precioKg;
+    else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = cant*(pp[0]?Number(pp[0].peso_prom_kg)||0:0)*precioKg;
+    } else {
+      const or=rodeosAllMap[String(m.rodeo_origen_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = valorizarRodeo_(or||{},cant,pp[0]?Number(pp[0].peso_prom_kg)||0:0);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, 'USD');
+  }, 0);
+  const egCompraExternaUSD = movs.filter(m=>rodeosIdsFilt.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual')
+    .reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, 'USD'), 0);
+  let egAlimUSD = 0, egVetUSD = 0;
+  consumos.forEach(c=>{
+    const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
+    const costoARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const costoUSD = convertirAMoneda_(costoARS, c.fecha, 'USD');
+    if (prod&&prod.categoria==='Veterinaria') egVetUSD += costoUSD; else egAlimUSD += costoUSD;
+  });
+  const egSueldosUSD = sueldoTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
+  , 'USD');
+  const egEIUSD = movs
+    .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
+    .reduce((s,m) => s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
+  const totalEgresosUSD = egEIUSD + egCesionCriaUSD + egCompraExternaUSD + egAlimUSD + egVetUSD + egSueldosUSD;
+  const margenUSD = totalIngresosUSD - totalEgresosUSD;
+
   // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
   // Misma lógica que en Cría: si hay un campo elegido, usa sus hectáreas; si
   // está en "todos los campos", suma las hectáreas de los campos que tienen
@@ -4530,6 +4649,7 @@ function buildRecriaDashboard() {
   // comentario en totalIngresosARS más arriba).
   S._resultRecria = {
     ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
+    ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: ingVentasARS, ingCesEng: ingCesionEngARS, ef: stockValRecriaARS,
     ei: egEIARS, egCesionCria: egCesionCriaARS, egCompraExt: egCompraExternaARS, egAlim: egAlimARS, egVet: egVetARS, egSueldos: egSueldosARS,
     eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0, nacImp: 0,
@@ -7039,6 +7159,67 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
   const margen = totalIngresos - totalEgresos;
 
+  // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN — mismo motivo que
+  // en Cría y Recría (ver comentario en el S._resultCria de Cría): para que
+  // Margen Bruto Ganadero sume estos valores directo en modo U$S, en vez de
+  // convertir el agregado en pesos con una sola cotización. El Dashboard de
+  // Terminación en sí sigue mostrando todo con la cotización del corte (no se
+  // migró la pantalla), pero Margen Bruto necesita esta versión más precisa.
+  const totalVentasUSD = ventasEng.reduce((s,v)=>{
+    const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+    return s + convertirAMoneda_(importeARS, v.fecha_salida, 'USD');
+  },0);
+  // "Stock valorizado" es un ítem de BALANCE — se convierte una sola vez a la
+  // cotización del corte, igual que el resto de las actividades.
+  const stockValEngUSD = convertirAMoneda_(stockDetalleRows.reduce((s,r)=>s+r.val,0), corteEng, 'USD');
+  const totalCesionInternaUSD = cesionesInternas.reduce((s,m)=>{
+    const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+    const cant = Number(m.cantidad)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const peso = Number(m.peso_prom_kg)||0;
+    let importeARS;
+    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    else {
+      const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesadasO[0]?Number(pesadasO[0].peso_prom_kg)||0:0);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, 'USD');
+  },0);
+  const totalIngresosUSD = totalVentasUSD + stockValEngUSD + totalCesionInternaUSD;
+  const totalSaldoIniUSD = saldosIni.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'),0);
+  const totalCesionesUSD = cesionesRec.reduce((s,e)=>{
+    return s + convertirAMoneda_((Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0), e.fecha, 'USD');
+  },0) + cesionesRecTrasla.reduce((s,m)=>{
+    const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+    const cant = Number(m.cantidad)||0;
+    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const peso = Number(m.peso_prom_kg)||0;
+    let importeARS;
+    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    else {
+      const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesadasO[0]?Number(pesadasO[0].peso_prom_kg)||0:0);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, 'USD');
+  },0);
+  const totalComprasUSD = comprasEng.reduce((s,c)=>s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, 'USD'),0);
+  let totalAlimUSD=0, totalVeterUSD=0, totalOtrosUSD=0;
+  consumos.forEach(c => {
+    const pid = String(c.producto_id);
+    const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
+    const importeUSD = convertirAMoneda_(importeARS, c.fecha, 'USD');
+    const cat = (prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if (cat.includes('veterin')||cat.includes('sanid')) totalVeterUSD+=importeUSD;
+    else if (cat.includes('aliment')) totalAlimUSD+=importeUSD;
+    else totalOtrosUSD+=importeUSD;
+  });
+  const totalSueldosEngUSD = sueldoTotalActividad_('engorde', s =>
+    (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
+    String(s.periodo).slice(0,7) <= corteEng.slice(0,7)
+  , 'USD');
+  const totalEgresosUSD = totalSaldoIniUSD + totalCesionesUSD + totalCesionInternaUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalOtrosUSD + totalSueldosEngUSD;
+  const margenUSD = totalIngresosUSD - totalEgresosUSD;
+
   // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio.
   const eiCabEng = saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
   const efCabEng = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
@@ -7050,6 +7231,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // Guardar resultados para Resultados Económicos
   S._resultEng = {
     ing: totalIngresos, eg: totalEgresos, margen,
+    ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: totalVentas, ef: stockValEng,
     ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras,
     egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng,
@@ -10283,13 +10465,32 @@ function buildMargenBruto() {
     return h;
   }
 
-  const rCria = { ing: S._resultCria.ing, eg: S._resultCria.eg, margen: S._resultCria.margen, detalle: S._resultCria };
-  const rRec  = { ing: S._resultRecria.ing, eg: S._resultRecria.eg, margen: S._resultRecria.margen, detalle: S._resultRecria };
-  const rEng  = { ing: S._resultEng.ing, eg: S._resultEng.eg, margen: S._resultEng.margen, detalle: S._resultEng };
+  const rCria = { ing: S._resultCria.ing, eg: S._resultCria.eg, margen: S._resultCria.margen, ingUSD: S._resultCria.ingUSD, egUSD: S._resultCria.egUSD, margenUSD: S._resultCria.margenUSD, detalle: S._resultCria };
+  const rRec  = { ing: S._resultRecria.ing, eg: S._resultRecria.eg, margen: S._resultRecria.margen, ingUSD: S._resultRecria.ingUSD, egUSD: S._resultRecria.egUSD, margenUSD: S._resultRecria.margenUSD, detalle: S._resultRecria };
+  const rEng  = { ing: S._resultEng.ing, eg: S._resultEng.eg, margen: S._resultEng.margen, ingUSD: S._resultEng.ingUSD, egUSD: S._resultEng.egUSD, margenUSD: S._resultEng.margenUSD, detalle: S._resultEng };
 
   const ingTotal = rCria.ing+rRec.ing+rEng.ing;
   const egTotal  = rCria.eg+rRec.eg+rEng.eg;
   const marTotal = rCria.margen+rRec.margen+rEng.margen;
+  // Versión en U$S convertida POR TRANSACCIÓN (cada movimiento a la cotización
+  // de SU PROPIO día, calculado en cada Dashboard) — NO es lo mismo que
+  // convertir ingTotal/egTotal/marTotal (en ARS) con la cotización del corte
+  // acá abajo (fmMB), porque la cotización se mueve durante la campaña. Antes
+  // esta pantalla solo tenía la versión en ARS, y en modo U$S convertía el
+  // agregado con una única cotización — daba un número distinto (y menos
+  // preciso) que sumar los tres Dashboards individuales, cada uno ya en U$S.
+  const ingTotalUSD = (rCria.ingUSD||0)+(rRec.ingUSD||0)+(rEng.ingUSD||0);
+  const egTotalUSD  = (rCria.egUSD||0)+(rRec.egUSD||0)+(rEng.egUSD||0);
+  const marTotalUSD = (rCria.margenUSD||0)+(rRec.margenUSD||0)+(rEng.margenUSD||0);
+  // Formateador para los totales/subtotales principales: en modo U$S usa el
+  // valor YA CONVERTIDO por transacción (vUSD) directo, sin volver a convertir
+  // — a diferencia de fmMB(), que asume que el valor que recibe está en ARS y
+  // lo convierte con la cotización del corte (correcto para el detalle línea
+  // por línea, que todavía no está migrado a conversión por transacción).
+  function fmMBTotal(vARS, vUSD) {
+    if (moneda==='USD') return 'U$D '+fn(Math.round(vUSD||0));
+    return '$ '+fn(Math.round(vARS||0));
+  }
   const mc  = marTotal>=0?'var(--green)':'var(--red)';
   const mb2 = marTotal>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
@@ -10402,7 +10603,7 @@ function buildMargenBruto() {
     donaSvg += etiquetasDona.join('');
     donaSvg += `<circle cx="${cx}" cy="${cy}" r="${rIn-3}" fill="var(--bg)"/>`;
     donaSvg += `<text x="${cx}" y="${cy-6}" text-anchor="middle" font-size="12" fill="var(--text3)" font-weight="600">INGRESOS</text>`;
-    donaSvg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="15" fill="var(--text)" font-weight="800">${fmMB(ingTotal)}</text>`;
+    donaSvg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="15" fill="var(--text)" font-weight="800">${fmMBTotal(ingTotal,ingTotalUSD)}</text>`;
     donaSvg += `</svg>`;
 
     h += `<div class="print-cover" style="flex-direction:column;border-bottom:4px solid #2f6b3f;padding-bottom:22px;margin-bottom:26px;page-break-after:avoid">
@@ -10434,11 +10635,11 @@ function buildMargenBruto() {
     h += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px">
       <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.04em">Ingresos totales</div>
-        <div style="font-size:22px;font-weight:800;color:var(--green-text);margin-top:6px">${fmMB(ingTotal)}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--green-text);margin-top:6px">${fmMBTotal(ingTotal,ingTotalUSD)}</div>
       </div>
       <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.04em">Egresos totales</div>
-        <div style="font-size:22px;font-weight:800;color:var(--clay-text);margin-top:6px">${fmMB(egTotal)}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--clay-text);margin-top:6px">${fmMBTotal(egTotal,egTotalUSD)}</div>
       </div>
       <div class="panel" style="margin-bottom:0;text-align:center;padding:18px 12px;background:${mb2};border:2px solid ${mc}">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:${mc};letter-spacing:.04em">Utilidad total</div>
@@ -10497,8 +10698,8 @@ function buildMargenBruto() {
         }).join('')}
         <tr style="background:var(--bg2);font-weight:800">
           <td>Total consolidado</td>
-          <td class="tc">${fmMB(ingTotal)}</td>
-          <td class="tc">${fmMB(egTotal)}</td>
+          <td class="tc">${fmMBTotal(ingTotal,ingTotalUSD)}</td>
+          <td class="tc">${fmMBTotal(egTotal,egTotalUSD)}</td>
           <td class="tc" style="color:${mc}">${marTotal>=0?'':'-'}${fmMB(Math.abs(marTotal))}</td>
           <td class="tc" style="color:${mc}">${margenPct.toFixed(1)}%</td>
         </tr>
@@ -10726,7 +10927,7 @@ function buildMargenBruto() {
     const gdpTxt = gdpPromRep!==null ? ` En Terminación, la ganancia diaria de peso promedio fue de ${fn(gdpPromRep,3)} kg/día.` : '';
 
     const bulletsAnalisis = [
-      `Al ${fd(corteGlobal)}, el resultado consolidado de Agroganadera Los Médanos arroja una utilidad ${marTotal>=0?'':'negativa '}de ${fmMB(Math.abs(marTotal))} sobre ingresos totales de ${fmMB(ingTotal)}, equivalente a un margen del ${margenPct.toFixed(1)}% sobre ingresos.`,
+      `Al ${fd(corteGlobal)}, el resultado consolidado de Agroganadera Los Médanos arroja una utilidad ${marTotal>=0?'':'negativa '}de ${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))} sobre ingresos totales de ${fmMBTotal(ingTotal,ingTotalUSD)}, equivalente a un margen del ${margenPct.toFixed(1)}% sobre ingresos.`,
       `${mejorAct.emoji} ${mejorAct.nombre} fue la actividad más rentable del período con ${fmMB(mejorAct.margen)}${peorAct.margen<0?`, mientras que ${peorAct.emoji} ${peorAct.nombre} cerró con un resultado negativo de ${fmMB(Math.abs(peorAct.margen))}`:''}.`,
       `En cuanto a la hacienda, ${tendenciaTxt}, con ${fn(pariVivosTot)} nacimientos vivos registrados en el período${pariMuertosTot>0?` (y ${fn(pariMuertosTot)} nacidos muertos)`:''}.`,
       sanidadTxt,
@@ -10765,17 +10966,17 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Ventas (${rCria.detalle.cantVentas})</td><td class="tr">${fmMB(rCria.detalle.ingVentas)}</td></tr>
           <tr><td style="padding-left:16px">Cesiones a Recría</td><td class="tr">${fmMB(rCria.detalle.ingCesiones)}</td></tr>
           <tr><td style="padding-left:16px">Stock valorizado (EF)</td><td class="tr">${fmMB(rCria.detalle.ef)}</td></tr>
-          <tr style="background:var(--green-bg)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(rCria.ing)}</strong></td></tr>
+          <tr style="background:var(--green-bg)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMBTotal(rCria.ing,rCria.ingUSD)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
           <tr><td style="padding-left:16px">Ventas</td><td class="tr">${fmMB(rRec.detalle.ingVentas)}</td></tr>
           <tr><td style="padding-left:16px">Cesiones a Terminación</td><td class="tr">${fmMB(rRec.detalle.ingCesEng)}</td></tr>
           <tr><td style="padding-left:16px">Stock valorizado (EF)</td><td class="tr">${fmMB(rRec.detalle.ef)}</td></tr>
-          <tr style="background:var(--green-bg)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(rRec.ing)}</strong></td></tr>
+          <tr style="background:var(--green-bg)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMBTotal(rRec.ing,rRec.ingUSD)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
           <tr><td style="padding-left:16px">Ventas</td><td class="tr">${fmMB(rEng.detalle.ingVentas)}</td></tr>
           <tr><td style="padding-left:16px">Stock valorizado (EF)</td><td class="tr">${fmMB(rEng.detalle.ef)}</td></tr>
-          <tr style="background:var(--green-bg)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(rEng.ing)}</strong></td></tr>
-          <tr style="font-size:15px;background:var(--green-bg)"><td><strong>TOTAL INGRESOS</strong></td><td class="tr" style="color:var(--green)"><strong>${fmMB(ingTotal)}</strong></td></tr>
+          <tr style="background:var(--green-bg)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMBTotal(rEng.ing,rEng.ingUSD)}</strong></td></tr>
+          <tr style="font-size:15px;background:var(--green-bg)"><td><strong>TOTAL INGRESOS</strong></td><td class="tr" style="color:var(--green)"><strong>${fmMBTotal(ingTotal,ingTotalUSD)}</strong></td></tr>
         </tbody></table>
       </div>
       <div class="panel" style="margin-bottom:0">
@@ -10787,7 +10988,7 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rCria.detalle.egAlim)}</td></tr>
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rCria.detalle.egVet)}</td></tr>
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rCria.detalle.egSueldos)}</td></tr>
-          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMB(rCria.eg)}</strong></td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMBTotal(rCria.eg,rCria.egUSD)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
           <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rRec.detalle.ei)}</td></tr>
           <tr><td style="padding-left:16px">Cesión recibida de Cría</td><td class="tr">${fmMB(rRec.detalle.egCesionCria)}</td></tr>
@@ -10795,7 +10996,7 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rRec.detalle.egAlim)}</td></tr>
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rRec.detalle.egVet)}</td></tr>
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rRec.detalle.egSueldos)}</td></tr>
-          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMB(rRec.eg)}</strong></td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMBTotal(rRec.eg,rRec.egUSD)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
           <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rEng.detalle.ei)}</td></tr>
           <tr><td style="padding-left:16px">Cesión recibida de Recría</td><td class="tr">${fmMB(rEng.detalle.egCesiones)}</td></tr>
@@ -10804,8 +11005,8 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rEng.detalle.egVet)}</td></tr>
           ${rEng.detalle.egOtros>0?`<tr><td style="padding-left:16px">Otros insumos</td><td class="tr">${fmMB(rEng.detalle.egOtros)}</td></tr>`:''}
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rEng.detalle.egSueldos)}</td></tr>
-          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMB(rEng.eg)}</strong></td></tr>
-          <tr style="font-size:15px;background:rgba(220,50,50,0.1)"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMB(egTotal)}</strong></td></tr>
+          <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMBTotal(rEng.eg,rEng.egUSD)}</strong></td></tr>
+          <tr style="font-size:15px;background:rgba(220,50,50,0.1)"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMBTotal(egTotal,egTotalUSD)}</strong></td></tr>
         </tbody></table>
       </div>
     </div>`;
@@ -10937,7 +11138,7 @@ function buildMargenBruto() {
       <ul style="margin:6px 0 0 0;padding-left:20px">
         <li>La actividad más rentable fue <strong>${mejor.n}</strong> con ${fmMB(mejor.mar)}.</li>
         <li>${peor.mar<0?`<strong>${peor.n}</strong> tuvo resultado negativo de ${fmMB(Math.abs(peor.mar))}.`:'Las tres actividades tuvieron resultado positivo.'}</li>
-        <li>${marTotal>=0?`Margen ganadero total positivo: <strong>${fmMB(marTotal)}</strong>.`:`Margen ganadero total negativo: <strong>-${fmMB(Math.abs(marTotal))}</strong>.`}</li>
+        <li>${marTotal>=0?`Margen ganadero total positivo: <strong>${fmMBTotal(marTotal,marTotalUSD)}</strong>.`:`Margen ganadero total negativo: <strong>-${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))}</strong>.`}</li>
       </ul>
     </div></div>`;
 
@@ -11720,7 +11921,14 @@ async function exportarAuditoriaEngordeExcel_() {
       if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
     }
 
-    const rodeosEng = rodeosEngordeValidos_();
+    // Antes esto exportaba SIEMPRE todos los campos juntos, sin importar el
+    // filtro de campo que tuviera elegido el Dashboard (S._dashEngCampo) — por
+    // eso el Excel daba más alto que el Dashboard cuando había un campo
+    // específico seleccionado en pantalla.
+    const campFiltroEngAudit = S._dashEngCampo || '';
+    const rodeosEng = campFiltroEngAudit
+      ? rodeosEngordeValidos_().filter(r => String(r.campo_id) === String(campFiltroEngAudit))
+      : rodeosEngordeValidos_();
     const rodeosEngIds = new Set(rodeosEng.map(r => String(r.rodeo_id)));
     const corte = S._corteEng || today();
     const stockACorte = stockPorRodeoACorte_(corte);
