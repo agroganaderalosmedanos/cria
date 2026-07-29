@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_52';
+const APP_VERSION = 'index_consolidado_4_6_155_53';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -11584,7 +11584,7 @@ async function exportarAuditoriaRecriaExcel_() {
       if (prod&&prod.categoria==='Veterinaria') resVet+=importe; else resAlim+=importe;
     });
     const resSueldos = sueldoTotalActividad_('recria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaRec);
-    const resEgresos = resEI + resCompraExt + resAlim + resVet + resSueldos;
+    const resEgresos = resEI + resCesRec + resCompraExt + resAlim + resVet + resSueldos;
     const resMargen = resIngresos - resEgresos;
 
     const aoa2 = [
