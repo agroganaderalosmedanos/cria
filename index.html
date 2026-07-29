@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_56';
+const APP_VERSION = 'index_consolidado_4_6_155_57';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -12018,7 +12018,32 @@ async function exportarAuditoriaEngordeExcel_() {
       const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0;
       return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaEngAudit);
     },0);
-    const resCesEnvEng = rodeosEng.reduce((s,r)=>s+egIngresoCesionEnviada_(r.rodeo_id, corte).total, 0);
+    // OJO — bug corregido acá: egIngresoCesionEnviada_() y egCostoCompraDesglose_()
+    // deciden qué es "interno" mirando TODOS los corrales de Terminación a nivel
+    // GLOBAL (rodeosEngordeValidos_(), sin filtrar por campo). Si el Excel suma
+    // esas funciones SOLO sobre los corrales del campo filtrado, una cesión entre
+    // corrales de campos distintos aparecía como ingreso en el corral de un campo
+    // pero su costo correspondiente en el otro corral (de otro campo) nunca se
+    // sumaba porque quedaba afuera del filtro — desbalanceando el margen. Ahora
+    // "interno" se define con el MISMO conjunto de corrales que usa este Excel
+    // (rodeosEngIds, ya filtrado por campo si corresponde) — igual que hace
+    // buildEngordeDashboard_ — así ingreso y costo salen siempre del mismo total
+    // y se cancelan exacto, sea cual sea el filtro de campo.
+    const rodeosTodosMapAudit = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
+    function valorMovAudit_(m) {
+      const cant = Number(m.cantidad)||0;
+      const peso = Number(m.peso_prom_kg)||0;
+      const pKg = Number(m.precio_kg)||0;
+      const pCab = Number(m.precio_cabeza)||0;
+      if (pKg>0 && peso>0) return cant*peso*pKg;
+      if (pCab>0) return cant*pCab;
+      const rodeoO = rodeosTodosMapAudit[String(m.rodeo_origen_id)];
+      const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return valorizarRodeo_(rodeoO||{categoria:'novillo'}, cant, pesO[0]?Number(pesO[0].peso_prom_kg)||0:0);
+    }
+    const cesionesInternasEngAudit = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)) && rodeosEngIds.has(String(m.rodeo_origen_id)));
+    const resCesionInternaEng = cesionesInternasEngAudit.reduce((s,m)=>s+convertirAMoneda_(valorMovAudit_(m), m.fecha, monedaEngAudit), 0);
+    const resCesEnvEng = resCesionInternaEng; // ingreso — misma cesión, mismo total
     let resStockValARS = 0;
     rodeosEng.forEach(r=>{
       const stk = Math.max(0, stockACorte[String(r.rodeo_id)]||0);
@@ -12030,7 +12055,7 @@ async function exportarAuditoriaEngordeExcel_() {
     const resIngresosEng = resVentasEng + resCesEnvEng + resStockValEng;
 
     const resCostoExtEng = rodeosEng.reduce((s,r)=>s+egCostoCompraDesglose_(r.rodeo_id).externo, 0);
-    const resCostoIntEng = rodeosEng.reduce((s,r)=>s+egCostoCompraDesglose_(r.rodeo_id).interno, 0);
+    const resCostoIntEng = resCesionInternaEng; // egreso — misma cesión, mismo total: se cancela exacto con el ingreso de arriba
     const resAlimEng = rodeosEng.reduce((s,r)=>s+(egCostoAlim_(r.rodeo_id, corte) - egCostoAlim_(r.rodeo_id, corte, 'Veterinaria')), 0);
     const resVetEng = rodeosEng.reduce((s,r)=>s+egCostoAlim_(r.rodeo_id, corte, 'Veterinaria'), 0);
     const resSueldosEng = sueldoTotalActividad_('engorde', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaEngAudit);
@@ -12068,7 +12093,12 @@ async function exportarAuditoriaEngordeExcel_() {
       const ultima = pes.length ? pes[pes.length-1] : null;
       const pesoUltima = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
       const ccDesg = egCostoCompraDesglose_(rid);
-      const cesEnv = egIngresoCesionEnviada_(rid, corte).total;
+      // Mismo criterio campo-scoped que en el resumen de arriba — evita el
+      // desbalance que había entre "Cesión enviada" (definida a nivel global)
+      // y "Costo interno" (idem), cuando el Excel solo suma un subconjunto de
+      // corrales (campo filtrado).
+      const cesEnv = cesionesInternasEngAudit.filter(m=>String(m.rodeo_origen_id)===String(rid)).reduce((s,m)=>s+convertirAMoneda_(valorMovAudit_(m), m.fecha, monedaEngAudit), 0);
+      const ccInt = cesionesInternasEngAudit.filter(m=>String(m.rodeo_destino_id)===String(rid)).reduce((s,m)=>s+convertirAMoneda_(valorMovAudit_(m), m.fecha, monedaEngAudit), 0);
       const ca = egCostoAlim_(rid, corte) - egCostoAlim_(rid, corte, 'Veterinaria');
       const cv = egCostoAlim_(rid, corte, 'Veterinaria');
       const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>{
@@ -12076,7 +12106,7 @@ async function exportarAuditoriaEngordeExcel_() {
         return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaEngAudit);
       },0);
       const ivStock = convertirAMoneda_(valorizarRodeo_(r, stk, pesoUltima), corte, monedaEngAudit);
-      return { nombre:r.nombre, campo:campoNombre(r.campo_id), ccExt: ccDesg.externo, ccInt: ccDesg.interno, cesEnv, ca, cv, iv, ivStock };
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), ccExt: ccDesg.externo, ccInt, cesEnv, ca, cv, iv, ivStock };
     }).filter(f => f.ccExt||f.ccInt||f.cesEnv||f.ca||f.cv||f.iv||f.ivStock);
     filas2.forEach(f => {
       aoa2.push([f.nombre, f.campo, Math.round(f.ccExt), Math.round(f.ccInt), Math.round(f.cesEnv), Math.round(f.ca), Math.round(f.cv), Math.round(f.iv), Math.round(f.ivStock)]);
