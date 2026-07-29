@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_51';
+const APP_VERSION = 'index_consolidado_4_6_155_52';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4295,6 +4295,7 @@ function buildRecriaDashboard() {
         onchange="S._corteRecria=this.value;render()">
       ${corteRecria!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteRecria=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
     </div>
+    <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaRecriaExcel_()" title="Descarga un Excel con cabezas y $ por rodeo, más el detalle crudo de movimientos, para revisar todo sin pasar de pantalla en pantalla">📊 Exportar auditoría a Excel</button>
   </div>`;
 
   // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
@@ -11429,6 +11430,273 @@ async function exportarAuditoriaCriaExcel_() {
     a.click();
     URL.revokeObjectURL(url);
     toast('✓ Excel de auditoría de Cría descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
+async function exportarAuditoriaRecriaExcel_() {
+  toast('Generando Excel de auditoría de Recría... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    for (const ent of ['movimientos','ventas','mortandad','pesadas','egresos_recria']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+
+    const rodeosAllR = (S.catalogs && S.catalogs.rodeos) || [];
+    const rodeosRecria = rodeosAllR.filter(r => normAct_(r.actividad)==='recria');
+    const rodeosRecriaIds = new Set(rodeosRecria.map(r => String(r.rodeo_id)));
+    const rodeosPorIdR = Object.fromEntries(rodeosAllR.map(r=>[String(r.rodeo_id),r]));
+    const corte = S._corteRecria || today();
+    const monedaRec = S.rcDashMoneda || 'ARS';
+    const monedaLabelRec = monedaRec === 'USD' ? 'U$S' : 'ARS';
+    const stockACorte = stockPorRodeoACorte_(corte);
+    const movsTodos = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corte);
+    const ventasTodas = (S.cache.ventas || []).filter(v => rodeosRecriaIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corte);
+    const egresosTodos = (S.cache.egresos_recria || []).filter(e => rodeosRecriaIds.has(String(e.rodeo_id)) && (e.fecha||'') <= corte);
+    const pesadasR = S.cache.pesadas||[];
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:B };
+    const ST_TOTALLBL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, border:B };
+    const ST_DIFF = { alignment:{horizontal:'center'}, border:B, font:{bold:true,color:{rgb:'C00000'}} };
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    // ── HOJA 1: Conciliación de cabezas por rodeo ────────────────────────
+    const headers1 = ['Rodeo','Campo','Categoría','EI','+ Entradas (traslados)','− Salidas (traslados)','− Ventas','− Mortandad','= EF calculado','EF real (stock)','Diferencia'];
+    const filas1 = rodeosRecria.map(r => {
+      const rid = String(r.rodeo_id);
+      const eiR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const entradasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const salidasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const ventasR = ventasTodas.filter(v => String(v.rodeo_id)===rid).reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id)===rid && (m.fecha||'')<=corte).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+      const efCalcR = eiR + entradasR - salidasR - ventasR - mortR;
+      const efRealR = Math.max(0, stockACorte[rid]||0);
+      return { nombre: r.nombre, campo: campoNombre(r.campo_id), categoria: r.categoria||'—', eiR, entradasR, salidasR, ventasR, mortR, efCalcR, efRealR, diff: efRealR-efCalcR };
+    }).filter(f => f.eiR||f.entradasR||f.salidasR||f.ventasR||f.mortR||f.efRealR);
+    const aoa1 = [
+      [`Agroganadera Los Médanos — Auditoría Recría (cabezas)`], ['Fecha de corte', fd(corte)], [], headers1,
+    ];
+    filas1.forEach(f => aoa1.push([f.nombre, f.campo, f.categoria, f.eiR, f.entradasR, f.salidasR, f.ventasR, f.mortR, f.efCalcR, f.efRealR, f.diff]));
+    aoa1.push(['TOTAL','','',
+      filas1.reduce((s,f)=>s+f.eiR,0), filas1.reduce((s,f)=>s+f.entradasR,0), filas1.reduce((s,f)=>s+f.salidasR,0),
+      filas1.reduce((s,f)=>s+f.ventasR,0), filas1.reduce((s,f)=>s+f.mortR,0), filas1.reduce((s,f)=>s+f.efCalcR,0),
+      filas1.reduce((s,f)=>s+f.efRealR,0), filas1.reduce((s,f)=>s+f.diff,0),
+    ]);
+    const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+    ws1['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:8},{wch:14},{wch:12},{wch:10},{wch:10},{wch:12},{wch:12},{wch:11}];
+    ws1['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers1.length-1} }];
+    estilarFila_(ws1, 0, headers1.length, ST_TITULO);
+    estilarFila_(ws1, 3, headers1.length, ST_HEADER);
+    filas1.forEach((f,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers1.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws1[addr]) ws1[addr] = { t:'s', v:'' };
+        if (c<=2) ws1[addr].s = alt?ST_ROWLBL_ALT:ST_ROWLBL;
+        else if (c===10 && f.diff!==0) ws1[addr].s = ST_DIFF;
+        else ws1[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    estilarFila_(ws1, 4+filas1.length, headers1.length, ST_TOTAL);
+    if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
+    XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
+
+    // ── HOJA 2: Resumen económico (misma lógica que el Dashboard — cada
+    // movimiento convertido a la cotización DE SU PROPIA FECHA, no la del
+    // corte, para que esta hoja coincida con la pantalla desde el primer día). ──
+    const cesRecCriaAudit = movsTodos.filter(m=>{
+      if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+      const or=rodeosPorIdR[String(m.rodeo_origen_id)];
+      const de=rodeosPorIdR[String(m.rodeo_destino_id)];
+      return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&rodeosRecriaIds.has(String(m.rodeo_destino_id));
+    });
+    const valCesion_ = (cant, peso, precioKg, fechaRef, rodeoOrigenId) => {
+      if (precioKg&&peso) return cant*peso*precioKg;
+      if (precioKg&&!peso) {
+        const pr = pesadasR.filter(p=>String(p.rodeo_id)===String(rodeoOrigenId)&&String(p.fecha)<=String(fechaRef)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        return cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+      }
+      const or = rodeosPorIdR[String(rodeoOrigenId)];
+      const pr = pesadasR.filter(p=>String(p.rodeo_id)===String(rodeoOrigenId)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return valorizarRodeo_(or||{}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+    };
+    const resCesRec = cesRecCriaAudit.reduce((s,m)=>{
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      return s + convertirAMoneda_(valCesion_(cant,peso,precioKg,m.fecha,m.rodeo_origen_id), m.fecha, monedaRec);
+    },0);
+    const cesEnvEngAudit = egresosTodos.filter(e=>e.destino==='Engorde');
+    const resCesEnv = cesEnvEngAudit.reduce((s,e)=>{
+      const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
+      return s + convertirAMoneda_(cant*peso*precioKg, e.fecha, monedaRec);
+    },0);
+    const resVentasRec = ventasTodas.reduce((s,v)=>{
+      const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+      return s + convertirAMoneda_(imp, v.fecha_salida, monedaRec);
+    },0);
+    let resStockValARS = 0;
+    rodeosRecria.forEach(r=>{
+      const stk = Math.max(0, stockACorte[String(r.rodeo_id)]||0);
+      if (!stk) return;
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, corte);
+      resStockValARS += valorizarRodeo_(r, stk, pesoP);
+    });
+    const resStockVal = convertirAMoneda_(resStockValARS, corte, monedaRec);
+    const resIngresos = resVentasRec + resCesEnv + resStockVal;
+
+    const resEI = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&rodeosRecriaIds.has(String(m.rodeo_destino_id)))
+      .reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaRec),0);
+    const compraExtAudit = movsTodos.filter(m=>rodeosRecriaIds.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual');
+    const resCompraExt = compraExtAudit.reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, monedaRec),0);
+    const consumosTodos = (S.cache.consumos_insumos||[]).filter(c=>rodeosRecriaIds.has(String(c.rodeo_id))&&(c.fecha||'')<=corte);
+    const productosAudit = (S.catalogs&&S.catalogs.productos)||[];
+    let resAlim=0, resVet=0;
+    consumosTodos.forEach(c=>{
+      const prod = productosAudit.find(p=>String(p.producto_id)===String(c.producto_id));
+      const importeARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+      const importe = convertirAMoneda_(importeARS, c.fecha, monedaRec);
+      if (prod&&prod.categoria==='Veterinaria') resVet+=importe; else resAlim+=importe;
+    });
+    const resSueldos = sueldoTotalActividad_('recria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaRec);
+    const resEgresos = resEI + resCompraExt + resAlim + resVet + resSueldos;
+    const resMargen = resIngresos - resEgresos;
+
+    const aoa2 = [
+      [`Agroganadera Los Médanos — Auditoría Recría (economía)`],
+      ['Fecha de corte', fd(corte)],
+      ['Nota', `Importes en ${monedaLabelRec === 'U$S' ? 'dólares — cada movimiento convertido a la cotización DE SU PROPIA FECHA, no la del corte' : 'pesos ARS crudos'}. Esta hoja debe coincidir con el Dashboard.`],
+      [],
+      ['RESUMEN CAMPAÑA', `(${monedaLabelRec})`],
+      ['💵 Ventas directas', Math.round(resVentasRec)],
+      ['➡ Cesión a Terminación', Math.round(resCesEnv)],
+      ['📦 Stock valorizado actual', Math.round(resStockVal)],
+      ['TOTAL INGRESOS', Math.round(resIngresos)],
+      ['📦 Stock inicial (EI)', Math.round(resEI)],
+      ['⬅ Cesión desde Cría', Math.round(resCesRec)],
+      ['🛒 Compra externa', Math.round(resCompraExt)],
+      ['🌿 Alimentación', Math.round(resAlim)],
+      ['💉 Veterinaria', Math.round(resVet)],
+      ['👷 Sueldos', Math.round(resSueldos)],
+      ['TOTAL EGRESOS', Math.round(resEgresos)],
+      ['MARGEN', Math.round(resMargen)],
+      [],
+    ];
+    const detalleLabelIdx2 = aoa2.length;
+    aoa2.push(['DETALLE POR RODEO']);
+    const headers2 = ['Rodeo','Campo','Categoría', `Stock inicial (${monedaLabelRec})`, `Cesión recibida (${monedaLabelRec})`, `Compra externa (${monedaLabelRec})`, `Alimentación (${monedaLabelRec})`, `Cesión enviada (${monedaLabelRec})`, `Ventas (${monedaLabelRec})`, `Stock valorizado (${monedaLabelRec})`];
+    aoa2.push(headers2);
+    const filaHeaderIdx2 = aoa2.length - 1;
+    const filas2 = rodeosRecria.map(r => {
+      const rid = r.rodeo_id;
+      const stk = Math.max(0, stockACorte[String(rid)]||0);
+      const pesoUltima = ultimaPesadaACorte_(rid, corte);
+      const stockIni = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rid))
+        .reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaRec),0);
+      const cesRec = cesRecCriaAudit.filter(m=>String(m.rodeo_destino_id)===String(rid)).reduce((s,m)=>{
+        const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+        return s + convertirAMoneda_(valCesion_(cant,peso,precioKg,m.fecha,m.rodeo_origen_id), m.fecha, monedaRec);
+      },0);
+      const compraExt = compraExtAudit.filter(m=>String(m.rodeo_destino_id)===String(rid))
+        .reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, monedaRec),0);
+      const alim = consumosTodos.filter(c=>String(c.rodeo_id)===String(rid)).reduce((s,c)=>{
+        const importeARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+        return s + convertirAMoneda_(importeARS, c.fecha, monedaRec);
+      },0);
+      const cesEnv = cesEnvEngAudit.filter(e=>String(e.rodeo_id)===String(rid)).reduce((s,e)=>{
+        const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
+        return s + convertirAMoneda_(cant*peso*precioKg, e.fecha, monedaRec);
+      },0);
+      const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>{
+        const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+        return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaRec);
+      },0);
+      const ivStock = convertirAMoneda_(valorizarRodeo_(r, stk, pesoUltima), corte, monedaRec);
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), categoria:r.categoria||'—', stockIni, cesRec, compraExt, alim, cesEnv, iv, ivStock };
+    }).filter(f => f.stockIni||f.cesRec||f.compraExt||f.alim||f.cesEnv||f.iv||f.ivStock);
+    filas2.forEach(f => {
+      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(f.stockIni), Math.round(f.cesRec), Math.round(f.compraExt), Math.round(f.alim), Math.round(f.cesEnv), Math.round(f.iv), Math.round(f.ivStock)]);
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:14},{wch:14},{wch:14},{wch:13},{wch:14},{wch:12},{wch:16}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }, { s:{r:detalleLabelIdx2,c:0}, e:{r:detalleLabelIdx2,c:headers2.length-1} }];
+    estilarFila_(ws2, 0, headers2.length, ST_TITULO);
+    estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
+    for (let i=5;i<=16;i++) estilarFila_(ws2, i, 2, ST_ROW);
+    estilarFila_(ws2, filaHeaderIdx2, headers2.length, ST_HEADER);
+    filas2.forEach((f,i) => {
+      const r0 = filaHeaderIdx2+1+i, alt = i%2===1;
+      for (let c=0;c<headers2.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
+        ws2[addr].s = (c<=2) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws2, 'Resumen económico');
+
+    // ── HOJA 3: Movimientos crudos de Recría ──────────────────────────────
+    const movsRecria = movsTodos.filter(m => rodeosRecriaIds.has(String(m.rodeo_destino_id)) || rodeosRecriaIds.has(String(m.rodeo_origen_id)))
+      .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const headers3 = ['Fecha','Tipo','Rodeo origen','Rodeo destino','Cantidad','Peso prom. (kg)','Precio $/kg','Precio $/cab.','Observaciones'];
+    const aoa3 = [
+      [`Agroganadera Los Médanos — Movimientos de Recría (crudo)`], ['Fecha de corte', fd(corte)], [], headers3,
+    ];
+    movsRecria.forEach(m => aoa3.push([
+      fd(m.fecha), m.tipo,
+      m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
+      m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
+      Number(m.cantidad)||0, Number(m.peso_prom_kg)||'—', Number(m.precio_kg)||'—', Number(m.precio_cabeza)||'—',
+      m.observaciones||'',
+    ]));
+    const ws3 = XLSX.utils.aoa_to_sheet(aoa3);
+    ws3['!cols'] = [{wch:12},{wch:20},{wch:22},{wch:22},{wch:10},{wch:14},{wch:12},{wch:12},{wch:30}];
+    ws3['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers3.length-1} }];
+    estilarFila_(ws3, 0, headers3.length, ST_TITULO);
+    estilarFila_(ws3, 3, headers3.length, ST_HEADER);
+    movsRecria.forEach((m,i) => {
+      const r0 = 4+i, alt = i%2===1;
+      for (let c=0;c<headers3.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws3[addr]) ws3[addr] = { t:'s', v:'' };
+        ws3[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws3, 'Movimientos detalle');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Auditoria_Recria_${corte}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de auditoría de Recría descargado', 'ok');
   } catch(err) {
     console.error(err);
     toast('Error al generar el Excel: ' + err.message, 'err');
