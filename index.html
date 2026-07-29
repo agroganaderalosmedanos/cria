@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_63';
+const APP_VERSION = 'index_consolidado_4_6_155_64';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1071,6 +1071,7 @@ function buildPage(page) {
     case 'tactos':     return buildTactos();
     case 'abortos':    return buildAbortos();
     case 'pariciones': return buildPariciones();
+    case 'curva_nacimientos': return buildCurvaNacimientos();
     case 'mortandad':  return buildMortandad();
     case 'destetes':   return buildDestetes();
     case 'movimientos': return buildMovimientos();
@@ -2579,6 +2580,7 @@ function buildServicios() {  const _criaTabs = [
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -2781,6 +2783,7 @@ function buildTactos() {  const _criaTabs = [
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -2878,6 +2881,7 @@ function buildAbortos() {  const _criaTabs = [
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -3037,6 +3041,7 @@ function buildPariciones() {  const _criaTabs = [
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -3063,6 +3068,25 @@ function buildPariciones() {  const _criaTabs = [
     <div id="pa-aviso-pendientes" style="margin-top:10px"></div>
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
   </div>`;
+  h += `<div class="fgrid" style="margin-bottom:10px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="pa-hist-campo" onchange="
+        const rid=document.getElementById('pa-hist-rodeo');
+        const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
+        rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
+        paFiltrarHistorial_()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="pa-hist-rodeo" onchange="paFiltrarHistorial_()">
+        <option value="">Todos los rodeos</option>
+        ${((S.catalogs&&S.catalogs.rodeos)||[]).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="pa-hist-tabla">`;
   h += buildEntityTable(items, [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
@@ -3070,8 +3094,32 @@ function buildPariciones() {  const _criaTabs = [
     { key: 'nacidos_muertos', label: 'Muertos', render: v => fn(v) },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'pariciones', 'paricion_id');
+  h += `</div>`;
   return h;
 }
+window.paFiltrarHistorial_ = function() {
+  const campoId = document.getElementById('pa-hist-campo')?.value || '';
+  const rodeoId = document.getElementById('pa-hist-rodeo')?.value || '';
+  const items = (S.cache.pariciones || []).filter(p => {
+    if (rodeoId && String(p.rodeo_id) !== rodeoId) return false;
+    if (campoId && !rodeoId) {
+      const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(p.rodeo_id));
+      if (!r || String(r.campo_id) !== campoId) return false;
+    }
+    return true;
+  });
+  const el = document.getElementById('pa-hist-tabla');
+  if (el) {
+    el.innerHTML = buildEntityTable(items, [
+      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+      { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+      { key: 'nacidos_vivos', label: 'Vivos', render: v => fn(v) },
+      { key: 'nacidos_muertos', label: 'Muertos', render: v => fn(v) },
+      { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+    ], 'pariciones', 'paricion_id');
+    attachTableDeleteEvents('pariciones', 'paricion_id');
+  }
+};
 window.paActualizarAvisoPendientes_ = function() {
   const aviso = document.getElementById('pa-aviso-pendientes');
   if (!aviso) return;
@@ -3220,6 +3268,190 @@ function attachMortandadEvents() {
   attachTableDeleteEvents('mortandad', 'mortandad_id');
 }
 
+// Lunes de la semana que contiene la fecha dada — se usa como clave de
+// agrupación semanal (más intuitivo para el usuario que un número de semana
+// ISO: mostrando "semana del 21/07" en vez de "semana 30").
+function inicioSemana_(fechaStr) {
+  if (!fechaStr) return null;
+  const d = new Date(fechaStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  const dia = d.getDay(); // 0=domingo, 1=lunes...
+  const diff = (dia === 0 ? -6 : 1) - dia;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0,10);
+}
+
+function buildCurvaNacimientos() {
+  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
+
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const campFiltro = S._curvaNacCampo || '';
+  const rodeoFiltro = S._curvaNacRodeo || '';
+  const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
+
+  h += `<div class="panel">
+    <div class="panel-title">🐣 Curva de nacimientos y mortandad, por semana</div>
+    <p class="helper-text" style="margin-bottom:14px">Nacidos vivos, nacidos muertos (Pariciones) y mortandad — agrupados por semana, para ver de un vistazo si un pico de muertes coincide con un pico de nacimientos.</p>
+    <div class="fgrid" style="margin-bottom:14px">
+      <div class="fg"><label>Campo</label>
+        <select onchange="S._curvaNacCampo=this.value;S._curvaNacRodeo='';render()">
+          <option value="">Todos los campos</option>
+          ${campos.map(c=>`<option value="${c.campo_id}" ${String(campFiltro)===String(c.campo_id)?'selected':''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Rodeo</label>
+        <select onchange="S._curvaNacRodeo=this.value;render()">
+          <option value="">Todos los rodeos</option>
+          ${rodeosDisponibles.map(r=>`<option value="${r.rodeo_id}" ${String(rodeoFiltro)===String(r.rodeo_id)?'selected':''}>${r.nombre}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+
+  // Filtrar pariciones y mortandad por el mismo criterio (campo y/o rodeo)
+  const rodeoMatch_ = (rodeoId) => {
+    if (rodeoFiltro) return String(rodeoId) === String(rodeoFiltro);
+    if (campFiltro) {
+      const r = rodeosAll.find(x => String(x.rodeo_id) === String(rodeoId));
+      return r && String(r.campo_id) === String(campFiltro);
+    }
+    return true;
+  };
+  const pariciones = (S.cache.pariciones || []).filter(p => rodeoMatch_(p.rodeo_id));
+  const mortandad  = (S.cache.mortandad  || []).filter(m => rodeoMatch_(m.rodeo_id));
+
+  if (!pariciones.length && !mortandad.length) {
+    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pariciones ni mortandad registradas para este filtro todavía.</div></div></div>`;
+    return h;
+  }
+
+  // Agrupar por semana (clave = lunes de esa semana)
+  const semanas = {}; // clave -> { vivos, muertos, mortandad }
+  const getSemana_ = (clave) => {
+    if (!semanas[clave]) semanas[clave] = { vivos: 0, muertos: 0, mortandad: 0 };
+    return semanas[clave];
+  };
+  pariciones.forEach(p => {
+    const clave = inicioSemana_(p.fecha);
+    if (!clave) return;
+    const s = getSemana_(clave);
+    s.vivos   += Number(p.nacidos_vivos)   || 0;
+    s.muertos += Number(p.nacidos_muertos) || 0;
+  });
+  mortandad.forEach(m => {
+    const clave = inicioSemana_(m.fecha);
+    if (!clave) return;
+    getSemana_(clave).mortandad += Number(m.cantidad) || 1;
+  });
+  const clavesOrdenadas = Object.keys(semanas).sort();
+
+  // ── Gráfico de barras agrupadas por semana ──
+  const W = 900, chartH = 220, padL = 40, padR = 20, padT = 20, padB = 50;
+  const nSem = clavesOrdenadas.length;
+  const grupoW = Math.max(24, Math.min(70, (W - padL - padR) / Math.max(nSem,1)));
+  const chartW = Math.max(W, padL + padR + grupoW * nSem);
+  const maxVal = Math.max(1, ...clavesOrdenadas.map(k => Math.max(semanas[k].vivos, semanas[k].muertos, semanas[k].mortandad)));
+  const escala = chartH / maxVal;
+  const barW = grupoW / 4;
+  let barsSvg = '';
+  // líneas de referencia horizontales
+  for (let i=0;i<=4;i++) {
+    const y = padT + chartH - (chartH*i/4);
+    barsSvg += `<line x1="${padL}" y1="${y}" x2="${chartW-padR}" y2="${y}" stroke="var(--border)" stroke-width="1"/>`;
+    barsSvg += `<text x="${padL-6}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--text3)">${Math.round(maxVal*i/4)}</text>`;
+  }
+  clavesOrdenadas.forEach((clave, i) => {
+    const s = semanas[clave];
+    const x0 = padL + i*grupoW;
+    const barras = [
+      { v: s.vivos,     color: 'var(--green)', label: 'Vivos' },
+      { v: s.muertos,   color: 'var(--clay)',  label: 'Nacidos muertos' },
+      { v: s.mortandad, color: '#8c1d17',       label: 'Mortandad' },
+    ];
+    barras.forEach((b, bi) => {
+      const bh = Math.round(b.v * escala);
+      const x = x0 + bi*barW;
+      const y = padT + chartH - bh;
+      if (b.v > 0) {
+        barsSvg += `<rect x="${x}" y="${y}" width="${barW-2}" height="${Math.max(bh,2)}" rx="2" fill="${b.color}"/>`;
+        barsSvg += `<text x="${x+(barW-2)/2}" y="${y-4}" text-anchor="middle" font-size="9" font-weight="700" fill="var(--text)">${fn(b.v)}</text>`;
+      }
+    });
+    barsSvg += `<text x="${x0+grupoW/2-barW/2}" y="${padT+chartH+18}" text-anchor="middle" font-size="10" fill="var(--text2)" transform="rotate(-35 ${x0+grupoW/2-barW/2} ${padT+chartH+18})">${fd(clave)}</text>`;
+  });
+  h += `<div style="overflow-x:auto"><svg width="${chartW}" height="${chartH+padT+padB}" viewBox="0 0 ${chartW} ${chartH+padT+padB}">${barsSvg}</svg></div>
+    <div style="display:flex;gap:16px;margin-top:8px;font-size:12px;flex-wrap:wrap">
+      <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px"></span>Nacidos vivos</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:var(--clay);border-radius:2px;margin-right:4px"></span>Nacidos muertos</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#8c1d17;border-radius:2px;margin-right:4px"></span>Mortandad</span>
+    </div>
+  </div>`;
+
+  // ── Nacimientos por rodeo (resumen) ──
+  const porRodeo = {};
+  pariciones.forEach(p => {
+    const rid = String(p.rodeo_id);
+    if (!porRodeo[rid]) porRodeo[rid] = { vivos:0, muertos:0 };
+    porRodeo[rid].vivos   += Number(p.nacidos_vivos)   || 0;
+    porRodeo[rid].muertos += Number(p.nacidos_muertos) || 0;
+  });
+  const filasRodeo = Object.entries(porRodeo).map(([rid, v]) => ({
+    nombre: rodeoNombre(rid), vivos: v.vivos, muertos: v.muertos,
+    total: v.vivos + v.muertos,
+    pctMuertos: (v.vivos+v.muertos)>0 ? (v.muertos/(v.vivos+v.muertos)*100) : 0,
+  })).sort((a,b)=>b.total-a.total);
+
+  h += `<div class="panel"><div class="panel-title">🐄 Nacimientos por rodeo</div>
+    <div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th class="tc">Nacidos vivos</th><th class="tc">Nacidos muertos</th><th class="tc">Total</th><th class="tc">% muertos al nacer</th>
+    </tr></thead><tbody>`;
+  filasRodeo.forEach(f => {
+    h += `<tr><td><strong>${f.nombre}</strong></td>
+      <td class="tc" style="color:var(--green-text)">${fn(f.vivos)}</td>
+      <td class="tc" style="color:var(--clay-text)">${fn(f.muertos)}</td>
+      <td class="tc">${fn(f.total)}</td>
+      <td class="tc">${f.pctMuertos>0?f.pctMuertos.toFixed(1)+'%':'—'}</td></tr>`;
+  });
+  h += `<tr style="background:var(--bg2);font-weight:800">
+    <td>TOTAL</td>
+    <td class="tc" style="color:var(--green-text)">${fn(filasRodeo.reduce((s,f)=>s+f.vivos,0))}</td>
+    <td class="tc" style="color:var(--clay-text)">${fn(filasRodeo.reduce((s,f)=>s+f.muertos,0))}</td>
+    <td class="tc">${fn(filasRodeo.reduce((s,f)=>s+f.total,0))}</td>
+    <td class="tc">—</td></tr>`;
+  h += '</tbody></table></div></div>';
+
+  // ── Detalle de mortandad (todas las del filtro, más recientes primero) ──
+  const mortOrdenada = mortandad.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  h += `<div class="panel"><div class="panel-title">☠ Detalle de mortandad</div>`;
+  if (!mortOrdenada.length) {
+    h += `<p class="helper-text">Sin registros de mortandad para este filtro.</p>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Observación</th>
+    </tr></thead><tbody>`;
+    mortOrdenada.forEach(m => {
+      h += `<tr><td>${fd(m.fecha)}</td><td>${rodeoNombre(m.rodeo_id)}</td><td class="tc">${fn(Number(m.cantidad)||1)}</td><td>${m.observacion||'—'}</td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2">TOTAL</td><td class="tc">${fn(mortOrdenada.reduce((s,m)=>s+(Number(m.cantidad)||1),0))}</td><td></td></tr>`;
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  return h;
+}
+
 function buildDestetes() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
@@ -3228,6 +3460,7 @@ function buildDestetes() {  const _criaTabs = [
     { k: 'tactos', icon: '◔', label: 'Tactos' },
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
