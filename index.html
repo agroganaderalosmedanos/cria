@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_50';
+const APP_VERSION = 'index_consolidado_4_6_155_51';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -11184,51 +11184,152 @@ async function exportarAuditoriaCriaExcel_() {
     if (ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})]) ws1[XLSX.utils.encode_cell({r:4+filas1.length,c:0})].s = ST_TOTALLBL;
     XLSX.utils.book_append_sheet(wb, ws1, 'Conciliación cabezas');
 
-    // ── HOJA 2: Resumen económico por rodeo (respeta el selector "Ver en ARS/U$S" de la pantalla) ──
-    // Antes esto exportaba siempre en ARS crudo sin mirar el selector de moneda
-    // de Cría (S.criaMoneda, distinto del de Terminación) — mismo bug que ya
-    // habíamos corregido en el Excel de Comparación de Terminación.
+    // ── HOJA 2: Resumen económico (respeta el selector "Ver en ARS/U$S" de la pantalla) ──
+    // ANTES esto tenía dos problemas: (1) convertía todo con una ÚNICA cotización
+    // (la del corte, `tcVal`) en vez de la cotización DE CADA MOVIMIENTO — mismo
+    // bug que ya se había corregido en el Dashboard pero que acá quedó sin tocar;
+    // y (2) le faltaban las columnas de "Cesiones" y "Sueldos" directamente, así
+    // que el Excel nunca iba a poder cerrar contra el Dashboard aunque se
+    // arreglara la conversión. Ahora se recalcula el resumen con la MISMA lógica
+    // que usa el Dashboard (convertirAMoneda_ por transacción), y se agrega
+    // primero un bloque de "Resumen campaña" con los mismos rubros que se ven
+    // en pantalla, para que se pueda comparar línea por línea sin diferencias.
     const monedaCria = S.criaMoneda || 'ARS';
-    const convCria = v => (monedaCria === 'USD' && tcVal) ? v / tcVal : v;
     const monedaLabelCria = monedaCria === 'USD' ? 'U$S' : 'ARS';
-    const headers2 = ['Rodeo','Campo','Categoría', `Stock inicial (${monedaLabelCria})`, `Compras (${monedaLabelCria})`, `Alimentación (${monedaLabelCria})`, `Ventas (${monedaLabelCria})`, `Stock valorizado (${monedaLabelCria})`, 'Cotización usada', `Ingresos−Egresos (${monedaLabelCria})`];
+    const rodeosCriaIdsSet = new Set(rodeosCria.map(r=>String(r.rodeo_id)));
+    const rodeosPorIdAudit = Object.fromEntries((S.catalogs&&S.catalogs.rodeos||[]).map(r=>[String(r.rodeo_id),r]));
+    const pesadasAudit = S.cache.pesadas||[];
+
+    const ventasCriaAudit = ventasTodas.filter(v=>rodeosCriaIdsSet.has(String(v.rodeo_id)));
+    const resVentas = ventasCriaAudit.reduce((s,v)=>{
+      const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+      return s + convertirAMoneda_(imp, v.fecha_salida, monedaCria);
+    },0);
+
+    const cesionesCriaAudit = movsTodos.filter(m=>{
+      if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+      const or = rodeosPorIdAudit[String(m.rodeo_origen_id)];
+      const de = rodeosPorIdAudit[String(m.rodeo_destino_id)];
+      return or&&normAct_(or.actividad)==='cria'&&de&&(normAct_(de.actividad)==='recria'||normAct_(de.actividad)==='engorde'||normAct_(de.actividad)==='terminacion');
+    });
+    const resCesiones = cesionesCriaAudit.reduce((s,m)=>{
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+      const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      let importeARS;
+      if (precioKg&&peso) importeARS = cant*peso*precioKg;
+      else if (precioKg&&!peso) {
+        const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+      } else {
+        const rodeo = rodeosPorIdAudit[String(m.rodeo_origen_id)];
+        const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = valorizarRodeo_(rodeo||{}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+      }
+      return s + convertirAMoneda_(importeARS, m.fecha, monedaCria);
+    },0);
+
+    let resStockValARS = 0;
+    rodeosCria.forEach(r=>{
+      const stk = Math.max(0, stockACorte[String(r.rodeo_id)]||0);
+      if (!stk) return;
+      const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)&&(p.fecha||'')<=corte).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      resStockValARS += valorizarRodeo_(r, stk, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+    });
+    // "Stock valorizado" es un ítem de BALANCE — se convierte una sola vez a la
+    // cotización del corte (igual que en el Dashboard), a diferencia de los
+    // ítems de FLUJO de arriba/abajo que se convierten cada uno a su propia fecha.
+    const resStockVal = convertirAMoneda_(resStockValARS, corte, monedaCria);
+    const resIngresos = resVentas + resCesiones + resStockVal;
+
+    const saldosCriaAudit = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&!esAltaPorParicion_(m)&&rodeosCriaIdsSet.has(String(m.rodeo_destino_id)));
+    const resStockIni = saldosCriaAudit.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaCria),0);
+    const comprasCriaAudit = comprasHacGetAll_().filter(c=>rodeosCriaIdsSet.has(String(c.rodeo_id))&&(c.fecha||'')<=corte);
+    const resCompras = comprasCriaAudit.reduce((s,c)=>s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, monedaCria),0);
+    const consumosCriaAudit = (S.cache.consumos_insumos||[]).filter(c=>rodeosCriaIdsSet.has(String(c.rodeo_id))&&(c.fecha||'')<=corte);
+    const productosAudit = (S.catalogs&&S.catalogs.productos)||[];
+    const prodPorIdAudit = Object.fromEntries(productosAudit.map(p=>[String(p.producto_id),p]));
+    let resAlim = 0, resVet = 0;
+    consumosCriaAudit.forEach(c=>{
+      const prod = prodPorIdAudit[String(c.producto_id)];
+      const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+      const importe = convertirAMoneda_(importeARS, c.fecha, monedaCria);
+      if (cat.includes('veterin')||cat.includes('sanid')) resVet += importe; else resAlim += importe;
+    });
+    const resSueldos = sueldoTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria);
+    const resEgresos = resStockIni + resCompras + resAlim + resVet + resSueldos;
+    const resMargen = resIngresos - resEgresos;
+
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría Cría (economía)`],
       ['Fecha de corte', fd(corte)],
-      ['Nota', `Importes en ${monedaLabelCria === 'U$S' ? `dólares (cotización del corte: ${tcVal?fn(tcVal,2):'no disponible, se muestra en ARS'})` : 'pesos ARS crudos'}, igual que la pantalla.`],
+      ['Nota', `Importes en ${monedaLabelCria === 'U$S' ? 'dólares — cada movimiento convertido a la cotización DE SU PROPIA FECHA, no la del corte' : 'pesos ARS crudos'}. Esta hoja debe coincidir con el Dashboard.`],
       [],
-      headers2,
+      ['RESUMEN CAMPAÑA', `(${monedaLabelCria})`],
+      ['💰 Ventas de hacienda', Math.round(resVentas)],
+      ['🔄 Cesiones a Recría/Engorde', Math.round(resCesiones)],
+      ['📦 Stock valorizado actual', Math.round(resStockVal)],
+      ['TOTAL INGRESOS', Math.round(resIngresos)],
+      ['🐄 Stock inicial', Math.round(resStockIni)],
+      ['🛒 Compras de hacienda', Math.round(resCompras)],
+      ['🌾 Alimentación', Math.round(resAlim)],
+      ['💉 Veterinaria', Math.round(resVet)],
+      ['👤 Sueldos imputados a Cría', Math.round(resSueldos)],
+      ['TOTAL EGRESOS', Math.round(resEgresos)],
+      ['MARGEN', Math.round(resMargen)],
+      [],
     ];
+    const detalleLabelIdx = aoa2.length;
+    aoa2.push(['DETALLE POR RODEO']);
+    const headers2 = ['Rodeo','Campo','Categoría', `Stock inicial (${monedaLabelCria})`, `Compras (${monedaLabelCria})`, `Alimentación (${monedaLabelCria})`, `Cesiones enviadas (${monedaLabelCria})`, `Ventas (${monedaLabelCria})`, `Stock valorizado (${monedaLabelCria})`];
+    aoa2.push(headers2);
+    const filaHeaderIdx = aoa2.length - 1;
     const filas2 = rodeosCria.map(r => {
       const rid = r.rodeo_id;
       const stk = Math.max(0, stockACorte[String(rid)]||0);
-      const pes = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(rid)&&(p.fecha||'')<=corte).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+      const pes = pesadasAudit.filter(p=>String(p.rodeo_id)===String(rid)&&(p.fecha||'')<=corte).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
       const pesoUltima = pes.length ? Number(pes[pes.length-1].peso_prom_kg)||0 : 0;
-      const saldos = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===String(rid) && !esAltaPorParicion_(m));
-      const stockIni = saldos.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
-      const compras = comprasHacGetAll_().filter(c=>(c.fecha||'')<=corte&&String(c.rodeo_id)===String(rid)).reduce((s,c)=>s+(Number(c.importe_total)||0),0);
-      const consumosR = (S.cache.consumos_insumos||[]).filter(c=>String(c.rodeo_id)===String(rid)&&(c.fecha||'')<=corte);
-      const productos = (S.catalogs&&S.catalogs.productos)||[];
-      const prodPorId = Object.fromEntries(productos.map(p=>[String(p.producto_id),p]));
-      const alim = consumosR.reduce((s,c)=>{
-        const prod = prodPorId[String(c.producto_id)];
-        return s + (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+      const saldos = saldosCriaAudit.filter(m=>String(m.rodeo_destino_id)===String(rid));
+      const stockIni = saldos.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaCria),0);
+      const compras = comprasCriaAudit.filter(c=>String(c.rodeo_id)===String(rid)).reduce((s,c)=>s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, monedaCria),0);
+      const alim = consumosCriaAudit.filter(c=>String(c.rodeo_id)===String(rid)).reduce((s,c)=>{
+        const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+        return s + convertirAMoneda_(importeARS, c.fecha, monedaCria);
       },0);
-      const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0),0);
-      const ivStock = valorizarRodeo_(r, stk, pesoUltima);
-      return { nombre:r.nombre, campo:campoNombre(r.campo_id), categoria: r.categoria||'—', stockIni, compras, alim, iv, ivStock };
-    }).filter(f => f.stockIni||f.compras||f.alim||f.iv||f.ivStock);
+      const cesionesR = cesionesCriaAudit.filter(m=>String(m.rodeo_origen_id)===String(rid)).reduce((s,m)=>{
+        const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+        const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+        let importeARS;
+        if (precioKg&&peso) importeARS = cant*peso*precioKg;
+        else if (precioKg&&!peso) {
+          const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+          importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+        } else {
+          const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+          importeARS = valorizarRodeo_(r, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+        }
+        return s + convertirAMoneda_(importeARS, m.fecha, monedaCria);
+      },0);
+      const iv = ventasCriaAudit.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>{
+        const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+        return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaCria);
+      },0);
+      const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
+      const ivStock = convertirAMoneda_(ivStockARS, corte, monedaCria);
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), categoria: r.categoria||'—', stockIni, compras, alim, cesionesR, iv, ivStock };
+    }).filter(f => f.stockIni||f.compras||f.alim||f.cesionesR||f.iv||f.ivStock);
     filas2.forEach(f => {
-      const netoARS = (f.iv+f.ivStock) - (f.stockIni+f.compras+f.alim);
-      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(convCria(f.stockIni)), Math.round(convCria(f.compras)), Math.round(convCria(f.alim)), Math.round(convCria(f.iv)), Math.round(convCria(f.ivStock)), tcVal?fn(tcVal,2):'—', Math.round(convCria(netoARS))]);
+      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(f.stockIni), Math.round(f.compras), Math.round(f.alim), Math.round(f.cesionesR), Math.round(f.iv), Math.round(f.ivStock)]);
     });
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:15},{wch:13},{wch:14},{wch:12},{wch:16},{wch:12},{wch:16}];
-    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
+    ws2['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:15},{wch:13},{wch:14},{wch:15},{wch:12},{wch:16}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }, { s:{r:detalleLabelIdx,c:0}, e:{r:detalleLabelIdx,c:headers2.length-1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
-    estilarFila_(ws2, 4, headers2.length, ST_HEADER);
+    estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
+    for (let i=5;i<=15;i++) estilarFila_(ws2, i, 2, ST_ROW);
+    estilarFila_(ws2, filaHeaderIdx, headers2.length, ST_HEADER);
     filas2.forEach((f,i) => {
-      const r0 = 5+i, alt = i%2===1;
+      const r0 = filaHeaderIdx+1+i, alt = i%2===1;
       for (let c=0;c<headers2.length;c++) {
         const addr = XLSX.utils.encode_cell({r:r0,c});
         if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
