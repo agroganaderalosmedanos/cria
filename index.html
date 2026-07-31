@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_66';
+const APP_VERSION = 'index_consolidado_4_6_155_70';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -435,11 +435,33 @@ function ternerosDisponiblesParaDestete_(rodeoId) {
 // (la vaca dio a luz, sea el resultado vivo o muerto). Sirve para saber cuántas
 // vacas de ese rodeo faltarían parir todavía — no reemplaza un control por caravana.
 function vacasPendientesDeParir_(rodeoId) {
-  const tactos = (S.cache.tactos || []).filter(t => String(t.rodeo_id) === String(rodeoId));
-  const prenadas = tactos.reduce((s, t) => s + (Number(t.prenadas) || 0), 0);
+  // OJO — antes esto sumaba TODOS los registros de Tacto del rodeo, sin
+  // importar el tipo. Como se puede cargar un "Tacto IATF" y después un
+  // "Tacto final" para el mismo rodeo (el final ya incluye el total, no se
+  // suma aparte del IATF), sumarlos duplicaba las preñadas si ambos estaban
+  // cargados. Ahora se usa SOLO el "Tacto final" más reciente del rodeo — que
+  // es la fuente correcta del total de preñadas, tal como se carga en el
+  // formulario ("en el tacto final, el total de preñadas").
+  const tactosFinales = (S.cache.tactos || [])
+    .filter(t => String(t.rodeo_id) === String(rodeoId) && t.tipo_tacto === 'Tacto final')
+    .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
+  const ultimoTactoFinal = tactosFinales.length ? tactosFinales[tactosFinales.length-1] : null;
+  const prenadas = ultimoTactoFinal ? (Number(ultimoTactoFinal.prenadas) || 0) : 0;
+
   const pariciones = (S.cache.pariciones || []).filter(p => String(p.rodeo_id) === String(rodeoId));
   const yaParieron = pariciones.reduce((s, p) => s + (Number(p.nacidos_vivos) || 0) + (Number(p.nacidos_muertos) || 0), 0);
-  return { prenadas, yaParieron, pendientes: Math.max(0, prenadas - yaParieron) };
+
+  // Vacas abortadas: no van a parir, hay que descontarlas del total de
+  // preñadas igual que las que ya parieron. Solo se cuentan las que abortaron
+  // DESPUÉS de la fecha del tacto final (las de antes ya no deberían estar
+  // contadas como "preñadas" en ese tacto, si el tacto se hizo correctamente).
+  const fechaTacto = ultimoTactoFinal ? ultimoTactoFinal.fecha : null;
+  const abortos = (S.cache.abortos || []).filter(a =>
+    String(a.rodeo_id) === String(rodeoId) && (!fechaTacto || String(a.fecha) >= String(fechaTacto))
+  ).length;
+
+  const pendientes = Math.max(0, prenadas - abortos - yaParieron);
+  return { prenadas, yaParieron, abortos, pendientes, sinTactoFinal: !ultimoTactoFinal };
 }
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
@@ -716,6 +738,7 @@ const NAV = [
     { k: 'tactos',               icon: 'ti-stethoscope', label: 'Tactos' },
     { k: 'abortos',              icon: 'ti-ban',         label: 'Abortos' },
     { k: 'pariciones',           icon: 'ti-baby',        label: 'Pariciones' },
+    { k: 'curva_nacimientos',    icon: 'ti-chart-line',  label: 'Curva de Nacimientos' },
     { k: 'destetes',             icon: 'ti-checklist',   label: 'Destetes' },
   ]},
   { section: 'Recría', icon: 'ti-arrow-up-circle', defaultPage: 'recria_dashboard', items: [
@@ -2527,13 +2550,13 @@ function buildDashboard() {
   const abortosCriaFilt2 = (S.cache.abortos || []).filter(a => rodeosCriaIds.has(String(a.rodeo_id)));
   const abortosCriaTotal2 = abortosCriaFilt2.length;
 
-  const buildResumenPorRodeo_ = (porRodeo, titulo, color, colorBg, total, unidadSing, unidadPlural) => {
+  const buildResumenPorRodeo_ = (porRodeo, titulo, color, colorBg, total, unidadSing, unidadPlural, mostrarCategoria) => {
     let t = `<div class="panel" style="border:2px solid ${color};background:${colorBg}">
       <div class="panel-title" style="color:${color}">${titulo}</div>`;
     Object.entries(porRodeo).forEach(([rid,cant])=>{
       const r = rodeosCria.find(x=>String(x.rodeo_id)===String(rid));
       t += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid ${color}">
-        <div style="font-weight:600">${r?.nombre||'Rodeo '+rid}</div>
+        <div><div style="font-weight:600">${r?.nombre||'Rodeo '+rid}</div>${mostrarCategoria&&r?.categoria?`<div style="font-size:11px;color:var(--text3);text-transform:capitalize">${r.categoria}</div>`:''}</div>
         <div style="font-size:16px;font-weight:700;color:${color}">${cant} ${cant===1?unidadSing:unidadPlural}</div>
       </div>`;
     });
@@ -2547,14 +2570,48 @@ function buildDashboard() {
   if (mortCriaTotal > 0) {
     const mortCriaPorRodeo = {};
     mortandadCriaFilt.forEach(m => { mortCriaPorRodeo[m.rodeo_id] = (mortCriaPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
-    h += buildResumenPorRodeo_(mortCriaPorRodeo, '💀 Muertes en Cría', 'var(--red)', 'rgba(200,50,50,0.06)', mortCriaTotal, 'baja', 'bajas');
-    h += `<div style="font-size:12px;color:var(--red);margin:-10px 0 16px">⚠ Su impacto está reflejado en el menor stock al cierre.</div>`;
+    h += buildResumenPorRodeo_(mortCriaPorRodeo, '💀 Muertes en Cría', 'var(--red)', 'rgba(200,50,50,0.06)', mortCriaTotal, 'baja', 'bajas', true);
+    h += `<div style="font-size:12px;color:var(--red);margin:-10px 0 4px">⚠ Su impacto está reflejado en el menor stock al cierre.</div>`;
+    h += `<div style="font-size:11px;color:var(--text3);margin:0 0 16px">Nota: mezcla nacidos muertos por parto con muertes reales — todavía no se pueden separar.</div>`;
   }
 
   if (abortosCriaTotal2 > 0) {
     const abortosPorRodeo2 = {};
     abortosCriaFilt2.forEach(a => { abortosPorRodeo2[a.rodeo_id] = (abortosPorRodeo2[a.rodeo_id]||0) + 1; });
     h += buildResumenPorRodeo_(abortosPorRodeo2, '⊘ Abortos en Cría', 'var(--clay-text)', 'rgba(180,100,30,0.06)', abortosCriaTotal2, 'aborto', 'abortos');
+  }
+
+  // ── KPIs de vacas — consolidado de todos los rodeos de categoría "vaca"
+  // (respeta el filtro de campo de arriba). Reusa vacasPendientesDeParir_
+  // rodeo por rodeo y suma — misma fórmula ya validada en Pariciones
+  // (Preñadas del Tacto final − Abortadas − Paridas), no una cuenta nueva.
+  const rodeosVacaKpi = rodeosCriaFilt.filter(r => (r.categoria||'').toLowerCase() === 'vaca');
+  if (rodeosVacaKpi.length) {
+    let kpiPrenadas=0, kpiParidas=0, kpiAbortadas=0, kpiPendientes=0, rodeosSinTactoFinalKpi=0;
+    rodeosVacaKpi.forEach(r => {
+      const res = vacasPendientesDeParir_(r.rodeo_id);
+      if (res.sinTactoFinal) { rodeosSinTactoFinalKpi++; return; }
+      kpiPrenadas += res.prenadas;
+      kpiParidas += res.yaParieron;
+      kpiAbortadas += res.abortos;
+      kpiPendientes += res.pendientes;
+    });
+    const kpiMuertas = mortandadCriaFilt
+      .filter(m => rodeosVacaKpi.some(r => String(r.rodeo_id)===String(m.rodeo_id)))
+      .reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+    h += `<div class="panel"><div class="panel-title">🐮 Vacas — resumen de la campaña</div>`;
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+      <div class="kpi"><div class="kpi-label">Preñadas (tacto final)</div><div class="kpi-val">${fn(kpiPrenadas)}</div></div>
+      <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(kpiParidas)}</div></div>
+      <div class="kpi"><div class="kpi-label">Abortadas</div><div class="kpi-val" style="color:var(--clay-text)">${fn(kpiAbortadas)}</div></div>
+      <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(kpiMuertas)}</div></div>
+      <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(kpiPendientes)}</div></div>
+    </div>`;
+    if (rodeosSinTactoFinalKpi > 0) {
+      h += `<div style="font-size:11px;color:var(--text3);margin-top:8px">⚠ ${rodeosSinTactoFinalKpi} rodeo(s) de vacas sin "Tacto final" cargado — no están incluidos en Preñadas/Pendientes.</div>`;
+    }
+    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas − Abortadas − Paridas = Pendientes. No identifica vaca por vaca — si una preñada se vendió o murió sin abortar ni parir, sigue contada como pendiente.</div>`;
+    h += '</div>';
   }
 
   return h;
@@ -3125,16 +3182,16 @@ window.paActualizarAvisoPendientes_ = function() {
   if (!aviso) return;
   const rodeoId = document.getElementById('pa-rodeo')?.value;
   if (!rodeoId) { aviso.innerHTML = ''; return; }
-  const { prenadas, yaParieron, pendientes } = vacasPendientesDeParir_(rodeoId);
-  if (prenadas === 0) {
+  const { prenadas, yaParieron, abortos, pendientes, sinTactoFinal } = vacasPendientesDeParir_(rodeoId);
+  if (sinTactoFinal) {
     aviso.innerHTML = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600">
-      ⚠ Este rodeo no tiene vacas preñadas confirmadas por Tacto todavía — no vamos a poder calcular cuántas faltan parir.
+      ⚠ Este rodeo no tiene un "Tacto final" cargado todavía — no vamos a poder calcular cuántas faltan parir (el Tacto IATF solo no alcanza, hace falta el total confirmado en el tacto final).
     </div>`;
   } else {
     aviso.innerHTML = `<div style="background:var(--bg2);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--text2)">
-      🐮 <strong>${fn(prenadas)}</strong> vacas preñadas confirmadas · <strong>${fn(yaParieron)}</strong> ya parieron ·
+      🐮 <strong>${fn(prenadas)}</strong> vacas preñadas (tacto final) · <strong>${fn(yaParieron)}</strong> ya parieron${abortos>0?` · <strong style="color:var(--red)">${fn(abortos)}</strong> abortaron`:''} ·
       <strong style="color:var(--gold-text)">${fn(pendientes)} aprox. quedarían por parir</strong>
-      <div style="font-size:11px;color:var(--text3);margin-top:2px">Estimado — asume ~1 cría por vaca preñada, no identifica cuál vaca parió cada ternero.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">Preñadas − abortadas − ya parieron. No identifica cuál vaca parió/abortó cada una — si una vaca preñada se vendió o murió sin haber abortado ni parido, todavía se cuenta como "pendiente" (no hay forma de saber cuál era).</div>
     </div>`;
   }
 };
@@ -3441,7 +3498,11 @@ function buildCurvaNacimientos() {
     <td class="tc">—</td></tr>`;
   h += '</tbody></table></div></div>';
 
-  // ── Mortandad agrupada por rodeo y categoría (terneros muertos, vacas muertas) ──
+  // ── Mortandad agrupada por rodeo, separada en secciones por categoría — ANTES
+  // era una sola tabla mezclando vacas y terneros en la misma lista (aunque
+  // tuviera la columna "categoría", había que escanearla a mano fila por fila
+  // para separarlas). Ahora son bloques separados, cada uno con su propio
+  // subtotal — "Terneros/as muertos" queda como su propio número, no mezclado.
   const rodeosPorIdCN = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
   const mortPorRodeo = {};
   mortandad.forEach(m => {
@@ -3452,21 +3513,37 @@ function buildCurvaNacimientos() {
     }
     mortPorRodeo[rid].cant += Number(m.cantidad) || 1;
   });
-  const filasMortRodeo = Object.values(mortPorRodeo).sort((a,b)=>b.cant-a.cant);
-  h += `<div class="panel"><div class="panel-title">☠ Mortandad por rodeo y categoría</div>`;
-  if (!filasMortRodeo.length) {
+  const todasFilas = Object.values(mortPorRodeo);
+  const grupoDe_ = (cat) => {
+    const c = String(cat||'').toLowerCase();
+    if (c==='ternero'||c==='ternera') return 'Terneros/as';
+    if (c==='vaca') return 'Vacas';
+    return 'Otras categorías';
+  };
+  const secciones = { 'Terneros/as': [], 'Vacas': [], 'Otras categorías': [] };
+  todasFilas.forEach(f => secciones[grupoDe_(f.categoria)].push(f));
+
+  h += `<div class="panel"><div class="panel-title">☠ Mortandad por rodeo, separada por categoría</div>`;
+  if (!todasFilas.length) {
     h += `<p class="helper-text">Sin mortandad para este filtro.</p>`;
   } else {
-    h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Rodeo</th><th>Categoría</th><th class="tc">Cantidad muerta</th>
-    </tr></thead><tbody>`;
-    filasMortRodeo.forEach(f => {
-      h += `<tr><td><strong>${f.nombre}</strong></td><td style="text-transform:capitalize">${f.categoria}</td><td class="tc" style="color:#8c1d17;font-weight:700">${fn(f.cant)}</td></tr>`;
+    ['Terneros/as','Vacas','Otras categorías'].forEach(nombreSeccion => {
+      const filas = secciones[nombreSeccion].sort((a,b)=>b.cant-a.cant);
+      if (!filas.length) return;
+      const totalSeccion = filas.reduce((s,f)=>s+f.cant,0);
+      h += `<div style="margin-top:14px"><div style="font-weight:700;font-size:13px;margin-bottom:6px">${nombreSeccion} — total: <span style="color:#8c1d17">${fn(totalSeccion)}</span></div>
+        <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Categoría</th><th class="tc">Cantidad muerta</th></tr></thead><tbody>`;
+      filas.forEach(f => {
+        h += `<tr><td><strong>${f.nombre}</strong></td><td style="text-transform:capitalize">${f.categoria}</td><td class="tc" style="color:#8c1d17;font-weight:700">${fn(f.cant)}</td></tr>`;
+      });
+      h += '</tbody></table></div></div>';
     });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2">TOTAL</td><td class="tc">${fn(filasMortRodeo.reduce((s,f)=>s+f.cant,0))}</td></tr>`;
-    h += '</tbody></table></div>';
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;margin-top:14px;border-top:2px solid var(--border)">
+      <div style="font-weight:800">TOTAL GENERAL</div>
+      <div style="font-size:16px;font-weight:800;color:#8c1d17">${fn(todasFilas.reduce((s,f)=>s+f.cant,0))}</div>
+    </div>`;
   }
-  h += `<p class="helper-text" style="margin-top:8px">Nota: hasta que no exista un campo "Causa" en Mortandad (pendiente de diseño), este total mezcla nacidos muertos por parto con muertes reales — no se pueden separar todavía.</p>`;
+  h += `<p class="helper-text" style="margin-top:8px">Nota: hasta que no exista un campo "Causa" en Mortandad (pendiente de diseño), estos totales mezclan nacidos muertos por parto con muertes reales — no se pueden separar todavía. La categoría de cada fila es la del <strong>rodeo</strong> (no del animal individual), así que un rodeo mal categorizado en el catálogo va a aparecer en la sección equivocada acá.</p>`;
   h += '</div>';
 
   // ── Detalle de mortandad (todas las del filtro, más recientes primero) ──
