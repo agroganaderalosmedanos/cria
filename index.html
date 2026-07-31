@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_65';
+const APP_VERSION = 'index_consolidado_4_6_155_66';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3440,6 +3440,34 @@ function buildCurvaNacimientos() {
     <td class="tc">${fn(filasRodeo.reduce((s,f)=>s+f.total,0))}</td>
     <td class="tc">—</td></tr>`;
   h += '</tbody></table></div></div>';
+
+  // ── Mortandad agrupada por rodeo y categoría (terneros muertos, vacas muertas) ──
+  const rodeosPorIdCN = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
+  const mortPorRodeo = {};
+  mortandad.forEach(m => {
+    const rid = String(m.rodeo_id);
+    if (!mortPorRodeo[rid]) {
+      const r = rodeosPorIdCN[rid];
+      mortPorRodeo[rid] = { nombre: r?.nombre||rodeoNombre(rid), categoria: r?.categoria||'—', cant: 0 };
+    }
+    mortPorRodeo[rid].cant += Number(m.cantidad) || 1;
+  });
+  const filasMortRodeo = Object.values(mortPorRodeo).sort((a,b)=>b.cant-a.cant);
+  h += `<div class="panel"><div class="panel-title">☠ Mortandad por rodeo y categoría</div>`;
+  if (!filasMortRodeo.length) {
+    h += `<p class="helper-text">Sin mortandad para este filtro.</p>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Categoría</th><th class="tc">Cantidad muerta</th>
+    </tr></thead><tbody>`;
+    filasMortRodeo.forEach(f => {
+      h += `<tr><td><strong>${f.nombre}</strong></td><td style="text-transform:capitalize">${f.categoria}</td><td class="tc" style="color:#8c1d17;font-weight:700">${fn(f.cant)}</td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2">TOTAL</td><td class="tc">${fn(filasMortRodeo.reduce((s,f)=>s+f.cant,0))}</td></tr>`;
+    h += '</tbody></table></div>';
+  }
+  h += `<p class="helper-text" style="margin-top:8px">Nota: hasta que no exista un campo "Causa" en Mortandad (pendiente de diseño), este total mezcla nacidos muertos por parto con muertes reales — no se pueden separar todavía.</p>`;
+  h += '</div>';
 
   // ── Detalle de mortandad (todas las del filtro, más recientes primero) ──
   const mortOrdenada = mortandad.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
