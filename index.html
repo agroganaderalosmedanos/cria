@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_70';
+const APP_VERSION = 'index_consolidado_4_6_155_71';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3361,7 +3361,7 @@ function buildCurvaNacimientos() {
 
   h += `<div class="panel">
     <div class="panel-title">🐣 Curva de nacimientos y mortandad, por semana</div>
-    <p class="helper-text" style="margin-bottom:14px">Nacidos vivos, nacidos muertos (Pariciones) y mortandad — agrupados por semana, para ver de un vistazo si un pico de muertes coincide con un pico de nacimientos. La mortandad mostrada es solo de los rodeos madre que tuvieron parición y de los rodeos de terneros/terneras — no de otras categorías (novillos, vaquillonas, etc.) que puedan estar en el mismo campo.</p>
+    <p class="helper-text" style="margin-bottom:14px">Nacidos vivos, nacidos muertos (Pariciones) y mortandad — agrupados por semana, para ver de un vistazo si un pico de muertes coincide con un pico de nacimientos. La mortandad mostrada es de rodeos de categoría vaca, ternero o ternera — no de otras categorías (novillos, vaquillonas, etc.) que puedan estar en el mismo campo.</p>
     <div class="fgrid" style="margin-bottom:14px">
       <div class="fg"><label>Campo</label>
         <select onchange="S._curvaNacCampo=this.value;S._curvaNacRodeo='';render()">
@@ -3388,15 +3388,20 @@ function buildCurvaNacimientos() {
   };
   const pariciones = (S.cache.pariciones || []).filter(p => rodeoMatch_(p.rodeo_id));
   // Mortandad: NO cualquier rodeo del campo (eso traía Novillos, Vaquillonas,
-  // etc. que no tienen nada que ver con la parición) — solo los rodeos madre
-  // que efectivamente tuvieron una parición en este filtro, más los rodeos de
-  // terneros/terneras (donde van los nacidos vivos y donde ocurre la "muerte
-  // real" post-nacimiento que se quiere distinguir del nacido muerto).
-  const rodeosMadre = new Set(pariciones.map(p => String(p.rodeo_id)));
-  const rodeosTerneros = new Set(
-    rodeosAll.filter(r => (r.categoria==='ternero'||r.categoria==='ternera') && rodeoMatch_(r.rodeo_id)).map(r => String(r.rodeo_id))
+  // etc. que no tienen nada que ver con la parición) — se limita a rodeos de
+  // categoría vaca/ternero/ternera. OJO: antes esto dependía de que el rodeo
+  // ya tuviera una Parición registrada para "contar" — si filtrabas por campo
+  // y una vaca murió sin que ese rodeo hubiera tenido parición todavía (o en
+  // absoluto), esa mortandad quedaba afuera del filtro por completo. Ahora se
+  // define directo por la categoría del rodeo, sin depender de si hay
+  // pariciones cargadas o no.
+  const rodeosRelevantesMort = new Set(
+    rodeosAll.filter(r => {
+      const cat = (r.categoria||'').toLowerCase();
+      return (cat==='vaca'||cat==='ternero'||cat==='ternera') && rodeoMatch_(r.rodeo_id);
+    }).map(r => String(r.rodeo_id))
   );
-  const mortandad = (S.cache.mortandad || []).filter(m => rodeosMadre.has(String(m.rodeo_id)) || rodeosTerneros.has(String(m.rodeo_id)));
+  const mortandad = (S.cache.mortandad || []).filter(m => rodeosRelevantesMort.has(String(m.rodeo_id)));
 
   if (!pariciones.length && !mortandad.length) {
     h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pariciones ni mortandad registradas para este filtro todavía.</div></div></div>`;
