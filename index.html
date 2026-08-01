@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_89';
+const APP_VERSION = 'index_consolidado_4_6_155_90';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3488,28 +3488,53 @@ window.paBuscarHuerfanos_ = async function() {
       el.innerHTML = '<div style="background:var(--green-bg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--green-text);font-weight:600">✓ No se encontró ningún huérfano — todo lo que hay en Movimientos y Mortandad tiene su Parición o Aborto correspondiente.</div>';
       return;
     }
-    let t = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600;margin-bottom:10px">
-      ⚠ Se encontraron ${filas.length} registro(s) para revisar — huérfanos (de Pariciones/Abortos ya borrados) o desincronizados (el aborto se editó — rodeo/fecha — pero el traslado vinculado quedó con los datos viejos).
-    </div>`;
-    t += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Tipo</th><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Origen</th><th></th>
-    </tr></thead><tbody>`;
-    filas.forEach(f => {
-      t += `<tr>
-        <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${f.rodeo}</td><td class="tc">${fn(f.cantidad)}</td>
-        <td style="font-size:11px;color:var(--text3)">${f.origen}</td>
-        <td>${f.desincronizado
-          ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
-          : f.soloRevision
-            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
-            : `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`}</td>
-      </tr>`;
-    });
-    t += '</tbody></table></div>';
-    el.innerHTML = t;
+    // Se guarda para poder reordenar sin tener que volver a correr toda la
+    // búsqueda — y se ordena por rodeo de entrada, para poder ir corrigiendo
+    // de a un rodeo por vez.
+    window._paHuerfanosFilas = filas;
+    S._paHuerfanosSortCol = 'rodeo';
+    S._paHuerfanosSortDir = 'asc';
+    window.paRenderHuerfanosTabla_();
   } catch (err) {
     el.innerHTML = `<div style="color:var(--red);font-size:13px">Error al buscar: ${err.message}</div>`;
   }
+};
+window.paRenderHuerfanosTabla_ = function() {
+  const el = document.getElementById('pa-huerfanos-resultado');
+  if (!el) return;
+  const filas = window._paHuerfanosFilas || [];
+  const sortCol = S._paHuerfanosSortCol || 'rodeo';
+  const sortDir = S._paHuerfanosSortDir || 'asc';
+  const ordenadas = filas.slice().sort((a,b) => {
+    const va = String(a[sortCol]??''), vb = String(b[sortCol]??'');
+    const c = va.localeCompare(vb, 'es', {numeric:true});
+    return sortDir==='asc' ? c : -c;
+  });
+  const cols = [
+    {key:'tipoLabel', label:'Tipo'}, {key:'fecha', label:'Fecha'}, {key:'rodeo', label:'Rodeo'},
+    {key:'cantidad', label:'Cantidad', cls:'tc'}, {key:'origen', label:'Origen'},
+  ];
+  const flecha = (key) => sortCol===key ? (sortDir==='asc'?' ▲':' ▼') : '';
+  let t = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600;margin-bottom:10px">
+    ⚠ Se encontraron ${filas.length} registro(s) para revisar — huérfanos (de Pariciones/Abortos ya borrados) o desincronizados (el aborto se editó — rodeo/fecha — pero el traslado vinculado quedó con los datos viejos).
+  </div>`;
+  t += `<div class="tw"><table class="dt"><thead><tr>
+    ${cols.map(c=>`<th class="${c.cls||''}" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}" onclick="S._paHuerfanosSortDir=(S._paHuerfanosSortCol==='${c.key}'&&S._paHuerfanosSortDir==='asc')?'desc':'asc';S._paHuerfanosSortCol='${c.key}';window.paRenderHuerfanosTabla_()">${c.label}${flecha(c.key)}</th>`).join('')}
+    <th></th>
+  </tr></thead><tbody>`;
+  ordenadas.forEach(f => {
+    t += `<tr>
+      <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${f.rodeo}</td><td class="tc">${fn(f.cantidad)}</td>
+      <td style="font-size:11px;color:var(--text3)">${f.origen}</td>
+      <td>${f.desincronizado
+        ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
+        : f.soloRevision
+          ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
+          : `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`}</td>
+    </tr>`;
+  });
+  t += '</tbody></table></div>';
+  el.innerHTML = t;
 };
 window.paBorrarHuerfano_ = async function(entity, id) {
   if (!confirm('¿Borrar este registro huérfano? Esta acción no se puede deshacer.')) return;
