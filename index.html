@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_104';
+const APP_VERSION = 'index_consolidado_4_6_155_105';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -484,11 +484,17 @@ function poolReproductivoRodeo_(rodeoId, infoTacto, corte) {
   const eventos = [];
   (S.cache.abortos||[]).filter(a=>String(a.rodeo_id)===rid && (!fechaTacto||String(a.fecha)>=String(fechaTacto)) && (a.fecha||'')<=corte)
     .forEach(a=> eventos.push({fecha:a.fecha, orden:0, tipo:'aborto', cant:1}));
-  (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===rid && (!fechaTacto||String(p.fecha)>=String(fechaTacto)) && (p.fecha||'')<=corte)
-    .forEach(p=> {
-      const nm = Number(p.nacidos_muertos)||0;
-      if (nm > 0) eventos.push({fecha:p.fecha, orden:0, tipo:'parto', cant:nm});
-    });
+  // OJO — antes acá se sumaba al pool la porción de "nacidos muertos" de
+  // cada parición, asumiendo que esa madre se vendía/trasladaba pronto,
+  // igual que una abortada. Casos reales (Rodeo 5 y Rodeo 3) mostraron que
+  // NO es así: la madre de un ternero nacido muerto (o que nace vivo y
+  // muere días después) se queda en el rodeo igual que cualquier otra que
+  // parió con éxito — la única salida automática del sistema es la de un
+  // ABORTO (que sí genera su propio traslado a "Vacas Venta"). Dejar que el
+  // parto alimentara el pool permitía que ese crédito "tapara" de gratis
+  // una muerte o venta posterior de una vaca totalmente distinta que sí
+  // seguía preñada — por eso ahora SOLO las vacías del tacto y los abortos
+  // alimentan el pool; los partos (vivos o muertos) no.
   (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte && !esMortandadPorParicion_(m))
     .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'muerte', cant:Number(m.cantidad)||1, ref:m}));
   (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte)
