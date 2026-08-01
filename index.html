@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_86';
+const APP_VERSION = 'index_consolidado_4_6_155_87';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3331,8 +3331,8 @@ function buildPariciones() {  const _criaTabs = [
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
   </div>`;
   h += `<div class="panel">
-    <div class="panel-title">🔍 Buscar huérfanos de pariciones borradas</div>
-    <p class="helper-text" style="margin-bottom:10px">Si alguna vez se borró una Parición y el Movimiento/Mortandad vinculado no se borró en cascada (por ejemplo, de antes de que esa corrección existiera), queda un registro "huérfano" inflando el stock sin que se note. Este botón los busca.</p>
+    <div class="panel-title">🔍 Buscar huérfanos de Pariciones/Abortos borrados</div>
+    <p class="helper-text" style="margin-bottom:10px">Si alguna vez se borró una Parición o un Aborto y el Movimiento/Mortandad vinculado no se borró en cascada, queda un registro "huérfano" restando o sumando cabezas sin que se note. Este botón los busca.</p>
     <button class="btn btn-secondary btn-sm" onclick="window.paBuscarHuerfanos_()">🔍 Buscar huérfanos</button>
     <div id="pa-huerfanos-resultado" style="margin-top:12px"></div>
   </div>`;
@@ -3394,24 +3394,52 @@ window.paBuscarHuerfanos_ = async function() {
   if (!el) return;
   el.innerHTML = '<p class="helper-text">Buscando...</p>';
   try {
-    const res = await apiCall('auditarHuerfanosParicion');
-    if (!res || res.total === 0) {
-      el.innerHTML = '<div style="background:var(--green-bg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--green-text);font-weight:600">✓ No se encontró ningún huérfano — todo lo que hay en Movimientos y Mortandad tiene su Parición correspondiente.</div>';
+    // Se calcula del lado del navegador, con lo que ya está cargado — no
+    // depende de una acción nueva en el backend. Nos aseguramos de tener
+    // movimientos, mortandad, pariciones y abortos frescos primero.
+    for (const ent of ['movimientos','mortandad','pariciones','abortos']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+    const idsPariciones = new Set((S.cache.pariciones||[]).map(p=>String(p.paricion_id)));
+    const idsAbortos = new Set((S.cache.abortos||[]).map(a=>String(a.aborto_id)));
+    const filas = [];
+    // Huérfanos de Parición borrada — [pid:<id>] en Movimientos (Saldo inicial) y Mortandad
+    (S.cache.movimientos||[]).forEach(m => {
+      if (m.tipo !== 'Saldo inicial') return;
+      const match = /\[pid:(\d+)\]/.exec(String(m.observaciones||''));
+      if (match && !idsPariciones.has(match[1])) {
+        filas.push({ tipoLabel:'Movimiento (Saldo inicial)', entity:'movimientos', id:m.movimiento_id, fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_destino_id), cantidad:m.cantidad, origen:'Parición id '+match[1]+' (borrada)' });
+      }
+    });
+    (S.cache.mortandad||[]).forEach(m => {
+      const match = /\[pid:(\d+)\]/.exec(String(m.observacion||''));
+      if (match && !idsPariciones.has(match[1])) {
+        filas.push({ tipoLabel:'Mortandad', entity:'mortandad', id:m.mortandad_id, fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_id), cantidad:m.cantidad, origen:'Parición id '+match[1]+' (borrada)' });
+      }
+    });
+    // Huérfanos de Aborto borrado — [abid:<id>] en Movimientos (Traslado por aborto)
+    (S.cache.movimientos||[]).forEach(m => {
+      if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
+      const match = /\[abid:(\d+)\]/.exec(String(m.observaciones||''));
+      if (match && !idsAbortos.has(match[1])) {
+        filas.push({ tipoLabel:'Movimiento (Traslado por aborto)', entity:'movimientos', id:m.movimiento_id, fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad, origen:'Aborto id '+match[1]+' (borrado)' });
+      }
+    });
+    if (!filas.length) {
+      el.innerHTML = '<div style="background:var(--green-bg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--green-text);font-weight:600">✓ No se encontró ningún huérfano — todo lo que hay en Movimientos y Mortandad tiene su Parición o Aborto correspondiente.</div>';
       return;
     }
     let t = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600;margin-bottom:10px">
-      ⚠ Se encontraron ${res.total} registro(s) huérfano(s) — de pariciones que ya no existen.
+      ⚠ Se encontraron ${filas.length} registro(s) huérfano(s) — de Pariciones o Abortos que ya no existen, pero cuyo movimiento vinculado sigue restando o sumando cabezas.
     </div>`;
-    const filas = [...res.movimientos.map(m=>({...m, tipoLabel:'Movimiento (Saldo inicial)'})), ...res.mortandad.map(m=>({...m, tipoLabel:'Mortandad'}))];
     t += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Tipo</th><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Parición (borrada)</th><th></th>
+      <th>Tipo</th><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Origen</th><th></th>
     </tr></thead><tbody>`;
     filas.forEach(f => {
-      const rid = f.rodeo_destino_id || f.rodeo_id;
       t += `<tr>
-        <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${rodeoNombre(rid)}</td><td class="tc">${fn(f.cantidad)}</td>
-        <td style="font-size:11px;color:var(--text3)">id ${f.paricion_id}</td>
-        <td><button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.tipo}','${f.id}')">Borrar</button></td>
+        <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${f.rodeo}</td><td class="tc">${fn(f.cantidad)}</td>
+        <td style="font-size:11px;color:var(--text3)">${f.origen}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button></td>
       </tr>`;
     });
     t += '</tbody></table></div>';
@@ -3420,10 +3448,9 @@ window.paBuscarHuerfanos_ = async function() {
     el.innerHTML = `<div style="color:var(--red);font-size:13px">Error al buscar: ${err.message}</div>`;
   }
 };
-window.paBorrarHuerfano_ = async function(tipo, id) {
+window.paBorrarHuerfano_ = async function(entity, id) {
   if (!confirm('¿Borrar este registro huérfano? Esta acción no se puede deshacer.')) return;
   try {
-    const entity = tipo === 'movimiento' ? 'movimientos' : 'mortandad';
     await apiCall('delete', { body: { entity, id } });
     invalidateCache(entity);
     await loadEntity(entity, true);
