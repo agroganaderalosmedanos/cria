@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_83';
+const APP_VERSION = 'index_consolidado_4_6_155_84';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -475,7 +475,8 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
   const idsVaca = new Set(rodeos.map(r=>String(r.rodeo_id)));
   const exportadasPorRodeo = {}; // rodeo_id -> total preñadas exportadas
-  const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre}]
+  const exportadasDetallePorRodeo = {}; // rodeo_id -> [{cantidad, aNombre, fecha, fechaTacto}]
+  const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre, fecha}]
   (S.cache.movimientos||[]).filter(m=>(m.fecha||'')<=corte).forEach(m => {
     if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
     const origId = String(m.rodeo_origen_id), destId = String(m.rodeo_destino_id);
@@ -487,9 +488,12 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const prenMovidas = Math.round(cant * infoOrig.tasa);
     if (prenMovidas <= 0) return;
     exportadasPorRodeo[origId] = (exportadasPorRodeo[origId]||0) + prenMovidas;
+    if (!exportadasDetallePorRodeo[origId]) exportadasDetallePorRodeo[origId] = [];
+    const destNombre = (rodeos.find(r=>String(r.rodeo_id)===destId)||{}).nombre || rodeoNombre(destId);
+    exportadasDetallePorRodeo[origId].push({ cantidad: prenMovidas, aNombre: destNombre, fecha: m.fecha, fechaTacto: infoOrig.fecha });
     if (!importadasPorRodeo[destId]) importadasPorRodeo[destId] = [];
     const origNombre = (rodeos.find(r=>String(r.rodeo_id)===origId)||{}).nombre || rodeoNombre(origId);
-    importadasPorRodeo[destId].push({ cantidad: prenMovidas, deNombre: origNombre });
+    importadasPorRodeo[destId].push({ cantidad: prenMovidas, deNombre: origNombre, fecha: m.fecha, fechaTacto: infoOrig.fecha });
   });
 
   // Vacas vendidas o trasladadas a un rodeo que NO es de categoría reproductiva
@@ -521,6 +525,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const res = vacasPendientesDeParir_(r.rodeo_id);
     const stockActual = Math.max(0, stockACorte[rid]||0);
     const exportadas = exportadasPorRodeo[rid] || 0;
+    const exportadasDetalle = exportadasDetallePorRodeo[rid] || [];
     const importadas = importadasPorRodeo[rid] || [];
     const totalImportadas = importadas.reduce((s,x)=>s+x.cantidad,0);
     const salidasExternas = salidasExternasPorRodeo[rid] || { ventas:0, trasladoNoVaca:0, total:0 };
@@ -535,7 +540,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const sinStock = !res.sinTactoFinal && stockActual === 0;
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
-      stockActual, sinStock, exportadas, importadas, totalImportadas, salidasExternas,
+      stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
       prenadasAjustadas, pendientesAjustado,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
@@ -2768,12 +2773,12 @@ function buildDashboard() {
         h += `<div style="font-size:12px;color:var(--text3)">ℹ Sin stock actual — sus ${fn(f.exportadas||f.prenadas)} preñadas se redistribuyeron a otro(s) rodeo(s) (ver abajo cuál las recibió).</div>`;
       } else {
         h += `<div style="font-size:13px;line-height:1.9">
-          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas</span></div>`;
-        if (f.exportadas > 0) {
-          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Movidas a otro rodeo</span><span>−${fn(f.exportadas)}</span></div>`;
-        }
+          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas <span style="font-size:10px;color:var(--text3)">(tacto ${fd(f.fecha||'')})</span></span></div>`;
+        f.exportadasDetalle.forEach(exp => {
+          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Movidas a ${exp.aNombre} <span style="font-size:10px;color:var(--text3)">(${fd(exp.fecha)})</span></span><span>−${fn(exp.cantidad)}</span></div>`;
+        });
         f.importadas.forEach(imp => {
-          h += `<div style="display:flex;justify-content:space-between;color:var(--green-text)"><span>De ${imp.deNombre}</span><span>+${fn(imp.cantidad)}</span></div>`;
+          h += `<div style="display:flex;justify-content:space-between;color:var(--green-text)"><span>De ${imp.deNombre} <span style="font-size:10px;color:var(--text3)">(${fd(imp.fecha)})</span></span><span>+${fn(imp.cantidad)}</span></div>`;
         });
         if (f.salidasExternas.ventas > 0) {
           h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Vendidas</span><span>−${fn(f.salidasExternas.ventas)}</span></div>`;
@@ -12400,8 +12405,8 @@ async function exportarAuditoriaReproductivaExcel_() {
         ...rv,
         rodeoTerneros: rodeoTerneros ? rodeoTerneros.nombre : '(no encontrado)',
         ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
-        exportadasTxt: rv.exportadas>0 ? `−${rv.exportadas}` : '',
-        importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre}`).join('; ') : '',
+        exportadasTxt: rv.exportadasDetalle.length ? rv.exportadasDetalle.map(e=>`−${e.cantidad} a ${e.aNombre} (${fd(e.fecha)}, tacto ${fd(e.fechaTacto)})`).join('; ') : '',
+        importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre} (${fd(i.fecha)})`).join('; ') : '',
       };
     });
 
