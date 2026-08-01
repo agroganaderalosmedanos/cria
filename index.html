@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_71';
+const APP_VERSION = 'index_consolidado_4_6_155_73';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3125,12 +3125,19 @@ function buildPariciones() {  const _criaTabs = [
     <div id="pa-aviso-pendientes" style="margin-top:10px"></div>
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
   </div>`;
+  h += `<div class="panel">
+    <div class="panel-title">🔍 Buscar huérfanos de pariciones borradas</div>
+    <p class="helper-text" style="margin-bottom:10px">Si alguna vez se borró una Parición y el Movimiento/Mortandad vinculado no se borró en cascada (por ejemplo, de antes de que esa corrección existiera), queda un registro "huérfano" inflando el stock sin que se note. Este botón los busca.</p>
+    <button class="btn btn-secondary btn-sm" onclick="window.paBuscarHuerfanos_()">🔍 Buscar huérfanos</button>
+    <div id="pa-huerfanos-resultado" style="margin-top:12px"></div>
+  </div>`;
   h += `<div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por campo</label>
       <select id="pa-hist-campo" onchange="
         const rid=document.getElementById('pa-hist-rodeo');
         const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
         rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
+        rid.value='';
         paFiltrarHistorial_()">
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
@@ -3176,6 +3183,49 @@ window.paFiltrarHistorial_ = function() {
     ], 'pariciones', 'paricion_id');
     attachTableDeleteEvents('pariciones', 'paricion_id');
   }
+};
+window.paBuscarHuerfanos_ = async function() {
+  const el = document.getElementById('pa-huerfanos-resultado');
+  if (!el) return;
+  el.innerHTML = '<p class="helper-text">Buscando...</p>';
+  try {
+    const res = await apiCall('auditarHuerfanosParicion');
+    if (!res || res.total === 0) {
+      el.innerHTML = '<div style="background:var(--green-bg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--green-text);font-weight:600">✓ No se encontró ningún huérfano — todo lo que hay en Movimientos y Mortandad tiene su Parición correspondiente.</div>';
+      return;
+    }
+    let t = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600;margin-bottom:10px">
+      ⚠ Se encontraron ${res.total} registro(s) huérfano(s) — de pariciones que ya no existen.
+    </div>`;
+    const filas = [...res.movimientos.map(m=>({...m, tipoLabel:'Movimiento (Saldo inicial)'})), ...res.mortandad.map(m=>({...m, tipoLabel:'Mortandad'}))];
+    t += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Tipo</th><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Parición (borrada)</th><th></th>
+    </tr></thead><tbody>`;
+    filas.forEach(f => {
+      const rid = f.rodeo_destino_id || f.rodeo_id;
+      t += `<tr>
+        <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${rodeoNombre(rid)}</td><td class="tc">${fn(f.cantidad)}</td>
+        <td style="font-size:11px;color:var(--text3)">id ${f.paricion_id}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.tipo}','${f.id}')">Borrar</button></td>
+      </tr>`;
+    });
+    t += '</tbody></table></div>';
+    el.innerHTML = t;
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--red);font-size:13px">Error al buscar: ${err.message}</div>`;
+  }
+};
+window.paBorrarHuerfano_ = async function(tipo, id) {
+  if (!confirm('¿Borrar este registro huérfano? Esta acción no se puede deshacer.')) return;
+  try {
+    const entity = tipo === 'movimiento' ? 'movimientos' : 'mortandad';
+    await apiCall('delete', { body: { entity, id } });
+    invalidateCache(entity);
+    await loadEntity(entity, true);
+    S.stock = null; await loadStock();
+    toast('Huérfano eliminado', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
 };
 window.paActualizarAvisoPendientes_ = function() {
   const aviso = document.getElementById('pa-aviso-pendientes');
@@ -3262,6 +3312,7 @@ function buildMortandad() {
         const rid=document.getElementById('mo-hist-rodeo');
         const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
         rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
+        rid.value='';
         moFiltrarHistorial_()">
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
