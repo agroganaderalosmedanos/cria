@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_98';
+const APP_VERSION = 'index_consolidado_4_6_155_99';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -14106,74 +14106,51 @@ function renderStockHaciendaActual_() {
 function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
   const movs       = S.cache.movimientos || [];
   const ventas     = S.cache.ventas      || [];
-  const pariciones = S.cache.pariciones  || [];
   const mortandad  = S.cache.mortandad   || [];
   const destetes   = S.cache.destetes    || [];
 
-  // Construir universo de rodeos que tuvieron actividad hasta la fecha de corte
-  // (en lugar de usar el catálogo con campo actual, derivamos campo desde los movimientos)
-  const rodeosSet = {};
-
-  // De los movimientos ≤ fechaCorte, registrar el campo que corresponde a cada rodeo
-  // El campo de un rodeo a una fecha dada = campo_destino del último saldo inicial o traslado_en_bloque con destino ese rodeo
-  movs.filter(function(m){ return (m.fecha || '') <= fechaCorte; }).forEach(function(m) {
-    const cant = Number(m.cantidad) || 0;
-    if (m.rodeo_destino_id) {
-      const id = String(m.rodeo_destino_id);
-      if (!rodeosSet[id]) rodeosSet[id] = { rodeo_id: id, campo_id: m.campo_destino_id };
-      // Actualizar campo destino con el último movimiento que lo "ubica"
-      if (m.campo_destino_id) rodeosSet[id].campo_id = m.campo_destino_id;
-    }
-    if (m.rodeo_origen_id && m.tipo !== 'Saldo inicial') {
-      const id = String(m.rodeo_origen_id);
-      if (!rodeosSet[id]) rodeosSet[id] = { rodeo_id: id, campo_id: m.campo_origen_id };
-    }
-  });
-  // También incluir rodeos que tengan ventas/pariciones/mortandad/destetes
-  ventas.filter(function(v){ return (v.fecha_salida || '') <= fechaCorte && v.rodeo_id; }).forEach(function(v){
-    const id = String(v.rodeo_id);
-    if (!rodeosSet[id]) rodeosSet[id] = { rodeo_id: id, campo_id: v.campo_id };
-  });
-
-  // Completar con info del catálogo (nombre, categoría) para los rodeos que aparecen
+  // OJO — REESCRITO DE RAÍZ. Antes esta función intentaba "descubrir" qué
+  // rodeos existían mirando los movimientos (usando el campo_destino_id
+  // grabado en cada movimiento como fuente de verdad) — un enfoque frágil:
+  // si algún movimiento de ese rodeo tenía el campo_id vacío o desactualizado,
+  // el rodeo entero podía terminar SIN campo asignado y quedar excluido de
+  // cualquier filtro por campo — invisible en la pantalla, sin ningún aviso.
+  // Esto es lo que le pasaba a "Terneros (Vacas 2023)". El Libro de
+  // Movimientos nunca tuvo este problema porque usa el catálogo de Rodeos
+  // como fuente de verdad del campo (ver campoDe_ más arriba) — ahora esta
+  // función hace exactamente lo mismo: el universo de rodeos sale SIEMPRE del
+  // catálogo, nunca de "lo que aparece mencionado en los movimientos".
   const catalogRodeos = rodeosTodos();
-  Object.values(rodeosSet).forEach(function(rs) {
-    const cat = catalogRodeos.find(function(r){ return String(r.rodeo_id) === String(rs.rodeo_id); });
-    rs.nombre    = cat ? cat.nombre    : ('Rodeo ' + rs.rodeo_id);
-    rs.categoria = cat ? cat.categoria : '—';
-    // campo_id desde movimiento; si falta, fallback al catálogo
-    if (!rs.campo_id && cat) rs.campo_id = cat.campo_id;
-  });
-
-  // Aplicar filtros de campo y categoría
-  var rodeosFiltrados = Object.values(rodeosSet).filter(function(rs) {
-    if (campoFiltro && String(rs.campo_id) !== String(campoFiltro)) return false;
-    if (catFiltro && rs.categoria !== catFiltro) return false;
+  var rodeosFiltrados = catalogRodeos.filter(function(r) {
+    if (campoFiltro && String(r.campo_id) !== String(campoFiltro)) return false;
+    if (catFiltro && r.categoria !== catFiltro) return false;
     return true;
   });
 
-  // Calcular stock por rodeo
+  // Cálculo de stock — MISMA fórmula exacta que stockPorRodeoACorte_ (la
+  // función ya validada y usada en el resto de la app), para que este reporte
+  // no vuelva a divergir del resto. Se le suma acá, aparte, la resta de
+  // Destetes (que stockPorRodeoACorte_ no contempla porque un destete que se
+  // traslada a Recría ya se cuenta vía el Movimiento; esta pantalla en
+  // particular sí venía restando el destete en sí — se mantiene ese criterio
+  // para no cambiar el comportamiento de otros rodeos que dependían de eso).
   var resultado = [];
   rodeosFiltrados.forEach(function(r) {
     var stock = 0;
-
-    // Saldos iniciales con fecha ≤ corte
     movs.filter(function(m){
       return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(r.rodeo_id) && (m.fecha || '') <= fechaCorte;
     }).forEach(function(m){ stock += Number(m.cantidad) || 0; });
-
-    // Traslados y otros movimientos ≤ corte
     movs.filter(function(m){ return m.tipo !== 'Saldo inicial' && (m.fecha || '') <= fechaCorte; }).forEach(function(m) {
       if (String(m.rodeo_destino_id) === String(r.rodeo_id)) stock += Number(m.cantidad) || 0;
       if (String(m.rodeo_origen_id)  === String(r.rodeo_id)) stock -= Number(m.cantidad) || 0;
     });
     ventas.filter(function(v){ return (v.fecha_salida || '') <= fechaCorte && String(v.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(v){ stock -= Number(v.cant_animales) || 0; });
-    // NOTA: los nacimientos NO se suman acá desde la hoja Pariciones (nacidos_vivos)
-    // sobre el rodeo de la VACA — esas cabezas ya están acreditadas, aparte, en el
-    // rodeo de terneros vía su propio Saldo inicial (con el tag [pid:...], ver
-    // esAltaPorParicion_ más arriba). Sumarlas también acá duplicaba los nacimientos
-    // del período (mismo bug ya corregido en calcStockHacienda_ — ver su comentario).
+    // NOTA: los nacimientos NO se suman acá desde la hoja Pariciones
+    // (nacidos_vivos) sobre el rodeo de la VACA — esas cabezas ya están
+    // acreditadas, aparte, en el rodeo de terneros vía su propio Saldo
+    // inicial (con el tag [pid:...]). Sumarlas también acá duplicaba los
+    // nacimientos del período.
     mortandad.filter(function(m){ return (m.fecha || '') <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id) && !esMortandadPorParicion_(m); })
       .forEach(function(m){ stock -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return (d.fecha || '') <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
@@ -14184,7 +14161,7 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
       nombre: r.nombre,
       campo_id: r.campo_id,
       campo: campoNombre(r.campo_id),
-      campoSaldoInicial: null, // ya no es necesario, campo viene de movimientos
+      campoSaldoInicial: null,
       categoria: r.categoria || '—',
       stock: Math.max(0, stock),
     });
