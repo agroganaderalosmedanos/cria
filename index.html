@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_84';
+const APP_VERSION = 'index_consolidado_4_6_155_85';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4564,15 +4564,34 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
 
   pariciones.forEach(function(p) {
     if (!p.nacidos_vivos) return;
+    // OJO — bug encontrado por el usuario: esta línea usaba p.rodeo_id (el
+    // rodeo de la MADRE, ej. "Vacas Rodeo 1") como si los terneros hubieran
+    // entrado ahí — pero físicamente entran al rodeo de TERNEROS. Encima, el
+    // Saldo inicial real (creado automáticamente por el backend al registrar
+    // la parición, tag [pid:<id>]) YA aparece correctamente en el rodeo de
+    // terneros más abajo (bloque de movs.forEach) — así que esta línea
+    // duplicaba el ingreso Y lo mostraba en el rodeo equivocado. Ahora: si ya
+    // existe el Movimiento real vinculado, no se agrega nada acá (ya está
+    // cubierto); solo se muestra esta línea de respaldo para pariciones viejas
+    // sin ese movimiento (cargadas antes de que existiera la automatización),
+    // y en ese caso apuntando al rodeo de TERNEROS correcto, no al de la madre.
+    var tieneMovReal = movs.some(function(m){
+      return m.tipo === 'Saldo inicial' && String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1;
+    });
+    if (tieneMovReal) return;
+    var rodeoMadre = (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return String(r.rodeo_id) === String(p.rodeo_id); });
+    var nombreTerneros = rodeoMadre ? ('Terneros (' + rodeoMadre.nombre + ')') : null;
+    var rodeoTerneros = (nombreTerneros && rodeoMadre) ? (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return r.nombre === nombreTerneros && String(r.campo_id) === String(rodeoMadre.campo_id); }) : null;
+    var ternRodeoId = rodeoTerneros ? rodeoTerneros.rodeo_id : p.rodeo_id;
     lineas.push({
       fecha: p.fecha || '',
       tipo: 'Parición',
-      pill: 'pill-green',
-      desc: 'Nacimientos',
-      rodeo: p.rodeo_id ? rodeoNombre(p.rodeo_id) : '—',
-      campo: campoNombre(campoDe_(p.rodeo_id, p.campo_id || null)),
-      rodeo_id: p.rodeo_id,
-      campo_id: campoDe_(p.rodeo_id, p.campo_id || null),
+      pill: 'pill-gold',
+      desc: 'Nacimientos (sin Movimiento vinculado — revisar)',
+      rodeo: rodeoTerneros ? rodeoNombre(ternRodeoId) : ('Terneros (' + (rodeoMadre?rodeoMadre.nombre:'?') + ') — no encontrado'),
+      campo: campoNombre(campoDe_(ternRodeoId, p.campo_id || null)),
+      rodeo_id: ternRodeoId,
+      campo_id: campoDe_(ternRodeoId, p.campo_id || null),
       entrada: Number(p.nacidos_vivos) || 0,
       salida: 0,
       obs: '',
