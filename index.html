@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_75';
+const APP_VERSION = 'index_consolidado_4_6_155_76';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -818,6 +818,14 @@ async function goto(page) {
     if (!S.cache.productos)        loads.push(loadEntity('productos').catch(()=>{}));
     if (!S.cache.mortandad)        loads.push(loadEntity('mortandad').catch(()=>{}));
     if (!S.cache.abortos)          loads.push(loadEntity('abortos').catch(()=>{}));
+    // OJO — faltaban estos dos: el panel "Vacas — resumen de la campaña" (al
+    // final del Dashboard) necesita Tactos y Pariciones para calcular
+    // Preñadas/Pendientes por rodeo. Sin ellos, si el usuario entraba directo
+    // al Dashboard sin haber visitado antes Tactos o Pariciones en esa misma
+    // sesión, el cálculo corría con esos datos vacíos — mostrando "Sin Tacto
+    // final cargado" en TODOS los rodeos, aunque sí estuviera cargado.
+    if (!S.cache.tactos)           loads.push(loadEntity('tactos').catch(()=>{}));
+    if (!S.cache.pariciones)       loads.push(loadEntity('pariciones').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); render(); });
   }
   if (page === 'indices_reproduccion' && !S.indicesData && !S._indicesLoading) {
