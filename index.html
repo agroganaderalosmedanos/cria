@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_88';
+const APP_VERSION = 'index_consolidado_4_6_155_89';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3442,6 +3442,48 @@ window.paBuscarHuerfanos_ = async function() {
         });
       }
     });
+    // Traslados con "aborto" en el texto pero SIN el tag [abid:...] — invisibles
+    // para la búsqueda de arriba (que solo puede seguir el tag). Puede ser un
+    // traslado cargado a mano imitando el texto automático, sin pasar por el
+    // formulario de Abortos — no se puede saber a cuál Aborto correspondía (si
+    // a alguno), así que se marca para revisión manual, sin acción automática.
+    const trasladosAbortoSinTag = (S.cache.movimientos||[]).filter(m =>
+      (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') &&
+      /aborto/i.test(String(m.observaciones||'')) &&
+      !/\[abid:\d+\]/.test(String(m.observaciones||''))
+    );
+    trasladosAbortoSinTag.forEach(m => {
+      filas.push({
+        tipoLabel:'Traslado con "aborto" en el texto, SIN vincular a ningún Aborto', entity:'movimientos', id:m.movimiento_id,
+        fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
+        origen:`"${m.observaciones}" — revisar a mano si corresponde a un Aborto real o es un duplicado`,
+        soloRevision:true,
+      });
+    });
+    // Posibles duplicados: dos o más traslados a un rodeo de categoría "venta"
+    // con la MISMA fecha, cantidad y observación — típico de una carga hecha
+    // dos veces por error.
+    const trasladosVenta = (S.cache.movimientos||[]).filter(m => {
+      if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return false;
+      const rDest = (S.catalogs.rodeos||[]).find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
+      return rDest && /venta/i.test(rDest.nombre||'');
+    });
+    const vistos = {};
+    trasladosVenta.forEach(m => {
+      const clave = [m.rodeo_origen_id, m.fecha, m.cantidad, String(m.observaciones||'').trim()].join('|');
+      if (!vistos[clave]) { vistos[clave] = []; }
+      vistos[clave].push(m);
+    });
+    Object.values(vistos).filter(grupo=>grupo.length>1).forEach(grupo => {
+      grupo.forEach(m => {
+        filas.push({
+          tipoLabel:'Posible duplicado (mismo rodeo, fecha, cantidad y observación que otro)', entity:'movimientos', id:m.movimiento_id,
+          fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
+          origen:`Hay ${grupo.length} traslados idénticos — revisar si corresponde borrar alguno`,
+          soloRevision:true,
+        });
+      });
+    });
     if (!filas.length) {
       el.innerHTML = '<div style="background:var(--green-bg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--green-text);font-weight:600">✓ No se encontró ningún huérfano — todo lo que hay en Movimientos y Mortandad tiene su Parición o Aborto correspondiente.</div>';
       return;
@@ -3458,7 +3500,9 @@ window.paBuscarHuerfanos_ = async function() {
         <td style="font-size:11px;color:var(--text3)">${f.origen}</td>
         <td>${f.desincronizado
           ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
-          : `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`}</td>
+          : f.soloRevision
+            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
+            : `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`}</td>
       </tr>`;
     });
     t += '</tbody></table></div>';
