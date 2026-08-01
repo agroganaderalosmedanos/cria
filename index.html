@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_101';
+const APP_VERSION = 'index_consolidado_4_6_155_103';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -511,7 +511,23 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     (S.cache.abortos||[]).filter(a=>String(a.rodeo_id)===rid && (!fechaTacto||String(a.fecha)>=String(fechaTacto)) && (a.fecha||'')<=corte)
       .forEach(a=> eventos.push({fecha:a.fecha, orden:0, tipo:'aborto', cant:1}));
     (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===rid && (!fechaTacto||String(p.fecha)>=String(fechaTacto)) && (p.fecha||'')<=corte)
-      .forEach(p=> eventos.push({fecha:p.fecha, orden:0, tipo:'parto', cant:(Number(p.nacidos_vivos)||0)+(Number(p.nacidos_muertos)||0)}));
+      .forEach(p=> {
+        // Solo los nacidos MUERTOS alimentan el pool de "disponibles para
+        // salir sin afectar pendientes" — igual que una abortada, la madre
+        // de un ternero nacido muerto suele venderse/trasladarse pronto. Los
+        // nacidos VIVOS no: la vaca se queda en el rodeo con su cría, no sale
+        // enseguida, así que sus créditos no deben poder "tapar" una muerte o
+        // venta de otra vaca que sí seguía preñada y pendiente.
+        const nm = Number(p.nacidos_muertos)||0;
+        if (nm > 0) eventos.push({fecha:p.fecha, orden:0, tipo:'parto', cant:nm});
+      });
+    // La mortandad (que no sea "nacido muerto" de un parto) también entra
+    // como una SALIDA ambigua, igual que ventas/traslados: no sabemos si la
+    // vaca que murió era una preñada pendiente o una ya resuelta (vacía,
+    // abortada, parida) que todavía no se había movido — así que también
+    // drena primero del pool, y solo el excedente resta de "pendientes".
+    (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte && !esMortandadPorParicion_(m))
+      .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'muerte', cant:Number(m.cantidad)||1, ref:m}));
     (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte)
       .forEach(v=> eventos.push({fecha:v.fecha_salida, orden:1, tipo:'venta', cant:Number(v.cant_animales)||0, ref:v}));
     (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte)
@@ -536,12 +552,20 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   // se redistribuye a ningún otro rodeo, pero sí hay que restarla de
   // "pendientes" SOLO si de verdad excedía el pool de vacías/resueltas.
   const salidasExternasPorRodeo = {}; // rodeo_id -> { ventas, trasladoNoVaca, total }
+  // Mortandad que sí impactó "pendientes" (superó el pool de resueltas
+  // disponibles) — reemplaza la resta directa de TODA la mortandad, que
+  // asumía que la vaca muerta siempre era una preñada pendiente.
+  const muertasSpillPorRodeo = {}; // rodeo_id -> cantidad
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
     const info = infoTactoBase[rid];
     if (info.sinTactoFinal) return;
     const salidas = poolReproductivoRodeo_(rid, info);
     salidas.forEach(s => {
+      if (s.tipo === 'muerte') {
+        if (s.spillPrenadas > 0) muertasSpillPorRodeo[rid] = (muertasSpillPorRodeo[rid]||0) + s.spillPrenadas;
+        return;
+      }
       if (s.spillPrenadas <= 0) return;
       if (s.tipo === 'traslado') {
         const destId = String(s.ref.rodeo_destino_id);
@@ -577,10 +601,15 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const importadas = importadasPorRodeo[rid] || [];
     const totalImportadas = importadas.reduce((s,x)=>s+x.cantidad,0);
     const salidasExternas = salidasExternasPorRodeo[rid] || { ventas:0, trasladoNoVaca:0, total:0 };
+    // La mortandad que realmente resta de "pendientes" es solo la que superó
+    // el pool de vacías/abortadas/paridas disponibles al momento de morir
+    // (ver poolReproductivoRodeo_) — no toda la mortandad registrada, que
+    // puede incluir vacas ya resueltas que todavía no se habían movido.
+    const muertasQueImpactanPendientes = muertasSpillPorRodeo[rid] || 0;
     // Preñadas AJUSTADAS por movimientos entre rodeos — esta es la que se usa
     // para el total consolidado y para "Para parir", no la cruda del tacto.
     const prenadasAjustadas = Math.max(0, res.prenadas - exportadas + totalImportadas);
-    const pendientesAjustado = res.sinTactoFinal ? 0 : Math.max(0, prenadasAjustadas - res.abortos - res.muertas - res.yaParieron - salidasExternas.total);
+    const pendientesAjustado = res.sinTactoFinal ? 0 : Math.max(0, prenadasAjustadas - res.abortos - muertasQueImpactanPendientes - res.yaParieron - salidasExternas.total);
     // "Sin stock" = vaciado por traslado — sus preñadas ya viajaron a otro
     // rodeo (restadas arriba como "exportadas"), así que no debe aportar nada
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
