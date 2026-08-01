@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_93';
+const APP_VERSION = 'index_consolidado_4_6_155_95';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3127,8 +3127,7 @@ function attachTactosEvents() {
       await apiCall('create', { body: { entity: 'tactos', data } });
       invalidateCache('tactos');
       toast('Tacto registrado — ' + pren + ' preñadas, ' + (total - pren) + ' vacías', 'ok');
-      await loadEntity('tactos', true);
-      await loadDashboard();
+      await Promise.all([loadEntity('tactos', true), loadDashboard()]);
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
@@ -3281,9 +3280,8 @@ function attachAbortosEvents() {
       }
       invalidateCache('abortos');
       invalidateCache('movimientos');
-      await loadEntity('abortos', true);
-      await loadEntity('movimientos', true);
-      S.stock = null; await loadStock();
+      S.stock = null;
+      await Promise.all([loadEntity('abortos', true), loadEntity('movimientos', true), loadStock()]);
       S.dashboard = null; S._resultCria = null;
       const msg = ok === 1 ? 'Aborto registrado' : ok + ' abortos registrados';
       toast(msg + (errores ? ` (${errores} con error)` : ''), ok > 0 ? 'ok' : 'err');
@@ -3601,10 +3599,19 @@ function attachParicionesEvents() {
       const result = await apiCall('registrarParicion', { body: { data } });
       invalidateCache('pariciones');
       invalidateCache('movimientos');
-      await loadEntity('pariciones', true);
-      await loadEntity('movimientos', true);
-      await loadCatalogs(); // recargar rodeos por si se creó uno nuevo
-      S.stock = null; await loadStock(); // el nacimiento crea un movimiento (Saldo inicial) — sin esto, "Stock de Hacienda" quedaba con el valor de antes de la parición
+      S.stock = null;
+      // OJO — antes esto hacía 4 pedidos al servidor UNO ATRÁS DEL OTRO
+      // (pariciones, movimientos, catálogos, stock) — cada uno esperando a que
+      // termine el anterior. Como "movimientos" puede ser una hoja grande, la
+      // suma de las 4 esperas hacía que el guardado se sintiera colgado varios
+      // segundos después de terminar en realidad. Ahora corren en paralelo —
+      // el tiempo total es el del más lento de los 4, no la suma de los 4.
+      await Promise.all([
+        loadEntity('pariciones', true),
+        loadEntity('movimientos', true),
+        loadCatalogs(), // recargar rodeos por si se creó uno nuevo
+        loadStock(), // el nacimiento crea un movimiento (Saldo inicial) — sin esto, "Stock de Hacienda" quedaba con el valor de antes de la parición
+      ]);
       S.dashboard = null; S._resultCria = null;
       const vivos = data.nacidos_vivos;
       if (result && result.rodeo_terneros) {
@@ -4116,8 +4123,7 @@ function attachDestetesEvents() {
         };
         await apiCall('create', { body: { entity: 'movimientos', data: movData } });
         invalidateCache('movimientos');
-        await loadEntity('movimientos', true);
-        S.stock = null; await loadStock();
+        await Promise.all([loadEntity('movimientos', true), (async()=>{S.stock=null; await loadStock();})()]);
         toast('✓ Destete registrado y trasladado a "' + (rodeoDestino?.nombre || 'Recría') + '"', 'ok');
       } else {
         toast('Destete registrado — ' + data.total + ' terneros', 'ok');
@@ -4756,18 +4762,24 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
       return false;
     });
     if (tieneMovReal) return;
+    // Si no se encuentra el rodeo de terneros correspondiente, NO hay que
+    // sumarle esta entrada a la madre (eso era el bug original que ya
+    // habíamos corregido antes — no queremos reintroducirlo por la puerta de
+    // atrás). Se muestra igual, para que quede visible que hay algo para
+    // revisar, pero con entrada:0 — no afecta el saldo de NINGÚN rodeo hasta
+    // que se identifique bien a dónde corresponden estos nacimientos.
     lineas.push({
       fecha: p.fecha || '',
       tipo: 'Parición',
       pill: 'pill-gold',
-      desc: 'Nacimientos (sin Movimiento vinculado — revisar)',
+      desc: rodeoTerneros ? 'Nacimientos (sin Movimiento vinculado — revisar)' : 'Nacimientos — rodeo de terneros no encontrado, revisar manualmente',
       rodeo: rodeoTerneros ? rodeoNombre(ternRodeoId) : ('Terneros (' + (rodeoMadre?rodeoMadre.nombre:'?') + ') — no encontrado'),
       campo: campoNombre(campoDe_(ternRodeoId, p.campo_id || null)),
-      rodeo_id: ternRodeoId,
+      rodeo_id: rodeoTerneros ? ternRodeoId : null,
       campo_id: campoDe_(ternRodeoId, p.campo_id || null),
-      entrada: Number(p.nacidos_vivos) || 0,
+      entrada: rodeoTerneros ? (Number(p.nacidos_vivos) || 0) : 0,
       salida: 0,
-      obs: '',
+      obs: rodeoTerneros ? '' : `${p.nacidos_vivos||0} nacidos vivos sin rodeo de destino identificado`,
     });
   });
 
