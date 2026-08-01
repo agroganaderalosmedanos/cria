@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_99';
+const APP_VERSION = 'index_consolidado_4_6_155_100';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4524,7 +4524,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       // (Cría→Recría, Recría→Terminación) — los traslados internos dentro de la misma
       // actividad no necesitan precio porque no afectan el Margen Bruto de ninguna actividad.
       const esCesionInterActividad = (() => {
-        if (m.tipo === 'Saldo inicial') return true; // saldo inicial siempre necesita precio
+        if (m.tipo === 'Saldo inicial') return !esAltaPorParicion_(m); // saldo inicial necesita precio, salvo que sea un nacimiento (no se "compra")
         const or = rodeosPorId_[String(m.rodeo_origen_id)];
         const de = rodeosPorId_[String(m.rodeo_destino_id)];
         if (!or || !de) return false;
