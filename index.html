@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_73';
+const APP_VERSION = 'index_consolidado_4_6_155_74';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3410,6 +3410,7 @@ function buildCurvaNacimientos() {
   const rodeoFiltro = S._curvaNacRodeo || '';
   const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
 
+  h += `<div style="margin-bottom:14px"><button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaReproductivaExcel_()" title="Descarga un Excel con una hoja de recuento físico (para completar a mano en el campo) y una hoja de reconciliación reproductiva completa por rodeo de vacas">📊 Exportar auditoría reproductiva a Excel</button></div>`;
   h += `<div class="panel">
     <div class="panel-title">🐣 Curva de nacimientos y mortandad, por semana</div>
     <p class="helper-text" style="margin-bottom:14px">Nacidos vivos, nacidos muertos (Pariciones) y mortandad — agrupados por semana, para ver de un vistazo si un pico de muertes coincide con un pico de nacimientos. La mortandad mostrada es de rodeos de categoría vaca, ternero o ternera — no de otras categorías (novillos, vaquillonas, etc.) que puedan estar en el mismo campo.</p>
@@ -12111,6 +12112,166 @@ async function exportarAuditoriaCriaExcel_() {
     a.click();
     URL.revokeObjectURL(url);
     toast('✓ Excel de auditoría de Cría descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
+async function exportarAuditoriaReproductivaExcel_() {
+  toast('Generando Excel de auditoría reproductiva... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    for (const ent of ['movimientos','ventas','mortandad','abortos','tactos','pariciones']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+    const corte = today();
+    const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+    const rodeosCria = rodeosAll.filter(r => normAct_(r.actividad)==='cria');
+    const stockACorte = stockPorRodeoACorte_(corte);
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'1F3864'}}, fill:{fgColor:{rgb:'D6E4F0'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1F3864'}}, alignment:{horizontal:'center'}, border:B };
+    const ST_BLANCO = { fill:{fgColor:{rgb:'FFF9E6'}}, border:B }; // celda para completar a mano (conteo físico)
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    // ── HOJA 1: Recuento físico — para salir a contar y comparar contra el sistema ──
+    const headers1 = ['Rodeo','Campo','Categoría','Stock sistema','Conteo físico (completar)','Diferencia (completar)'];
+    const filas1 = rodeosCria.map(r => ({
+      nombre: r.nombre, campo: campoNombre(r.campo_id), categoria: r.categoria||'—',
+      stock: Math.max(0, stockACorte[String(r.rodeo_id)]||0),
+    })).filter(f => f.stock > 0).sort((a,b)=>a.categoria.localeCompare(b.categoria)||b.stock-a.stock);
+    const aoa1 = [
+      [`Agroganadera Los Médanos — Recuento físico (Cría)`],
+      ['Fecha', fd(corte)],
+      ['Nota', 'Completar "Conteo físico" recorriendo cada rodeo en el campo, y "Diferencia" = Conteo físico − Stock sistema. Una diferencia negativa sugiere animales faltantes (venta o muerte sin cargar); una diferencia positiva sugiere un nacimiento, compra o cesión sin cargar.'],
+      [],
+      headers1,
+    ];
+    filas1.forEach(f => aoa1.push([f.nombre, f.campo, f.categoria, f.stock, '', '']));
+    aoa1.push(['TOTAL','','', filas1.reduce((s,f)=>s+f.stock,0), '', '']);
+    const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+    ws1['!cols'] = [{wch:26},{wch:14},{wch:12},{wch:14},{wch:20},{wch:18}];
+    ws1['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers1.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers1.length-1} }];
+    estilarFila_(ws1, 0, headers1.length, ST_TITULO);
+    estilarFila_(ws1, 4, headers1.length, ST_HEADER);
+    filas1.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers1.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws1[addr]) ws1[addr] = { t:'s', v:'' };
+        if (c<=2) ws1[addr].s = alt?ST_ROWLBL_ALT:ST_ROWLBL;
+        else if (c>=4) ws1[addr].s = ST_BLANCO;
+        else ws1[addr].s = alt?ST_ROW_ALT:ST_ROW;
+      }
+    });
+    estilarFila_(ws1, 5+filas1.length, headers1.length, ST_TOTAL);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Recuento físico');
+
+    // ── HOJA 2: Reproducción por rodeo de vacas — vincula cada rodeo de vacas
+    // con su rodeo de terneros por el patrón de nombre que usa el backend al
+    // crearlo ("Terneros (" + nombre de la madre + ")"), para poder cruzar
+    // Paridas (de Pariciones) contra Terneros vivos actuales + muertos (stock real).
+    const rodeosVaca = rodeosCria.filter(r => (r.categoria||'').toLowerCase()==='vaca');
+    const filas2 = rodeosVaca.map(rv => {
+      const nombreTerneros = `Terneros (${rv.nombre})`;
+      const rodeoTerneros = rodeosCria.find(r => r.nombre === nombreTerneros && String(r.campo_id)===String(rv.campo_id));
+      const res = vacasPendientesDeParir_(rv.rodeo_id);
+      const ternerosVivos = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
+      const ternerosMuertos = rodeoTerneros
+        ? (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===String(rodeoTerneros.rodeo_id)).reduce((s,m)=>s+(Number(m.cantidad)||1),0)
+        : null;
+      const ternerosVendidos = rodeoTerneros
+        ? (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoTerneros.rodeo_id)).reduce((s,v)=>s+(Number(v.cant_animales)||0),0)
+        : null;
+      const ternerosCedidos = rodeoTerneros
+        ? (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_origen_id)===String(rodeoTerneros.rodeo_id)).reduce((s,m)=>s+(Number(m.cantidad)||0),0)
+        : null;
+      const pariciones = (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===String(rv.rodeo_id));
+      const nacidosVivosTotal = pariciones.reduce((s,p)=>s+(Number(p.nacidos_vivos)||0),0);
+      const nacidosMuertosTotal = pariciones.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
+      const totalReconciliado = rodeoTerneros ? (ternerosVivos + ternerosMuertos + ternerosVendidos + ternerosCedidos) : null;
+      const diferenciaReconcil = rodeoTerneros ? (nacidosVivosTotal - totalReconciliado) : null;
+      return {
+        nombre: rv.nombre, campo: campoNombre(rv.campo_id),
+        prenadas: res.prenadas, abortadas: res.abortos, parieron: res.yaParieron, pendientes: res.pendientes, sinTactoFinal: res.sinTactoFinal,
+        rodeoTerneros: rodeoTerneros ? rodeoTerneros.nombre : '(no encontrado)',
+        nacidosVivosTotal, nacidosMuertosTotal,
+        ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
+      };
+    });
+    const headers2 = ['Rodeo madre','Campo','Preñadas (tacto final)','Abortadas','Parieron (vacas)','Pendientes de parir',
+      'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
+    const aoa2 = [
+      [`Agroganadera Los Médanos — Auditoría reproductiva`],
+      ['Fecha', fd(corte)],
+      ['Nota', 'Preñadas = último Tacto final cargado. Pendientes = Preñadas − Abortadas − Parieron. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos (todas las Pariciones alguna vez cargadas para ese rodeo) contra lo que hoy se puede verificar (terneros que siguen en stock + los que murieron + los que se vendieron + los que se cedieron a otro rodeo) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
+      [],
+      headers2,
+    ];
+    filas2.forEach(f => aoa2.push([
+      f.nombre, f.campo,
+      f.sinTactoFinal ? 'sin tacto final' : f.prenadas,
+      f.abortadas, f.parieron, f.sinTactoFinal ? '—' : f.pendientes,
+      f.rodeoTerneros, f.nacidosVivosTotal,
+      f.ternerosVivos===null?'(sin rodeo)':f.ternerosVivos,
+      f.ternerosMuertos===null?'—':f.ternerosMuertos,
+      f.ternerosVendidos===null?'—':f.ternerosVendidos,
+      f.ternerosCedidos===null?'—':f.ternerosCedidos,
+      f.diferenciaReconcil===null?'—':f.diferenciaReconcil,
+    ]));
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!cols'] = [{wch:20},{wch:13},{wch:15},{wch:11},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
+    estilarFila_(ws2, 0, headers2.length, ST_TITULO);
+    estilarFila_(ws2, 4, headers2.length, ST_HEADER);
+    filas2.forEach((f,i) => {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers2.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws2[addr]) ws2[addr] = { t:'s', v:'' };
+        let style = (c<=1) ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+        if (c===headers2.length-1 && typeof f.diferenciaReconcil==='number' && f.diferenciaReconcil!==0) {
+          style = { alignment:{horizontal:'center'}, border:B, font:{bold:true,color:{rgb:'C00000'}} };
+        }
+        ws2[addr].s = style;
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ws2, 'Reproducción por rodeo');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Auditoria_Reproductiva_${corte}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de auditoría reproductiva descargado', 'ok');
   } catch(err) {
     console.error(err);
     toast('Error al generar el Excel: ' + err.message, 'err');
