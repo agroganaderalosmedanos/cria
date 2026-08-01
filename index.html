@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_95';
+const APP_VERSION = 'index_consolidado_4_6_155_96';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3329,8 +3329,8 @@ function buildPariciones() {  const _criaTabs = [
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
   </div>`;
   h += `<div class="panel">
-    <div class="panel-title">🔍 Buscar huérfanos de Pariciones/Abortos borrados</div>
-    <p class="helper-text" style="margin-bottom:10px">Si alguna vez se borró una Parición o un Aborto y el Movimiento/Mortandad vinculado no se borró en cascada, queda un registro "huérfano" restando o sumando cabezas sin que se note. Este botón los busca.</p>
+    <div class="panel-title">🔍 Auditoría de Pariciones/Abortos y Movimientos vinculados</div>
+    <p class="helper-text" style="margin-bottom:10px">Busca tres cosas: (1) Movimientos/Mortandad "huérfanos", de una Parición o Aborto que ya no existe; (2) Movimientos desincronizados, de un Aborto que se editó después; (3) Pariciones con nacidos vivos que NUNCA tuvieron su Movimiento de Saldo inicial creado — la causa real de que el Libro de Movimientos no coincida con Stock/Stock de Hacienda. Este botón las busca todas.</p>
     <button class="btn btn-secondary btn-sm" onclick="window.paBuscarHuerfanos_()">🔍 Buscar huérfanos</button>
     <div id="pa-huerfanos-resultado" style="margin-top:12px"></div>
   </div>`;
@@ -3482,6 +3482,42 @@ window.paBuscarHuerfanos_ = async function() {
         });
       });
     });
+    // ── LA CAUSA DE FONDO de que "Stock a una fecha" / Stock de Hacienda /
+    // stock en vivo no coincidan con el Libro de Movimientos: hay Pariciones
+    // con nacidos_vivos que NUNCA tuvieron su Movimiento de Saldo inicial real
+    // creado (de antes de que existiera esa automatización). El Libro lo
+    // compensa mostrando una línea de respaldo — pero esa compensación es SOLO
+    // visual, ahí; el resto de los cálculos de stock no la conocen y quedan
+    // cortos exactamente por esa cantidad. La solución de fondo es crear el
+    // Movimiento real que falta, una sola vez — así TODOS los cálculos leen el
+    // mismo dato completo y dejan de discrepar entre sí.
+    const rodeosPorIdMovFaltante = Object.fromEntries((S.catalogs.rodeos||[]).map(r=>[String(r.rodeo_id),r]));
+    (S.cache.pariciones||[]).forEach(p => {
+      if (!p.nacidos_vivos) return;
+      const rodeoMadreF = rodeosPorIdMovFaltante[String(p.rodeo_id)];
+      const nombreTernerosF = rodeoMadreF ? ('Terneros (' + rodeoMadreF.nombre + ')') : null;
+      const rodeoTernerosF = (nombreTernerosF && rodeoMadreF) ? (S.catalogs.rodeos||[]).find(r => r.nombre===nombreTernerosF && String(r.campo_id)===String(rodeoMadreF.campo_id)) : null;
+      const tieneMovReal = (S.cache.movimientos||[]).some(m => {
+        if (m.tipo !== 'Saldo inicial') return false;
+        if (String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1) return true;
+        if (rodeoTernerosF && String(m.rodeo_destino_id)===String(rodeoTernerosF.rodeo_id) &&
+            String(m.fecha)===String(p.fecha) && Number(m.cantidad)===Number(p.nacidos_vivos)) return true;
+        return false;
+      });
+      if (tieneMovReal) return;
+      filas.push({
+        tipoLabel: 'Parición SIN Movimiento de Saldo inicial (causa real de las diferencias de stock)',
+        entity: 'movimientos', id: null,
+        fecha: p.fecha,
+        rodeo: rodeoTernerosF ? rodeoTernerosF.nombre : (nombreTernerosF || '(rodeo de terneros no identificado)'),
+        cantidad: p.nacidos_vivos,
+        origen: rodeoTernerosF ? 'Falta crear el Movimiento de ingreso' : 'No se pudo identificar el rodeo de terneros — revisar manualmente',
+        crearMov: !!rodeoTernerosF,
+        paricionIdCrear: p.paricion_id,
+        rodeoTernerosId: rodeoTernerosF ? rodeoTernerosF.rodeo_id : null,
+        rodeoTernerosCampoId: rodeoTernerosF ? rodeoTernerosF.campo_id : null,
+      });
+    });
     if (!filas.length) {
       el.innerHTML = '<div style="background:var(--green-bg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--green-text);font-weight:600">✓ No se encontró ningún huérfano — todo lo que hay en Movimientos y Mortandad tiene su Parición o Aborto correspondiente.</div>';
       return;
@@ -3524,11 +3560,15 @@ window.paRenderHuerfanosTabla_ = function() {
     t += `<tr>
       <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${f.rodeo}</td><td class="tc">${fn(f.cantidad)}</td>
       <td style="font-size:11px;color:var(--text3)">${f.origen}</td>
-      <td>${f.desincronizado
+      <td>${f.crearMov
+        ? `<button class="btn btn-primary btn-sm" onclick="window.paCrearMovimientoFaltante_('${f.paricionIdCrear}','${f.rodeoTernerosId}','${f.rodeoTernerosCampoId}','${f.fecha}','${f.cantidad}')">Crear movimiento</button>`
+        : f.desincronizado
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
-        : f.soloRevision
-          ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
-          : `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`}</td>
+          : f.soloRevision
+            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
+            : f.entity && f.id
+              ? `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`
+              : ''}</td>
     </tr>`;
   });
   t += '</tbody></table></div>';
@@ -3560,6 +3600,26 @@ window.paCorregirDesincronizado_ = async function(entity, movId, abortoId) {
     await loadEntity('movimientos', true);
     S.stock = null; await loadStock();
     toast('Traslado corregido', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
+};
+window.paCrearMovimientoFaltante_ = async function(paricionId, rodeoTernerosId, rodeoTernerosCampoId, fecha, cantidad) {
+  if (!confirm(`¿Crear el Movimiento de Saldo inicial que falta? Va a sumar ${cantidad} cabezas al stock de este rodeo de terneros, con fecha ${fd(fecha)} — así deja de faltar en Stock/Stock de Hacienda mientras el Libro ya lo venía compensando solo ahí.`)) return;
+  try {
+    const data = {
+      tipo: 'Saldo inicial',
+      fecha: fecha,
+      campo_destino_id: rodeoTernerosCampoId,
+      rodeo_destino_id: rodeoTernerosId,
+      cantidad: Number(cantidad),
+      precio_cabeza: 0,
+      observaciones: `[pid:${paricionId}] Nacimiento — movimiento creado retroactivamente (auditoría de stock)`,
+    };
+    await apiCall('create', { body: { entity: 'movimientos', data } });
+    invalidateCache('movimientos');
+    await loadEntity('movimientos', true);
+    S.stock = null; await loadStock();
+    toast('Movimiento creado — el stock de este rodeo de terneros ya debería coincidir en todos lados', 'ok');
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
