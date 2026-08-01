@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_87';
+const APP_VERSION = 'index_consolidado_4_6_155_88';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3418,11 +3418,28 @@ window.paBuscarHuerfanos_ = async function() {
       }
     });
     // Huérfanos de Aborto borrado — [abid:<id>] en Movimientos (Traslado por aborto)
+    const abortosPorId = Object.fromEntries((S.cache.abortos||[]).map(a=>[String(a.aborto_id),a]));
     (S.cache.movimientos||[]).forEach(m => {
       if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
       const match = /\[abid:(\d+)\]/.exec(String(m.observaciones||''));
-      if (match && !idsAbortos.has(match[1])) {
+      if (!match) return;
+      if (!idsAbortos.has(match[1])) {
         filas.push({ tipoLabel:'Movimiento (Traslado por aborto)', entity:'movimientos', id:m.movimiento_id, fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad, origen:'Aborto id '+match[1]+' (borrado)' });
+        return;
+      }
+      // El aborto SIGUE existiendo, pero — de antes del arreglo de hoy — puede
+      // haberse editado (rodeo o fecha corregidos) sin que el traslado
+      // vinculado se haya actualizado. Se detecta comparando ambos.
+      const abortoActual = abortosPorId[match[1]];
+      const rodeoDistinto = String(abortoActual.rodeo_id) !== String(m.rodeo_origen_id);
+      const fechaDistinta = String(abortoActual.fecha) !== String(m.fecha);
+      if (rodeoDistinto || fechaDistinta) {
+        filas.push({
+          tipoLabel:'Movimiento desincronizado (Traslado por aborto)', entity:'movimientos', id:m.movimiento_id,
+          fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
+          origen:`Aborto id ${match[1]} ahora es: ${rodeoNombre(abortoActual.rodeo_id)}, ${fd(abortoActual.fecha)}`,
+          desincronizado:true, abortoId:match[1],
+        });
       }
     });
     if (!filas.length) {
@@ -3430,7 +3447,7 @@ window.paBuscarHuerfanos_ = async function() {
       return;
     }
     let t = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600;margin-bottom:10px">
-      ⚠ Se encontraron ${filas.length} registro(s) huérfano(s) — de Pariciones o Abortos que ya no existen, pero cuyo movimiento vinculado sigue restando o sumando cabezas.
+      ⚠ Se encontraron ${filas.length} registro(s) para revisar — huérfanos (de Pariciones/Abortos ya borrados) o desincronizados (el aborto se editó — rodeo/fecha — pero el traslado vinculado quedó con los datos viejos).
     </div>`;
     t += `<div class="tw"><table class="dt"><thead><tr>
       <th>Tipo</th><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Origen</th><th></th>
@@ -3439,7 +3456,9 @@ window.paBuscarHuerfanos_ = async function() {
       t += `<tr>
         <td>${f.tipoLabel}</td><td>${fd(f.fecha)}</td><td>${f.rodeo}</td><td class="tc">${fn(f.cantidad)}</td>
         <td style="font-size:11px;color:var(--text3)">${f.origen}</td>
-        <td><button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button></td>
+        <td>${f.desincronizado
+          ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
+          : `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`}</td>
       </tr>`;
     });
     t += '</tbody></table></div>';
@@ -3456,6 +3475,24 @@ window.paBorrarHuerfano_ = async function(entity, id) {
     await loadEntity(entity, true);
     S.stock = null; await loadStock();
     toast('Huérfano eliminado', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
+};
+window.paCorregirDesincronizado_ = async function(entity, movId, abortoId) {
+  if (!confirm('¿Actualizar este traslado para que coincida con el aborto actual?')) return;
+  try {
+    const aborto = (S.cache.abortos||[]).find(a=>String(a.aborto_id)===String(abortoId));
+    if (!aborto) { toast('No se encontró el aborto — recargá la página e intentá de nuevo.', 'err'); return; }
+    const rodeoNuevo = (S.catalogs.rodeos||[]).find(r => String(r.rodeo_id)===String(aborto.rodeo_id));
+    await apiCall('update', { body: { entity, id: movId, data: {
+      fecha: aborto.fecha,
+      rodeo_origen_id: aborto.rodeo_id,
+      campo_origen_id: rodeoNuevo ? rodeoNuevo.campo_id : undefined,
+    } } });
+    invalidateCache('movimientos');
+    await loadEntity('movimientos', true);
+    S.stock = null; await loadStock();
+    toast('Traslado corregido', 'ok');
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
@@ -16638,6 +16675,30 @@ function openEditModal(entity, idCol, id) {
     try {
       await apiCall('update', { body: { entity, id, data } });
       invalidateCache(entity);
+      // OJO — bug encontrado por el usuario: editar un Aborto (por ejemplo,
+      // corregir el rodeo o la fecha) no actualizaba el Movimiento vinculado
+      // (el Traslado por aborto, tag [abid:<id>]) — quedaba con los datos
+      // VIEJOS, mostrando una "baja por aborto" en un rodeo o fecha que ya no
+      // corresponde al aborto real. Ahora, si se edita el rodeo o la fecha de
+      // un aborto, se busca el Movimiento vinculado y se actualiza también.
+      if (entity === 'abortos' && (data.rodeo_id !== undefined || data.fecha !== undefined)) {
+        try {
+          if (!S.cache.movimientos) await loadEntity('movimientos');
+          const movLigado = (S.cache.movimientos||[]).find(m => (m.observaciones||'').includes(`[abid:${id}]`));
+          if (movLigado) {
+            const rodeoNuevo = (S.catalogs.rodeos||[]).find(r => String(r.rodeo_id)===String(data.rodeo_id));
+            await apiCall('update', { body: { entity: 'movimientos', id: movLigado.movimiento_id, data: {
+              fecha: data.fecha,
+              rodeo_origen_id: data.rodeo_id,
+              campo_origen_id: rodeoNuevo ? rodeoNuevo.campo_id : movLigado.campo_origen_id,
+            } } });
+            invalidateCache('movimientos');
+            await loadEntity('movimientos', true);
+            S.stock = null; await loadStock();
+            toast('Traslado vinculado también actualizado', 'ok');
+          }
+        } catch(e) { toast('El aborto se guardó, pero no se pudo actualizar el traslado vinculado — revisalo manualmente en Movimientos.', 'err'); }
+      }
       toast('Registro actualizado', 'ok');
       await loadEntity(entity, true);
       // El Dashboard general solo depende de Servicios/Tactos/Pariciones/Destetes/Abortos/Mortandad
