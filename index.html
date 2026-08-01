@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_85';
+const APP_VERSION = 'index_consolidado_4_6_155_86';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -349,11 +349,27 @@ function stockPorRodeoACorte_(corte) {
     }
   });
   mortandad.forEach(m => {
-    if ((m.fecha || '') <= corte) {
+    if ((m.fecha || '') <= corte && !esMortandadPorParicion_(m)) {
       stockMap[String(m.rodeo_id)] = (stockMap[String(m.rodeo_id)] || 0) - (Number(m.cantidad) || 1);
     }
   });
   return stockMap;
+}
+// Detecta si un registro de Mortandad corresponde a un TERNERO NACIDO MUERTO
+// (el backend lo crea automáticamente al cargar "nacidos_muertos" en una
+// Parición, etiquetado con el mismo [pid:<id>] que usa esAltaPorParicion_).
+// OJO — bug encontrado por el usuario: el backend registra esta mortandad en
+// el rodeo de la MADRE (ej. "Vacas Rodeo 3"), porque el ternero nunca llegó a
+// tener su propio rodeo — pero eso hacía que el sistema le restara una cabeza
+// al stock de VACAS como si una vaca hubiera muerto, cuando en realidad la
+// vaca sigue viva y fue el ternero el que nació muerto. Esta función permite
+// excluir estos registros del cálculo de stock de la madre en todos lados
+// (ver stockPorRodeoACorte_), y reclasificarlos como mortandad de "terneros"
+// en vez de "vaca" en los reportes por categoría.
+function esMortandadPorParicion_(m) {
+  if (!m) return false;
+  const obs = String(m.observacion || '');
+  return /\[pid:\d+\]/.test(obs) && /^Nacido muerto/i.test(obs);
 }
 // Último peso promedio registrado de un rodeo, respetando la fecha de corte
 // (no usa pesadas posteriores al corte, para no adelantar información).
@@ -588,9 +604,13 @@ function vacasPendientesDeParir_(rodeoId) {
 
   // Vacas muertas del rodeo (después del tacto final) — antes NO se restaban,
   // así que una vaca preñada que murió seguía contando como "pendiente de
-  // parir" para siempre. Mismo criterio de fecha que abortos.
+  // parir" para siempre. Mismo criterio de fecha que abortos. Se excluye
+  // explícitamente la mortandad de "nacido muerto" (parto) — esa NO es una
+  // vaca muerta, es un ternero que nació muerto; queda registrada bajo el
+  // rodeo de la madre solo porque el ternero nunca tuvo rodeo propio, no
+  // porque la vaca haya muerto.
   const muertas = (S.cache.mortandad || []).filter(m =>
-    String(m.rodeo_id) === String(rodeoId) && (!fechaTacto || String(m.fecha) >= String(fechaTacto))
+    String(m.rodeo_id) === String(rodeoId) && (!fechaTacto || String(m.fecha) >= String(fechaTacto)) && !esMortandadPorParicion_(m)
   ).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
   const pendientes = Math.max(0, prenadas - abortos - muertas - yaParieron);
@@ -2713,8 +2733,8 @@ function buildDashboard() {
     const mortCriaPorRodeo = {};
     mortandadCriaFilt.forEach(m => { mortCriaPorRodeo[m.rodeo_id] = (mortCriaPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
     h += buildResumenPorRodeo_(mortCriaPorRodeo, '💀 Muertes en Cría', 'var(--red)', 'rgba(200,50,50,0.06)', mortCriaTotal, 'baja', 'bajas', true);
-    h += `<div style="font-size:12px;color:var(--red);margin:-10px 0 4px">⚠ Su impacto está reflejado en el menor stock al cierre.</div>`;
-    h += `<div style="font-size:11px;color:var(--text3);margin:0 0 16px">Nota: mezcla nacidos muertos por parto con muertes reales — todavía no se pueden separar.</div>`;
+    h += `<div style="font-size:12px;color:var(--red);margin:-10px 0 4px">⚠ Su impacto está reflejado en el menor stock al cierre (excepto nacidos muertos, que no restan del rodeo madre — ver corrección más abajo).</div>`;
+    h += `<div style="font-size:11px;color:var(--text3);margin:0 0 16px">Nota: este panel todavía agrupa por rodeo sin separar nacidos muertos de muertes reales — para verlas separadas, entrá a "Curva de Nacimientos".</div>`;
   }
 
   if (abortosCriaTotal2 > 0) {
@@ -3749,11 +3769,20 @@ function buildCurvaNacimientos() {
   const mortPorRodeo = {};
   mortandad.forEach(m => {
     const rid = String(m.rodeo_id);
-    if (!mortPorRodeo[rid]) {
+    const esNacidoMuerto = esMortandadPorParicion_(m);
+    // OJO — los "nacido muerto" quedan registrados en Mortandad bajo el rodeo
+    // de la MADRE (no tienen rodeo de terneros propio, porque nunca llegaron a
+    // existir como stock) — pero para esta clasificación por categoría, son
+    // mortandad de TERNERO, no de vaca. Se les arma una fila aparte, separada
+    // de la mortandad real del rodeo madre, para no mezclarlas.
+    const claveFila = esNacidoMuerto ? rid + '__nacidomuerto' : rid;
+    if (!mortPorRodeo[claveFila]) {
       const r = rodeosPorIdCN[rid];
-      mortPorRodeo[rid] = { nombre: r?.nombre||rodeoNombre(rid), categoria: r?.categoria||'—', cant: 0 };
+      mortPorRodeo[claveFila] = esNacidoMuerto
+        ? { nombre: 'Nacidos muertos — ' + (r?.nombre||rodeoNombre(rid)), categoria: 'ternero', cant: 0 }
+        : { nombre: r?.nombre||rodeoNombre(rid), categoria: r?.categoria||'—', cant: 0 };
     }
-    mortPorRodeo[rid].cant += Number(m.cantidad) || 1;
+    mortPorRodeo[claveFila].cant += Number(m.cantidad) || 1;
   });
   const todasFilas = Object.values(mortPorRodeo);
   const grupoDe_ = (cat) => {
@@ -4599,18 +4628,23 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
   });
 
   mortandad.forEach(function(m) {
+    // Nacido muerto (parto) queda registrado en Mortandad bajo el rodeo de la
+    // MADRE (el ternero nunca llegó a tener su propio rodeo) — pero no le
+    // resta ninguna cabeza a la madre, que sigue viva. Se muestra igual para
+    // que quede el registro visible en el libro, pero sin afectar el saldo.
+    var esNacidoMuerto = esMortandadPorParicion_(m);
     lineas.push({
       fecha: m.fecha || '',
       tipo: 'Mortandad',
       pill: 'pill-clay',
-      desc: 'Mortandad',
+      desc: esNacidoMuerto ? 'Nacido muerto (no resta al rodeo madre)' : 'Mortandad',
       rodeo: m.rodeo_id ? rodeoNombre(m.rodeo_id) : '—',
       campo: campoNombre(campoDe_(m.rodeo_id, m.campo_id || null)),
       rodeo_id: m.rodeo_id,
       campo_id: campoDe_(m.rodeo_id, m.campo_id || null),
       entrada: 0,
-      salida: Number(m.cantidad) || 0,
-      obs: m.observaciones || '',
+      salida: esNacidoMuerto ? 0 : (Number(m.cantidad) || 0),
+      obs: m.observacion || m.observaciones || '',
     });
   });
 
