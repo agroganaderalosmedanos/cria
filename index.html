@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_106';
+const APP_VERSION = 'index_consolidado_4_6_155_107';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -497,7 +497,7 @@ function poolReproductivoRodeo_(rodeoId, infoTacto, corte, idsVacaSet) {
   // alimentan el pool; los partos (vivos o muertos) no.
   (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte && !esMortandadPorParicion_(m))
     .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'muerte', cant:Number(m.cantidad)||1, ref:m}));
-  (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte)
+  (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte && !/\[pid:\d+\]/.test(String(v.observaciones||'')))
     .forEach(v=> eventos.push({fecha:v.fecha_salida, orden:1, tipo:'venta', cant:Number(v.cant_animales)||0, ref:v}));
   // Los traslados a OTRO RODEO DE VACA/VAQUILLONA activo son, en la
   // práctica, transferencias deliberadas de animales YA confirmados
@@ -513,6 +513,16 @@ function poolReproductivoRodeo_(rodeoId, infoTacto, corte, idsVacaSet) {
   // traslado a un rodeo que no es de categoría vaca, o mortandad).
   (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte)
     .forEach(m=> {
+      // Traslado de una madre cuyo ternero nació muerto (o murió después), y
+      // que DESPUÉS se trasladó manualmente a Vacas Venta — caso real
+      // (Rodeo 1: "Mellizos muertos" 13/7). Esa vaca ya está descontada de
+      // "pendientes" vía Pariciones (ya parió, con cría muerta) — si además
+      // el traslado la cuenta como "preñada exportada", se resta dos veces.
+      // Igual que la Mortandad de terneros usa [pid:...] para no confundirse
+      // con la muerte de la vaca, acá usamos la misma etiqueta: si el
+      // traslado la lleva en la observación, se ignora por completo (no
+      // toca el pool ni cuenta como salida de preñada).
+      if (/\[pid:\d+\]/.test(String(m.observaciones||''))) return;
       const esAOtraVaca = idsVacaSet && idsVacaSet.has(String(m.rodeo_destino_id));
       eventos.push({fecha:m.fecha, orden: esAOtraVaca ? 2 : 1, tipo: esAOtraVaca ? 'traslado_vaca' : 'traslado', cant:Number(m.cantidad)||0, ref:m});
     });
@@ -535,6 +545,17 @@ function poolReproductivoRodeo_(rodeoId, infoTacto, corte, idsVacaSet) {
 // arma la cuenta de "faltan parir" para un rodeo puntual — para poder
 // comparar contra el conteo a mano sin tener que ir y venir con capturas de
 // pantalla. Uso desde la consola del navegador: debugPoolRodeo_('nombre o id del rodeo')
+// Lista las Pariciones de un rodeo con su ID — para poder armar el tag
+// [pid:N] en la observación de un traslado manual (ver poolReproductivoRodeo_).
+// Uso desde la consola: listarParicionesRodeo_('Rodeo 1')
+window.listarParicionesRodeo_ = function(rodeoNombreOId) {
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const r = rodeosAll.find(x => String(x.rodeo_id)===String(rodeoNombreOId) || (x.nombre||'').toLowerCase().includes(String(rodeoNombreOId).toLowerCase()));
+  if (!r) { console.log('No encontré ningún rodeo que matchee:', rodeoNombreOId); return; }
+  const items = (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+  console.log('Pariciones de', r.nombre, '—', items.length, 'registros:');
+  items.forEach(p => console.log(`id=${p.paricion_id} | ${p.fecha} | vivos=${p.nacidos_vivos||0} muertos=${p.nacidos_muertos||0} | "${p.observacion||''}"`));
+};
 window.debugPoolRodeo_ = function(rodeoNombreOId, corte) {
   corte = corte || today();
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
@@ -670,7 +691,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
-      prenadasAjustadas, pendientesAjustado,
+      prenadasAjustadas, pendientesAjustado, muertasQueImpactanPendientes,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
@@ -2922,7 +2943,7 @@ function buildDashboard() {
         h += `
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
-          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes${f.muertas>f.muertasQueImpactanPendientes?` <span style="font-size:10px;color:var(--text3)">(${fn(f.muertas)} registradas, ${fn(f.muertas-f.muertasQueImpactanPendientes)} ya resuelta${f.muertas-f.muertasQueImpactanPendientes===1?'':'s'})</span>`:''}</span><span>−${fn(f.muertasQueImpactanPendientes)}</span></div>
           <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
         </div>`;
       }
