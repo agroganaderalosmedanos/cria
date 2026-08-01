@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_103';
+const APP_VERSION = 'index_consolidado_4_6_155_104';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -466,6 +466,91 @@ function esCategoriaReproductora_(categoria) {
 // como el Excel de auditoría reproductiva — antes cada uno tenía su propia
 // copia de esta cuenta, y como una se actualizaba y la otra no, terminaban
 // dando números distintos sin que hubiera forma simple de saber cuál mirar.
+// Se arma un "pool" de cabezas ya resueltas (no van a parir más este
+// ciclo) que arranca en las vacías del tacto (total − preñadas) y se va
+// sumando con cada aborto (o nacido muerto) que ocurre después (esas vacas
+// siguen físicamente en el rodeo, pero ya no están "pendientes"). Cada
+// salida (venta, traslado o mortandad), EN EL ORDEN CRONOLÓGICO en que
+// ocurrió, saca primero del pool; solo si la cantidad que sale supera lo
+// disponible en el pool, el excedente se descuenta de preñadas (recién ahí
+// asumimos que se llevó/murió alguna vaca preñada pendiente). Los nacidos
+// VIVOS NO alimentan el pool — la vaca se queda en el rodeo con su cría, no
+// sale enseguida, así que sus créditos no deben poder "tapar" una muerte o
+// venta de otra vaca que sí seguía preñada.
+function poolReproductivoRodeo_(rodeoId, infoTacto, corte) {
+  const rid = String(rodeoId);
+  const fechaTacto = infoTacto.fecha;
+  let pool = Math.max(0, infoTacto.total - infoTacto.prenadas); // vacías al tacto
+  const eventos = [];
+  (S.cache.abortos||[]).filter(a=>String(a.rodeo_id)===rid && (!fechaTacto||String(a.fecha)>=String(fechaTacto)) && (a.fecha||'')<=corte)
+    .forEach(a=> eventos.push({fecha:a.fecha, orden:0, tipo:'aborto', cant:1}));
+  (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===rid && (!fechaTacto||String(p.fecha)>=String(fechaTacto)) && (p.fecha||'')<=corte)
+    .forEach(p=> {
+      const nm = Number(p.nacidos_muertos)||0;
+      if (nm > 0) eventos.push({fecha:p.fecha, orden:0, tipo:'parto', cant:nm});
+    });
+  (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte && !esMortandadPorParicion_(m))
+    .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'muerte', cant:Number(m.cantidad)||1, ref:m}));
+  (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte)
+    .forEach(v=> eventos.push({fecha:v.fecha_salida, orden:1, tipo:'venta', cant:Number(v.cant_animales)||0, ref:v}));
+  (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte)
+    .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'traslado', cant:Number(m.cantidad)||0, ref:m}));
+  eventos.sort((a,b)=> String(a.fecha).localeCompare(String(b.fecha)) || (a.orden-b.orden));
+  const salidas = []; // {tipo, ref, cant, spillPrenadas}
+  let pool_ = pool;
+  eventos.forEach(ev => {
+    if (ev.tipo==='aborto' || ev.tipo==='parto') { pool_ += ev.cant; return; }
+    const delPool = Math.min(ev.cant, pool_);
+    const spill = ev.cant - delPool;
+    pool_ -= delPool;
+    salidas.push({ tipo: ev.tipo, ref: ev.ref, cant: ev.cant, spillPrenadas: spill });
+  });
+  salidas._eventos = eventos; // para diagnóstico (debugPoolRodeo_)
+  salidas._poolInicial = pool;
+  return salidas;
+}
+// Diagnóstico: imprime en consola, evento por evento, cómo el sistema
+// arma la cuenta de "faltan parir" para un rodeo puntual — para poder
+// comparar contra el conteo a mano sin tener que ir y venir con capturas de
+// pantalla. Uso desde la consola del navegador: debugPoolRodeo_('nombre o id del rodeo')
+window.debugPoolRodeo_ = function(rodeoNombreOId, corte) {
+  corte = corte || today();
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const r = rodeosAll.find(x => String(x.rodeo_id)===String(rodeoNombreOId) || (x.nombre||'').toLowerCase().includes(String(rodeoNombreOId).toLowerCase()));
+  if (!r) { console.log('No encontré ningún rodeo que matchee:', rodeoNombreOId); return; }
+  console.log('Rodeo:', r.nombre, '(id:', r.rodeo_id, ')');
+  const tactosFinales = (S.cache.tactos||[]).filter(t=>String(t.rodeo_id)===String(r.rodeo_id)&&t.tipo_tacto==='Tacto final'&&(t.fecha||'')<=corte).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+  const ultimo = tactosFinales.length ? tactosFinales[tactosFinales.length-1] : null;
+  if (!ultimo) { console.log('Sin Tacto final cargado.'); return; }
+  const info = { total: Number(ultimo.total_tacteadas)||0, prenadas: Number(ultimo.prenadas)||0, fecha: ultimo.fecha };
+  console.log('Tacto final:', info.fecha, '— total tacteadas:', info.total, '— preñadas:', info.prenadas, '— vacías iniciales:', info.total-info.prenadas);
+  const salidas = poolReproductivoRodeo_(r.rodeo_id, info, corte);
+  console.log('--- Línea de tiempo de eventos (orden en que se procesan) ---');
+  let pool = salidas._poolInicial;
+  let si = 0;
+  salidas._eventos.forEach(ev => {
+    if (ev.tipo==='aborto'||ev.tipo==='parto') {
+      pool += ev.cant;
+      console.log(`${ev.fecha} | ${ev.tipo.toUpperCase()} +${ev.cant} → pool disponible = ${pool}`);
+      return;
+    }
+    const s = salidas[si++];
+    console.log(`${ev.fecha} | ${ev.tipo.toUpperCase()} sale ${ev.cant} → del pool: ${ev.cant-s.spillPrenadas}, de preñadas (spill): ${s.spillPrenadas} → pool queda en ${pool - (ev.cant-s.spillPrenadas)}`);
+    pool -= (ev.cant - s.spillPrenadas);
+  });
+  const res = vacasPendientesDeParir_(r.rodeo_id);
+  const muertasSpill = salidas.filter(s=>s.tipo==='muerte').reduce((s,x)=>s+x.spillPrenadas,0);
+  const otrasSpill = salidas.filter(s=>s.tipo!=='muerte').reduce((s,x)=>s+x.spillPrenadas,0);
+  console.log('--- Totales ---');
+  console.log('Preñadas (tacto):', info.prenadas);
+  console.log('Abortos (directo):', res.abortos);
+  console.log('Ya parieron (directo):', res.yaParieron);
+  console.log('Muertes que SÍ impactan pendientes (spill):', muertasSpill, ' — mortandad total registrada:', res.muertas);
+  console.log('Salidas (venta/traslado) que SÍ impactan pendientes (spill):', otrasSpill);
+  const pendientes = Math.max(0, info.prenadas - res.abortos - muertasSpill - res.yaParieron - otrasSpill);
+  console.log('PENDIENTES DE PARIR:', pendientes);
+};
+
 function calcularVacasReproductivas_(campoFiltro, corte) {
   corte = corte || today();
   const rodeos = rodeosConServicio().filter(r => !campoFiltro || String(r.campo_id)===String(campoFiltro));
@@ -485,65 +570,6 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
   const idsVaca = new Set(rodeos.map(r=>String(r.rodeo_id)));
 
-  // Cuando salen vacas de un rodeo después del tacto (venta o traslado), NO
-  // se puede asumir que es una muestra al azar con la misma tasa de preñez
-  // del rodeo entero — en la práctica, cuando el productor separa y manda a
-  // descarte las vacías (o las abortadas) después del tacto, esas cabezas
-  // NO son preñadas, y aplicarles la tasa promedio las contaba como
-  // "preñadas exportadas" por error. Caso real que expuso el bug: tacto
-  // 25/3 → 88 tacteadas, 71 preñadas (17 vacías); 30/4 salen exactamente
-  // esas 17 vacías a "Vacas venta" — el cálculo viejo restaba ~14 preñadas
-  // (17 × 71/88) de "Vacas plantel" cuando en realidad no se movió ninguna.
-  //
-  // Se arma un "pool" de cabezas ya resueltas (no van a parir más este
-  // ciclo) que arranca en las vacías del tacto (total − preñadas) y se va
-  // sumando con cada aborto o parto que ocurre después (esas vacas siguen
-  // físicamente en el rodeo, pero ya no están "pendientes"). Cada salida
-  // (venta o traslado), EN EL ORDEN CRONOLÓGICO en que ocurrió, saca
-  // primero del pool; solo si la cantidad que sale supera lo disponible en
-  // el pool, el excedente se descuenta de preñadas (recién ahí asumimos
-  // que se llevó alguna vaca preñada).
-  function poolReproductivoRodeo_(rodeoId, infoTacto) {
-    const rid = String(rodeoId);
-    const fechaTacto = infoTacto.fecha;
-    let pool = Math.max(0, infoTacto.total - infoTacto.prenadas); // vacías al tacto
-    const eventos = [];
-    (S.cache.abortos||[]).filter(a=>String(a.rodeo_id)===rid && (!fechaTacto||String(a.fecha)>=String(fechaTacto)) && (a.fecha||'')<=corte)
-      .forEach(a=> eventos.push({fecha:a.fecha, orden:0, tipo:'aborto', cant:1}));
-    (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===rid && (!fechaTacto||String(p.fecha)>=String(fechaTacto)) && (p.fecha||'')<=corte)
-      .forEach(p=> {
-        // Solo los nacidos MUERTOS alimentan el pool de "disponibles para
-        // salir sin afectar pendientes" — igual que una abortada, la madre
-        // de un ternero nacido muerto suele venderse/trasladarse pronto. Los
-        // nacidos VIVOS no: la vaca se queda en el rodeo con su cría, no sale
-        // enseguida, así que sus créditos no deben poder "tapar" una muerte o
-        // venta de otra vaca que sí seguía preñada y pendiente.
-        const nm = Number(p.nacidos_muertos)||0;
-        if (nm > 0) eventos.push({fecha:p.fecha, orden:0, tipo:'parto', cant:nm});
-      });
-    // La mortandad (que no sea "nacido muerto" de un parto) también entra
-    // como una SALIDA ambigua, igual que ventas/traslados: no sabemos si la
-    // vaca que murió era una preñada pendiente o una ya resuelta (vacía,
-    // abortada, parida) que todavía no se había movido — así que también
-    // drena primero del pool, y solo el excedente resta de "pendientes".
-    (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte && !esMortandadPorParicion_(m))
-      .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'muerte', cant:Number(m.cantidad)||1, ref:m}));
-    (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte)
-      .forEach(v=> eventos.push({fecha:v.fecha_salida, orden:1, tipo:'venta', cant:Number(v.cant_animales)||0, ref:v}));
-    (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte)
-      .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'traslado', cant:Number(m.cantidad)||0, ref:m}));
-    eventos.sort((a,b)=> String(a.fecha).localeCompare(String(b.fecha)) || (a.orden-b.orden));
-    const salidas = []; // {tipo, ref, cant, spillPrenadas}
-    eventos.forEach(ev => {
-      if (ev.tipo==='aborto' || ev.tipo==='parto') { pool += ev.cant; return; }
-      const delPool = Math.min(ev.cant, pool);
-      const spill = ev.cant - delPool;
-      pool -= delPool;
-      salidas.push({ tipo: ev.tipo, ref: ev.ref, cant: ev.cant, spillPrenadas: spill });
-    });
-    return salidas;
-  }
-
   const exportadasPorRodeo = {}; // rodeo_id -> total preñadas exportadas a otro rodeo de vaca
   const exportadasDetallePorRodeo = {}; // rodeo_id -> [{cantidad, aNombre, fecha, fechaTacto}]
   const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre, fecha}]
@@ -560,7 +586,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const rid = String(r.rodeo_id);
     const info = infoTactoBase[rid];
     if (info.sinTactoFinal) return;
-    const salidas = poolReproductivoRodeo_(rid, info);
+    const salidas = poolReproductivoRodeo_(rid, info, corte);
     salidas.forEach(s => {
       if (s.tipo === 'muerte') {
         if (s.spillPrenadas > 0) muertasSpillPorRodeo[rid] = (muertasSpillPorRodeo[rid]||0) + s.spillPrenadas;
