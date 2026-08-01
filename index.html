@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_74';
+const APP_VERSION = 'index_consolidado_4_6_155_75';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -460,8 +460,15 @@ function vacasPendientesDeParir_(rodeoId) {
     String(a.rodeo_id) === String(rodeoId) && (!fechaTacto || String(a.fecha) >= String(fechaTacto))
   ).length;
 
-  const pendientes = Math.max(0, prenadas - abortos - yaParieron);
-  return { prenadas, yaParieron, abortos, pendientes, sinTactoFinal: !ultimoTactoFinal };
+  // Vacas muertas del rodeo (después del tacto final) — antes NO se restaban,
+  // así que una vaca preñada que murió seguía contando como "pendiente de
+  // parir" para siempre. Mismo criterio de fecha que abortos.
+  const muertas = (S.cache.mortandad || []).filter(m =>
+    String(m.rodeo_id) === String(rodeoId) && (!fechaTacto || String(m.fecha) >= String(fechaTacto))
+  ).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+
+  const pendientes = Math.max(0, prenadas - abortos - muertas - yaParieron);
+  return { prenadas, yaParieron, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
 }
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
@@ -2587,18 +2594,18 @@ function buildDashboard() {
   // (Preñadas del Tacto final − Abortadas − Paridas), no una cuenta nueva.
   const rodeosVacaKpi = rodeosCriaFilt.filter(r => (r.categoria||'').toLowerCase() === 'vaca');
   if (rodeosVacaKpi.length) {
-    let kpiPrenadas=0, kpiParidas=0, kpiAbortadas=0, kpiPendientes=0, rodeosSinTactoFinalKpi=0;
+    let kpiPrenadas=0, kpiParidas=0, kpiAbortadas=0, kpiMuertas=0, kpiPendientes=0, rodeosSinTactoFinalKpi=0;
+    const filasVacaAuditoria = [];
     rodeosVacaKpi.forEach(r => {
       const res = vacasPendientesDeParir_(r.rodeo_id);
+      filasVacaAuditoria.push({ nombre: r.nombre, campo: campoNombre(r.campo_id), ...res });
       if (res.sinTactoFinal) { rodeosSinTactoFinalKpi++; return; }
       kpiPrenadas += res.prenadas;
       kpiParidas += res.yaParieron;
       kpiAbortadas += res.abortos;
+      kpiMuertas += res.muertas;
       kpiPendientes += res.pendientes;
     });
-    const kpiMuertas = mortandadCriaFilt
-      .filter(m => rodeosVacaKpi.some(r => String(r.rodeo_id)===String(m.rodeo_id)))
-      .reduce((s,m)=>s+(Number(m.cantidad)||1),0);
     h += `<div class="panel"><div class="panel-title">🐮 Vacas — resumen de la campaña</div>`;
     h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
       <div class="kpi"><div class="kpi-label">Preñadas (tacto final)</div><div class="kpi-val">${fn(kpiPrenadas)}</div></div>
@@ -2608,9 +2615,30 @@ function buildDashboard() {
       <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(kpiPendientes)}</div></div>
     </div>`;
     if (rodeosSinTactoFinalKpi > 0) {
-      h += `<div style="font-size:11px;color:var(--text3);margin-top:8px">⚠ ${rodeosSinTactoFinalKpi} rodeo(s) de vacas sin "Tacto final" cargado — no están incluidos en Preñadas/Pendientes.</div>`;
+      h += `<div style="font-size:11px;color:var(--text3);margin-top:8px">⚠ ${rodeosSinTactoFinalKpi} rodeo(s) de vacas sin "Tacto final" cargado — no están incluidos en los números de arriba.</div>`;
     }
-    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas − Abortadas − Paridas = Pendientes. No identifica vaca por vaca — si una preñada se vendió o murió sin abortar ni parir, sigue contada como pendiente.</div>`;
+    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas − Abortadas − Muertas − Paridas = Pendientes. No identifica vaca por vaca — si una preñada se vendió sin abortar, morir ni parir, sigue contada como pendiente.</div>`;
+
+    // Auditoría por rodeo, en formato de cuenta — para poder chequear rodeo
+    // por rodeo si los datos cargados tienen sentido, en vez de un solo total.
+    h += `<div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">`;
+    filasVacaAuditoria.forEach(f => {
+      h += `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px">
+        <div style="font-weight:700;margin-bottom:6px">${f.nombre} <span style="font-weight:400;font-size:11px;color:var(--text3)">(${f.campo})</span></div>`;
+      if (f.sinTactoFinal) {
+        h += `<div style="font-size:12px;color:var(--clay-text)">⚠ Sin Tacto final cargado</div>`;
+      } else {
+        h += `<div style="font-size:13px;line-height:1.9">
+          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} vacas preñadas</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientes)}</span></div>
+        </div>`;
+      }
+      h += '</div>';
+    });
+    h += '</div>';
     h += '</div>';
   }
 
@@ -3232,16 +3260,16 @@ window.paActualizarAvisoPendientes_ = function() {
   if (!aviso) return;
   const rodeoId = document.getElementById('pa-rodeo')?.value;
   if (!rodeoId) { aviso.innerHTML = ''; return; }
-  const { prenadas, yaParieron, abortos, pendientes, sinTactoFinal } = vacasPendientesDeParir_(rodeoId);
+  const { prenadas, yaParieron, abortos, muertas, pendientes, sinTactoFinal } = vacasPendientesDeParir_(rodeoId);
   if (sinTactoFinal) {
     aviso.innerHTML = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600">
       ⚠ Este rodeo no tiene un "Tacto final" cargado todavía — no vamos a poder calcular cuántas faltan parir (el Tacto IATF solo no alcanza, hace falta el total confirmado en el tacto final).
     </div>`;
   } else {
     aviso.innerHTML = `<div style="background:var(--bg2);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--text2)">
-      🐮 <strong>${fn(prenadas)}</strong> vacas preñadas (tacto final) · <strong>${fn(yaParieron)}</strong> ya parieron${abortos>0?` · <strong style="color:var(--red)">${fn(abortos)}</strong> abortaron`:''} ·
+      🐮 <strong>${fn(prenadas)}</strong> vacas preñadas (tacto final) · <strong>${fn(yaParieron)}</strong> ya parieron${abortos>0?` · <strong style="color:var(--red)">${fn(abortos)}</strong> abortaron`:''}${muertas>0?` · <strong style="color:var(--red)">${fn(muertas)}</strong> murieron`:''} ·
       <strong style="color:var(--gold-text)">${fn(pendientes)} aprox. quedarían por parir</strong>
-      <div style="font-size:11px;color:var(--text3);margin-top:2px">Preñadas − abortadas − ya parieron. No identifica cuál vaca parió/abortó cada una — si una vaca preñada se vendió o murió sin haber abortado ni parido, todavía se cuenta como "pendiente" (no hay forma de saber cuál era).</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">Preñadas − abortadas − muertas − ya parieron. No identifica cuál vaca parió/abortó/murió — asume que cualquier baja pudo haber sido una de las preñadas.</div>
     </div>`;
   }
 };
@@ -12218,25 +12246,25 @@ async function exportarAuditoriaReproductivaExcel_() {
       const diferenciaReconcil = rodeoTerneros ? (nacidosVivosTotal - totalReconciliado) : null;
       return {
         nombre: rv.nombre, campo: campoNombre(rv.campo_id),
-        prenadas: res.prenadas, abortadas: res.abortos, parieron: res.yaParieron, pendientes: res.pendientes, sinTactoFinal: res.sinTactoFinal,
+        prenadas: res.prenadas, abortadas: res.abortos, muertasVacas: res.muertas, parieron: res.yaParieron, pendientes: res.pendientes, sinTactoFinal: res.sinTactoFinal,
         rodeoTerneros: rodeoTerneros ? rodeoTerneros.nombre : '(no encontrado)',
         nacidosVivosTotal, nacidosMuertosTotal,
         ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
       };
     });
-    const headers2 = ['Rodeo madre','Campo','Preñadas (tacto final)','Abortadas','Parieron (vacas)','Pendientes de parir',
+    const headers2 = ['Rodeo madre','Campo','Preñadas (tacto final)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
       'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría reproductiva`],
       ['Fecha', fd(corte)],
-      ['Nota', 'Preñadas = último Tacto final cargado. Pendientes = Preñadas − Abortadas − Parieron. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos (todas las Pariciones alguna vez cargadas para ese rodeo) contra lo que hoy se puede verificar (terneros que siguen en stock + los que murieron + los que se vendieron + los que se cedieron a otro rodeo) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
+      ['Nota', 'Preñadas = último Tacto final cargado. Pendientes = Preñadas − Abortadas − Muertas − Parieron. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos (todas las Pariciones alguna vez cargadas para ese rodeo) contra lo que hoy se puede verificar (terneros que siguen en stock + los que murieron + los que se vendieron + los que se cedieron a otro rodeo) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
       [],
       headers2,
     ];
     filas2.forEach(f => aoa2.push([
       f.nombre, f.campo,
       f.sinTactoFinal ? 'sin tacto final' : f.prenadas,
-      f.abortadas, f.parieron, f.sinTactoFinal ? '—' : f.pendientes,
+      f.abortadas, f.muertasVacas, f.parieron, f.sinTactoFinal ? '—' : f.pendientes,
       f.rodeoTerneros, f.nacidosVivosTotal,
       f.ternerosVivos===null?'(sin rodeo)':f.ternerosVivos,
       f.ternerosMuertos===null?'—':f.ternerosMuertos,
@@ -12245,7 +12273,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.diferenciaReconcil===null?'—':f.diferenciaReconcil,
     ]));
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:20},{wch:13},{wch:15},{wch:11},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
+    ws2['!cols'] = [{wch:20},{wch:13},{wch:15},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
     ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
     estilarFila_(ws2, 4, headers2.length, ST_HEADER);
