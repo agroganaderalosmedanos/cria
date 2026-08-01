@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_96';
+const APP_VERSION = 'index_consolidado_4_6_155_97';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -14075,18 +14075,17 @@ function renderStockHaciendaActual_() {
   const el    = document.getElementById('sh-stock-actual');
   if (!el) return;
 
-  if (fecha >= today()) {
-    // Fecha actual o futura → usar stock en vivo (S.stock)
-    const stockList = (S.stock || []).filter(function(s) {
-      if (campo && String(s.campo_id) !== String(campo)) return false;
-      if (cat && String(s.categoria) !== String(cat)) return false;
-      return true;
-    });
-    el.innerHTML = buildStockTable_(stockList, campo, cat);
-    return;
-  }
+  // OJO — antes, si la fecha era "hoy" o futura, esta pantalla usaba un
+  // cálculo COMPLETAMENTE DISTINTO (el stock en vivo que manda el backend,
+  // S.stock) en vez del cálculo histórico (calcStockAFecha_) que se usa para
+  // cualquier otra fecha. Como bien notó el usuario: si no hay movimientos
+  // entre el 31/7 y el 1/8, el resultado tiene que ser IGUAL — el problema no
+  // era la fecha, era que "hoy" pasaba por un camino de cálculo aparte, con
+  // su propia lógica mantenida por separado en el Apps Script, que podía
+  // quedar desactualizada sin que nadie se diera cuenta acá. Ahora CUALQUIER
+  // fecha —incluido "hoy"— usa siempre el mismo cálculo (calcStockAFecha_),
+  // así este reporte deja de depender de si el backend está al día o no.
 
-  // Fecha histórica → calcular stock a esa fecha
   // Verificar que las entidades necesarias estén cargadas (null = no cargada; [] vacío es válido)
   const entidades = ['movimientos', 'ventas', 'pariciones', 'mortandad', 'destetes'];
   const faltantes = entidades.filter(function(e){ return S.cache[e] == null; });
@@ -14098,7 +14097,8 @@ function renderStockHaciendaActual_() {
     return;
   }
 
-  // Calcular stock por rodeo a la fecha de corte
+  // Calcular stock por rodeo a la fecha de corte (misma función para
+  // cualquier fecha, sin excepción para "hoy").
   const stockData = calcStockAFecha_(fecha, campo, cat);
   el.innerHTML = buildStockAFechaTable_(stockData, fecha);
 }
@@ -14566,6 +14566,11 @@ function attachStockHaciendaEvents() {
   Promise.all(entidades.map(function(e) {
     return (S.cache[e] && S.cache[e].length) ? Promise.resolve() : loadEntity(e, true);
   })).then(function() {
+    // El primer renderizado de "Stock a una fecha" (antes de que carguen estas
+    // entidades) usa S.stock (en vivo, del backend) como placeholder rápido —
+    // apenas están disponibles, se reemplaza por el cálculo consistente
+    // (calcStockAFecha_), el mismo que usa cualquier otra fecha.
+    renderStockHaciendaActual_();
     // Re-render para mostrar el reporte si ya habia parametros
     const el = document.getElementById('sh-resultado');
     if (el && el.innerHTML) render();
