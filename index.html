@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_105';
+const APP_VERSION = 'index_consolidado_4_6_155_106';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -477,7 +477,7 @@ function esCategoriaReproductora_(categoria) {
 // VIVOS NO alimentan el pool — la vaca se queda en el rodeo con su cría, no
 // sale enseguida, así que sus créditos no deben poder "tapar" una muerte o
 // venta de otra vaca que sí seguía preñada.
-function poolReproductivoRodeo_(rodeoId, infoTacto, corte) {
+function poolReproductivoRodeo_(rodeoId, infoTacto, corte, idsVacaSet) {
   const rid = String(rodeoId);
   const fechaTacto = infoTacto.fecha;
   let pool = Math.max(0, infoTacto.total - infoTacto.prenadas); // vacías al tacto
@@ -499,13 +499,29 @@ function poolReproductivoRodeo_(rodeoId, infoTacto, corte) {
     .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'muerte', cant:Number(m.cantidad)||1, ref:m}));
   (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)) && (v.fecha_salida||'')<=corte)
     .forEach(v=> eventos.push({fecha:v.fecha_salida, orden:1, tipo:'venta', cant:Number(v.cant_animales)||0, ref:v}));
+  // Los traslados a OTRO RODEO DE VACA/VAQUILLONA activo son, en la
+  // práctica, transferencias deliberadas de animales YA confirmados
+  // preñados (ej: "mando estas 100 preñadas al Rodeo 3") — no un descarte al
+  // azar. Caso real que expuso el bug: Rodeo "Vacas 2022" mandó 100
+  // preñadas confirmadas a Rodeo 3 el mismo día que otro traslado de 15 a
+  // un rodeo de descarte — el pool de 11 vacías se lo llevó el primer
+  // traslado que se procesó (las 100), dejando acreditadas solo 89, cuando
+  // en realidad esas 100 eran 100% preñadas y las vacías habían salido por
+  // el otro traslado. Por eso estos traslados NO tocan el pool — cuentan
+  // siempre como preñadas movidas en su totalidad (tipo 'traslado_vaca'),
+  // dejando el pool intacto para lo que sí es un descarte real (venta,
+  // traslado a un rodeo que no es de categoría vaca, o mortandad).
   (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) && (m.fecha||'')<=corte)
-    .forEach(m=> eventos.push({fecha:m.fecha, orden:1, tipo:'traslado', cant:Number(m.cantidad)||0, ref:m}));
+    .forEach(m=> {
+      const esAOtraVaca = idsVacaSet && idsVacaSet.has(String(m.rodeo_destino_id));
+      eventos.push({fecha:m.fecha, orden: esAOtraVaca ? 2 : 1, tipo: esAOtraVaca ? 'traslado_vaca' : 'traslado', cant:Number(m.cantidad)||0, ref:m});
+    });
   eventos.sort((a,b)=> String(a.fecha).localeCompare(String(b.fecha)) || (a.orden-b.orden));
   const salidas = []; // {tipo, ref, cant, spillPrenadas}
   let pool_ = pool;
   eventos.forEach(ev => {
     if (ev.tipo==='aborto' || ev.tipo==='parto') { pool_ += ev.cant; return; }
+    if (ev.tipo==='traslado_vaca') { salidas.push({ tipo: ev.tipo, ref: ev.ref, cant: ev.cant, spillPrenadas: ev.cant }); return; }
     const delPool = Math.min(ev.cant, pool_);
     const spill = ev.cant - delPool;
     pool_ -= delPool;
@@ -530,7 +546,8 @@ window.debugPoolRodeo_ = function(rodeoNombreOId, corte) {
   if (!ultimo) { console.log('Sin Tacto final cargado.'); return; }
   const info = { total: Number(ultimo.total_tacteadas)||0, prenadas: Number(ultimo.prenadas)||0, fecha: ultimo.fecha };
   console.log('Tacto final:', info.fecha, '— total tacteadas:', info.total, '— preñadas:', info.prenadas, '— vacías iniciales:', info.total-info.prenadas);
-  const salidas = poolReproductivoRodeo_(r.rodeo_id, info, corte);
+  const idsVacaSet = new Set(rodeosConServicio().map(x=>String(x.rodeo_id)));
+  const salidas = poolReproductivoRodeo_(r.rodeo_id, info, corte, idsVacaSet);
   console.log('--- Línea de tiempo de eventos (orden en que se procesan) ---');
   let pool = salidas._poolInicial;
   let si = 0;
@@ -592,27 +609,30 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const rid = String(r.rodeo_id);
     const info = infoTactoBase[rid];
     if (info.sinTactoFinal) return;
-    const salidas = poolReproductivoRodeo_(rid, info, corte);
+    const salidas = poolReproductivoRodeo_(rid, info, corte, idsVaca);
     salidas.forEach(s => {
       if (s.tipo === 'muerte') {
         if (s.spillPrenadas > 0) muertasSpillPorRodeo[rid] = (muertasSpillPorRodeo[rid]||0) + s.spillPrenadas;
         return;
       }
       if (s.spillPrenadas <= 0) return;
-      if (s.tipo === 'traslado') {
+      if (s.tipo === 'traslado_vaca') {
+        // Traslado a otro rodeo de vaca/vaquillona — cuenta siempre 100%
+        // como preñadas movidas (no pasó por el pool de vacías).
         const destId = String(s.ref.rodeo_destino_id);
-        if (idsVaca.has(destId)) {
-          exportadasPorRodeo[rid] = (exportadasPorRodeo[rid]||0) + s.spillPrenadas;
-          if (!exportadasDetallePorRodeo[rid]) exportadasDetallePorRodeo[rid] = [];
-          const destNombre = (rodeos.find(x=>String(x.rodeo_id)===destId)||{}).nombre || rodeoNombre(destId);
-          exportadasDetallePorRodeo[rid].push({ cantidad: s.spillPrenadas, aNombre: destNombre, fecha: s.ref.fecha, fechaTacto: info.fecha });
-          if (!importadasPorRodeo[destId]) importadasPorRodeo[destId] = [];
-          importadasPorRodeo[destId].push({ cantidad: s.spillPrenadas, deNombre: r.nombre, fecha: s.ref.fecha, fechaTacto: info.fecha });
-        } else {
-          if (!salidasExternasPorRodeo[rid]) salidasExternasPorRodeo[rid] = { ventas:0, trasladoNoVaca:0, total:0 };
-          salidasExternasPorRodeo[rid].trasladoNoVaca += s.spillPrenadas;
-          salidasExternasPorRodeo[rid].total += s.spillPrenadas;
-        }
+        exportadasPorRodeo[rid] = (exportadasPorRodeo[rid]||0) + s.spillPrenadas;
+        if (!exportadasDetallePorRodeo[rid]) exportadasDetallePorRodeo[rid] = [];
+        const destNombre = (rodeos.find(x=>String(x.rodeo_id)===destId)||{}).nombre || rodeoNombre(destId);
+        exportadasDetallePorRodeo[rid].push({ cantidad: s.spillPrenadas, aNombre: destNombre, fecha: s.ref.fecha, fechaTacto: info.fecha });
+        if (!importadasPorRodeo[destId]) importadasPorRodeo[destId] = [];
+        importadasPorRodeo[destId].push({ cantidad: s.spillPrenadas, deNombre: r.nombre, fecha: s.ref.fecha, fechaTacto: info.fecha });
+      } else if (s.tipo === 'traslado') {
+        // Traslado a un rodeo que NO es de categoría vaca (descarte) —
+        // pasó por el pool; solo lo que "spilleó" cuenta como preñada
+        // perdida del sistema.
+        if (!salidasExternasPorRodeo[rid]) salidasExternasPorRodeo[rid] = { ventas:0, trasladoNoVaca:0, total:0 };
+        salidasExternasPorRodeo[rid].trasladoNoVaca += s.spillPrenadas;
+        salidasExternasPorRodeo[rid].total += s.spillPrenadas;
       } else if (s.tipo === 'venta') {
         if (!salidasExternasPorRodeo[rid]) salidasExternasPorRodeo[rid] = { ventas:0, trasladoNoVaca:0, total:0 };
         salidasExternasPorRodeo[rid].ventas += s.spillPrenadas;
