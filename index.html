@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_90';
+const APP_VERSION = 'index_consolidado_4_6_155_92';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4737,14 +4737,25 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
     // cubierto); solo se muestra esta línea de respaldo para pariciones viejas
     // sin ese movimiento (cargadas antes de que existiera la automatización),
     // y en ese caso apuntando al rodeo de TERNEROS correcto, no al de la madre.
-    var tieneMovReal = movs.some(function(m){
-      return m.tipo === 'Saldo inicial' && String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1;
-    });
-    if (tieneMovReal) return;
     var rodeoMadre = (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return String(r.rodeo_id) === String(p.rodeo_id); });
     var nombreTerneros = rodeoMadre ? ('Terneros (' + rodeoMadre.nombre + ')') : null;
     var rodeoTerneros = (nombreTerneros && rodeoMadre) ? (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return r.nombre === nombreTerneros && String(r.campo_id) === String(rodeoMadre.campo_id); }) : null;
     var ternRodeoId = rodeoTerneros ? rodeoTerneros.rodeo_id : p.rodeo_id;
+    var tieneMovReal = movs.some(function(m){
+      if (m.tipo !== 'Saldo inicial') return false;
+      // Coincidencia por tag (caso normal, pariciones cargadas con la
+      // automatización ya activa).
+      if (String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1) return true;
+      // Sin tag: puede ser un Saldo inicial viejo cargado antes de que existiera
+      // el tag — se considera "ya cubierto" si coincide en rodeo de terneros,
+      // fecha y cantidad exacta con esta parición. Evita duplicar el ingreso
+      // (antes esto generaba una segunda línea "sin Movimiento vinculado" para
+      // nacimientos que en realidad SÍ tenían su Saldo inicial, solo que sin tag).
+      if (rodeoTerneros && String(m.rodeo_destino_id) === String(rodeoTerneros.rodeo_id) &&
+          String(m.fecha) === String(p.fecha) && Number(m.cantidad) === Number(p.nacidos_vivos)) return true;
+      return false;
+    });
+    if (tieneMovReal) return;
     lineas.push({
       fecha: p.fecha || '',
       tipo: 'Parición',
@@ -14090,7 +14101,7 @@ function calcStockAFecha_(fechaCorte, campoFiltro, catFiltro) {
     // rodeo de terneros vía su propio Saldo inicial (con el tag [pid:...], ver
     // esAltaPorParicion_ más arriba). Sumarlas también acá duplicaba los nacimientos
     // del período (mismo bug ya corregido en calcStockHacienda_ — ver su comentario).
-    mortandad.filter(function(m){ return (m.fecha || '') <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id); })
+    mortandad.filter(function(m){ return (m.fecha || '') <= fechaCorte && String(m.rodeo_id) === String(r.rodeo_id) && !esMortandadPorParicion_(m); })
       .forEach(function(m){ stock -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return (d.fecha || '') <= fechaCorte && String(d.rodeo_id) === String(r.rodeo_id); })
       .forEach(function(d){ stock -= Number(d.cantidad) || 0; });
