@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_92';
+const APP_VERSION = 'index_consolidado_4_6_155_93';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -13619,6 +13619,7 @@ async function exportarStockExcel_(campoId) {
       });
       mortandad.forEach(m => {
         if (!m.fecha || String(m.fecha).slice(0,7) > mesStr) return;
+        if (esMortandadPorParicion_(m)) return; // nacido muerto no resta del rodeo madre
         const rid = String(m.rodeo_id||'');
         if (stockRodeo[rid] !== undefined) stockRodeo[rid] -= (Number(m.cantidad)||1);
       });
@@ -14257,7 +14258,7 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     });
     ventas.filter(function(v){ return v.fecha_salida < desde && String(v.rodeo_id) === String(rodeoId); })
       .forEach(function(v){ ajuste -= Number(v.cant_animales) || 0; });
-    mortandad.filter(function(m){ return m.fecha < desde && String(m.rodeo_id) === String(rodeoId); })
+    mortandad.filter(function(m){ return m.fecha < desde && String(m.rodeo_id) === String(rodeoId) && !esMortandadPorParicion_(m); })
       .forEach(function(m){ ajuste -= Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return d.fecha < desde && String(d.rodeo_id) === String(rodeoId); })
       .forEach(function(d){ ajuste -= Number(d.cantidad) || 0; });
@@ -14286,7 +14287,7 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     });
     ventas.filter(function(v){ return v.fecha_salida >= fDesde && v.fecha_salida <= fHasta && String(v.rodeo_id) === String(rodeoId); })
       .forEach(function(v){ ventas_ += Number(v.cant_animales) || 0; });
-    mortandad.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta && String(m.rodeo_id) === String(rodeoId); })
+    mortandad.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta && String(m.rodeo_id) === String(rodeoId) && !esMortandadPorParicion_(m); })
       .forEach(function(m){ muertes += Number(m.cantidad) || 0; });
     destetes.filter(function(d){ return d.fecha >= fDesde && d.fecha <= fHasta && String(d.rodeo_id) === String(rodeoId); })
       .forEach(function(d){ destetar += Number(d.cantidad) || 0; });
