@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_108';
+const APP_VERSION = 'index_consolidado_4_6_155_109';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -711,10 +711,16 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
     // (que ya daría 0 de todos modos, pero así queda explícito y visible).
     const sinStock = !res.sinTactoFinal && stockActual === 0;
+    // Stock de terneros VIVOS hoy en el rodeo de Terneros asociado a esta
+    // madre — se muestra al pie de la tarjeta para que el que audita pueda
+    // controlar el número sin tener que ir a buscarlo a otra pantalla.
+    const nombreTerneros = 'Terneros (' + r.nombre + ')';
+    const rodeoTerneros = (S.catalogs && S.catalogs.rodeos || []).find(x => x.nombre === nombreTerneros && String(x.campo_id) === String(r.campo_id));
+    const stockTerneros = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
-      prenadasAjustadas, pendientesAjustado, muertasQueImpactanPendientes,
+      prenadasAjustadas, pendientesAjustado, muertasQueImpactanPendientes, stockTerneros,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
@@ -2964,10 +2970,11 @@ function buildDashboard() {
           h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera (no vaca)</span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
         }
         h += `
-          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron${f.nacidosMuertos>0?` <span style="font-size:10px;color:var(--text3)">(${fn(f.nacidosVivos)} con cría viva, ${fn(f.nacidosMuertos)} con cría muerta)</span>`:''}</span><span>−${fn(f.yaParieron)}</span></div>
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes${f.muertas>f.muertasQueImpactanPendientes?` <span style="font-size:10px;color:var(--text3)">(${fn(f.muertas)} registradas, ${fn(f.muertas-f.muertasQueImpactanPendientes)} ya resuelta${f.muertas-f.muertasQueImpactanPendientes===1?'':'s'})</span>`:''}</span><span>−${fn(f.muertasQueImpactanPendientes)}</span></div>
           <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
+          ${f.stockTerneros!==null?`<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-top:6px;padding-top:6px;border-top:1px dashed var(--border)"><span>Terneros vivos hoy (control)</span><span>${fn(f.stockTerneros)}</span></div>`:''}
         </div>`;
       }
       h += '</div>';
