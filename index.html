@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_109';
+const APP_VERSION = 'index_consolidado_4_6_155_111';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3486,8 +3486,12 @@ function buildPariciones() {  const _criaTabs = [
         <select id="pa-rodeo" onchange="window.paActualizarAvisoPendientes_()">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg"><label>Nacidos vivos</label><input type="number" id="pa-vivos" placeholder="Ej: 12" min="0"></div>
-      <div class="fg"><label>Nacidos muertos</label><input type="number" id="pa-muertos" placeholder="Ej: 0" min="0" value="0"></div>
+      <div class="fg"><label>Nacidos muertos</label><input type="number" id="pa-muertos" placeholder="Ej: 0" min="0" value="0" oninput="document.getElementById('pa-madre-venta-wrap').style.display = (Number(this.value)||0)>0 ? 'flex' : 'none'"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="pa-obs" placeholder="Opcional"></div>
+    </div>
+    <div id="pa-madre-venta-wrap" style="display:none;align-items:center;gap:8px;margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px">
+      <input type="checkbox" id="pa-madre-venta" style="width:16px;height:16px">
+      <label for="pa-madre-venta" style="font-size:13px;cursor:pointer">La madre de un nacido muerto también pasa a Vacas Venta (crea el traslado automáticamente, para no restarla dos veces de "pendientes de parir")</label>
     </div>
     <div id="pa-aviso-pendientes" style="margin-top:10px"></div>
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
@@ -3818,6 +3822,7 @@ function attachParicionesEvents() {
       observacion: document.getElementById('pa-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    const madreAVenta = document.getElementById('pa-madre-venta')?.checked && data.nacidos_muertos > 0;
     save.disabled = true; save.textContent = '⏳ Guardando...';
     try {
       const result = await apiCall('registrarParicion', { body: { data } });
@@ -3838,14 +3843,63 @@ function attachParicionesEvents() {
       ]);
       S.dashboard = null; S._resultCria = null;
       const vivos = data.nacidos_vivos;
+      let msg;
       if (result && result.rodeo_terneros) {
-        const msg = result.rodeo_terneros.creado
+        msg = result.rodeo_terneros.creado
           ? `Parición registrada — ${vivos} terneros creados en rodeo "${result.rodeo_terneros.nombre}" (nuevo)`
           : `Parición registrada — ${vivos} terneros agregados a "${result.rodeo_terneros.nombre}"`;
-        toast(msg, 'ok');
       } else {
-        toast('Parición registrada — sin nacidos vivos', 'ok');
+        msg = 'Parición registrada — sin nacidos vivos';
       }
+      // Traslado automático de la madre a Vacas Venta, con el tag [pid:<id>]
+      // — mismo patrón que el traslado automático por Aborto (tag [abid:...]).
+      // Antes esto había que hacerlo a mano, escribiendo el tag correcto en la
+      // observación del traslado — un operador podía tipearlo mal, o directamente
+      // olvidarse, y la vaca terminaba restándose dos veces de "pendientes de
+      // parir" (una vez como "parió", otra como "salida"/preñada exportada).
+      if (madreAVenta) {
+        try {
+          // registrarParicion no devuelve el ID de la parición creada — se busca
+          // en la caché recién recargada por los mismos datos que se acaban de
+          // guardar (mismo patrón de matching-sin-tag usado en paBuscarHuerfanos_).
+          const candidatos = (S.cache.pariciones||[]).filter(p =>
+            String(p.rodeo_id)===String(data.rodeo_id) && String(p.fecha)===String(data.fecha) &&
+            Number(p.nacidos_vivos)===Number(data.nacidos_vivos) && Number(p.nacidos_muertos)===Number(data.nacidos_muertos) &&
+            String(p.observacion||'')===String(data.observacion||'')
+          ).sort((a,b)=>Number(b.paricion_id)-Number(a.paricion_id));
+          const paricionCreada = candidatos[0];
+          if (!paricionCreada) {
+            toast(msg + ' — pero no pude identificar la parición recién creada para trasladar la madre; hacelo manualmente (con el tag [pid:N]).', 'err');
+          } else {
+            const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(data.rodeo_id));
+            const campoId = rodeoOrigen?.campo_id;
+            const norm = s => String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+            const rodeoVacaVenta = rodeosTodos().find(r =>
+              String(r.campo_id) === String(campoId) &&
+              (norm(r.categoria) === 'vaca venta' || norm(r.categoria) === 'vacas venta')
+            );
+            if (!rodeoVacaVenta) {
+              toast(msg + ` — pero no encontré un rodeo "Vacas Venta" en el campo de "${rodeoOrigen?.nombre||data.rodeo_id}"; trasladá la madre manualmente.`, 'err');
+            } else {
+              await apiCall('create', { body: { entity: 'movimientos', data: {
+                tipo: 'Traslado individual',
+                fecha: data.fecha,
+                rodeo_origen_id: data.rodeo_id,
+                campo_origen_id: campoId,
+                rodeo_destino_id: rodeoVacaVenta.rodeo_id,
+                campo_destino_id: rodeoVacaVenta.campo_id,
+                cantidad: 1,
+                observaciones: `[pid:${paricionCreada.paricion_id}] Madre de nacido muerto` + (data.observacion ? ' — ' + data.observacion : ''),
+              } } });
+              invalidateCache('movimientos');
+              S.stock = null;
+              await Promise.all([loadEntity('movimientos', true), loadStock()]);
+              msg += ' — madre trasladada a Vacas Venta';
+            }
+          }
+        } catch(e) { toast(msg + ' — pero falló el traslado automático de la madre: ' + e.message, 'err'); }
+      }
+      toast(msg, 'ok');
       render();
     } catch (err) { toast(err.message, 'err'); }
     finally { save.disabled = false; save.textContent = 'Registrar parición'; }
@@ -4556,10 +4610,10 @@ function buildMovimientos() {
     </div>
     <div class="fgrid">
       <div class="fg" id="mv-campo-origen-wrap" style="display:none"><label>Campo origen</label>
-        <select id="mv-campo-origen" onchange="document.getElementById('mv-origen').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="mv-campo-origen" onchange="document.getElementById('mv-origen').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value)); window.mvActualizarPidOptions_ && window.mvActualizarPidOptions_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg" id="mv-origen-wrap" style="display:none"><label>Rodeo origen</label>
-        <select id="mv-origen">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+        <select id="mv-origen" onchange="window.mvActualizarPidOptions_ && window.mvActualizarPidOptions_()">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
       </div>
       <div class="fg" id="mv-campo-destino-wrap"><label>Campo destino</label>
         <select id="mv-campo-destino" onchange="actualizarRodeosDestino_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
@@ -4603,6 +4657,12 @@ function buildMovimientos() {
         <input type="number" id="mv-precio-kg" placeholder="Ej: 2800" min="0" step="10" style="display:none" oninput="mvActualizarPreviewCosto_()">
         <div style="font-size:11px;color:var(--text3);margin-top:3px" id="mv-precio-hint">Se usa para valorizar el stock inicial de la campaña</div>
         <div id="mv-costo-preview" style="display:none;font-size:13px;font-weight:700;color:var(--green-text);margin-top:6px"></div>
+      </div>
+      <div class="fg" id="mv-pid-wrap" style="display:none;min-width:280px">
+        <label>¿Es la madre de un ternero nacido muerto? <span class="opt">(opcional)</span></label>
+        <select id="mv-pid-select">
+          <option value="">No — es un traslado normal</option>
+        </select>
       </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="mv-obs" placeholder="Opcional"></div>
     </div>
@@ -5221,7 +5281,31 @@ function attachMovimientosEvents() {
       ? 'Se usa para valorizar el stock inicial de la campaña'
       : 'Completalo solo si este traslado representa un ingreso de costo. Si los animales ya tenían costo en el rodeo de origen, dejalo vacío.';
     document.getElementById('mv-destino-label').textContent = esSaldoInicial ? 'Rodeo' : 'Rodeo destino';
+    document.getElementById('mv-pid-wrap').style.display = (esIndividual || esBloque) ? 'flex' : 'none';
+    if (esIndividual || esBloque) mvActualizarPidOptions_();
   }
+  // Arma la lista de "madres de nacido muerto sin traslado vinculado todavía"
+  // del rodeo de origen elegido, para que se pueda seleccionar de un
+  // desplegable en vez de tener que ir a la consola del navegador a buscar
+  // el ID y escribir el tag [pid:N] a mano — mismo dato que listarCriaMuertaSinTag_,
+  // pero accesible para cualquiera que use el formulario, sin abrir F12.
+  window.mvActualizarPidOptions_ = function() {
+    const sel = document.getElementById('mv-pid-select');
+    if (!sel) return;
+    const rodeoOrigId = document.getElementById('mv-origen')?.value;
+    let opciones = '<option value="">No — es un traslado normal</option>';
+    if (rodeoOrigId) {
+      const candidatos = (S.cache.pariciones||[]).filter(p => {
+        if (String(p.rodeo_id) !== String(rodeoOrigId)) return false;
+        if (!((Number(p.nacidos_muertos)||0) > 0)) return false;
+        const tagRegex = new RegExp(`\\[pid:${p.paricion_id}\\]`);
+        const yaVinculado = (S.cache.movimientos||[]).some(m => tagRegex.test(String(m.observaciones||'')));
+        return !yaVinculado;
+      }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      opciones += candidatos.map(p => `<option value="${p.paricion_id}">${fd(p.fecha)} — ${p.nacidos_muertos} cría(s) muerta(s)${p.observacion?' — '+p.observacion:''}</option>`).join('');
+    }
+    sel.innerHTML = opciones;
+  };
   document.querySelectorAll('#mv-precio-modo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#mv-precio-modo-group .radio-pill').forEach(x => x.classList.remove('selected'));
     p.classList.add('selected');
@@ -5298,7 +5382,7 @@ function attachMovimientosEvents() {
       peso_prom_kg: Number(document.getElementById('mv-peso-ingreso').value) || 0,
       precio_cabeza: modoPrecio === 'cabeza' ? (Number(document.getElementById('mv-precio-cabeza').value) || 0) : 0,
       precio_kg: modoPrecio === 'kg' ? (Number(document.getElementById('mv-precio-kg').value) || 0) : 0,
-      observaciones: document.getElementById('mv-obs').value.trim(),
+      observaciones: (document.getElementById('mv-pid-select')?.value ? `[pid:${document.getElementById('mv-pid-select').value}] ` : '') + document.getElementById('mv-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_destino_id) { toast('Completá fecha y rodeo destino.', 'err'); return; }
     if (esIndividual && !data.caravana) { toast('Ingresá la caravana del animal.', 'err'); return; }
