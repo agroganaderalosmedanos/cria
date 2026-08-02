@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_107';
+const APP_VERSION = 'index_consolidado_4_6_155_108';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -555,6 +555,29 @@ window.listarParicionesRodeo_ = function(rodeoNombreOId) {
   const items = (S.cache.pariciones||[]).filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
   console.log('Pariciones de', r.nombre, '—', items.length, 'registros:');
   items.forEach(p => console.log(`id=${p.paricion_id} | ${p.fecha} | vivos=${p.nacidos_vivos||0} muertos=${p.nacidos_muertos||0} | "${p.observacion||''}"`));
+};
+// Lista, en TODOS los rodeos (o uno solo si se pasa filtro), las madres que
+// parieron con cría muerta (nacidos_muertos>0) — y si esa madre después se
+// trasladó, indica si el traslado ya está etiquetado [pid:N] o no (para
+// saber cuáles todavía pueden estar restando dos veces en "para parir").
+// Uso: listarCriaMuertaSinTag_()  o  listarCriaMuertaSinTag_('Vacas 2023')
+window.listarCriaMuertaSinTag_ = function(rodeoNombreOId) {
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  let items = (S.cache.pariciones||[]).filter(p=>(Number(p.nacidos_muertos)||0)>0);
+  if (rodeoNombreOId) {
+    const r = rodeosAll.find(x => String(x.rodeo_id)===String(rodeoNombreOId) || (x.nombre||'').toLowerCase().includes(String(rodeoNombreOId).toLowerCase()));
+    if (!r) { console.log('No encontré ningún rodeo que matchee:', rodeoNombreOId); return; }
+    items = items.filter(p=>String(p.rodeo_id)===String(r.rodeo_id));
+  }
+  items.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+  console.log(items.length, 'partos con cría muerta:');
+  items.forEach(p => {
+    const nombreRodeo = rodeoNombre(p.rodeo_id);
+    const tagRegex = new RegExp(`\\[pid:${p.paricion_id}\\]`);
+    const movLigado = (S.cache.movimientos||[]).find(m => tagRegex.test(String(m.observaciones||'')) && String(m.rodeo_origen_id)===String(p.rodeo_id));
+    const estado = movLigado ? `✅ traslado ${movLigado.fecha} ya tageado` : '⚠️ sin traslado vinculado (puede ser normal si la madre se quedó en el rodeo, o puede faltar tagear/cargar uno)';
+    console.log(`id=${p.paricion_id} | ${p.fecha} | ${nombreRodeo} | muertos=${p.nacidos_muertos} | "${p.observacion||''}" | ${estado}`);
+  });
 };
 window.debugPoolRodeo_ = function(rodeoNombreOId, corte) {
   corte = corte || today();
