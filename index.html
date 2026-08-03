@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_114';
+const APP_VERSION = 'index_consolidado_4_6_155_115';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -578,6 +578,49 @@ window.listarCriaMuertaSinTag_ = function(rodeoNombreOId) {
     const estado = movLigado ? `✅ traslado ${movLigado.fecha} ya tageado` : '⚠️ sin traslado vinculado (puede ser normal si la madre se quedó en el rodeo, o puede faltar tagear/cargar uno)';
     console.log(`id=${p.paricion_id} | ${p.fecha} | ${nombreRodeo} | muertos=${p.nacidos_muertos} | "${p.observacion||''}" | ${estado}`);
   });
+};
+// Recorre TODOS los rodeos de vaca/vaquillona con tacto cargado y lista las
+// salidas (venta o traslado) que el sistema NO pudo explicar con lo que ya
+// tiene cargado (vacías del tacto, abortos, nacidos muertos) — es decir, la
+// cantidad que "spillea" hacia preñadas en cada movimiento. Cada línea es
+// candidata a: (a) un aborto que pasó pero no se cargó en Abortos, (b) una
+// madre de nacido muerto que se movió pero no se cargó/tageó en Pariciones,
+// o (c) una pérdida real sin más explicación posible (menos probable, salvo
+// que Nacho confirme otra causa). No incluye Mortandad (eso se ve aparte con
+// debugPoolRodeo_, columna "Muertes").
+// Uso: listarSalidasSinExplicar_()  o  listarSalidasSinExplicar_('Rodeo 1')
+window.listarSalidasSinExplicar_ = function(rodeoNombreOId, corte) {
+  corte = corte || today();
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  let rodeos = rodeosConServicio();
+  if (rodeoNombreOId) {
+    const r = rodeosAll.find(x => String(x.rodeo_id)===String(rodeoNombreOId) || (x.nombre||'').toLowerCase().includes(String(rodeoNombreOId).toLowerCase()));
+    if (!r) { console.log('No encontré ningún rodeo que matchee:', rodeoNombreOId); return; }
+    rodeos = rodeos.filter(x=>String(x.rodeo_id)===String(r.rodeo_id));
+  }
+  const idsVacaSet = new Set(rodeosConServicio().map(x=>String(x.rodeo_id)));
+  const tactosAllPre = (S.cache.tactos || []).filter(t => (t.fecha||'') <= corte);
+  const resultados = [];
+  rodeos.forEach(r => {
+    const tfs = tactosAllPre.filter(t=>String(t.rodeo_id)===String(r.rodeo_id)&&t.tipo_tacto==='Tacto final').sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+    const ultimo = tfs.length ? tfs[tfs.length-1] : null;
+    if (!ultimo) return;
+    const info = { total: Number(ultimo.total_tacteadas)||0, prenadas: Number(ultimo.prenadas)||0, fecha: ultimo.fecha };
+    const salidas = poolReproductivoRodeo_(r.rodeo_id, info, corte, idsVacaSet);
+    salidas.forEach(s => {
+      if (s.tipo === 'muerte' || s.spillPrenadas <= 0) return;
+      const destNombre = s.tipo === 'venta' ? 'Venta directa' : rodeoNombre(s.ref.rodeo_destino_id);
+      resultados.push({ rodeo: r.nombre, fecha: s.ref.fecha, cantidadTotal: s.cant, sinExplicar: s.spillPrenadas, destino: destNombre, obs: s.ref.observaciones||s.ref.observacion||'' });
+    });
+  });
+  resultados.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+  console.log(resultados.length, 'salidas con cabezas sin explicar:');
+  let total = 0;
+  resultados.forEach(x => {
+    total += x.sinExplicar;
+    console.log(`${x.fecha} | ${x.rodeo} → ${x.destino} | salieron ${x.cantidadTotal}, sin explicar: ${x.sinExplicar} | "${x.obs}"`);
+  });
+  console.log('TOTAL sin explicar:', total);
 };
 window.debugPoolRodeo_ = function(rodeoNombreOId, corte) {
   corte = corte || today();
