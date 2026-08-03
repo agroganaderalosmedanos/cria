@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_112';
+const APP_VERSION = 'index_consolidado_4_6_155_113';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2990,31 +2990,51 @@ function buildDashboard() {
     // las que le llegaron de otro rodeo por traslado), no sobre el total
     // consolidado de todos los rodeos, para que el % sea comparable entre
     // rodeos de distinto tamaño.
+    //
+    // OJO — la tabla tiene que CERRAR exacto contra "Para Parir": Preñadas
+    // − Abortos − Muertes(que impactan) − Salidas fuera(que impactan) −
+    // Parieron(TOTAL, vivo+muerto) = Para Parir. Por eso "Parieron" acá es
+    // el total de partos, no el stock de terneros vivos hoy — un ternero
+    // que nació vivo y murió/se vendió después ya no cambia que la MADRE
+    // esté resuelta, así que usar "vivos hoy" en vez de "total parieron"
+    // deja un faltante que no se explica (el auditor pregunta "¿y los que
+    // faltan?"). El stock de terneros se muestra aparte, solo a título
+    // informativo/de control — no participa de la resta.
     const filasConDatos = filasVacaAuditoria.filter(f => !f.sinTactoFinal);
     if (filasConDatos.length) {
       const pct = (n, d) => d>0 ? (n/d*100).toFixed(1)+'%' : '—';
-      let totPren=0, totAbortos=0, totNacidosMuertos=0, totMuertas=0, totTerneros=0;
+      let totPren=0, totAbortos=0, totNacidosMuertos=0, totNacidosVivos=0, totMuertasImpactan=0, totMuertasReg=0, totSalidas=0, totTerneros=0, totParaParir=0;
       let hSalud = `<div class="panel"><div class="panel-title">🩺 Salud reproductiva — pérdidas por rodeo</div>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">% calculado sobre "Preñadas (ajustado)" de cada rodeo (propias + las recibidas de otro rodeo). Abortos = pérdida antes del parto. Nacidos muertos = pérdida en el parto (ej: lánguidos por magnesio bajo). Muertes = vaca adulta muerta, registro completo (no solo lo que impacta "pendientes").</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">% sobre "Preñadas" de cada rodeo (propias + recibidas de otro rodeo). La fila cierra exacto: Preñadas − Abortos − Muertes(que impactan) − Salidas fuera(que impactan) − Parieron(total) = Para Parir. Muertes muestra entre paréntesis cuántas de las registradas ya estaban resueltas (vacía/abortada/parida) y por eso no restan. "Terneros vivos hoy" es solo de control, no participa de la cuenta.</div>
         <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="border-bottom:2px solid var(--border);text-align:right">
           <th style="text-align:left;padding:6px 8px">Rodeo</th>
           <th style="padding:6px 8px">Preñadas</th>
           <th style="padding:6px 8px">Abortos</th>
-          <th style="padding:6px 8px">Nacidos muertos</th>
-          <th style="padding:6px 8px">Muertes (vaca)</th>
+          <th style="padding:6px 8px">Muertes</th>
+          <th style="padding:6px 8px">Salidas fuera</th>
+          <th style="padding:6px 8px">Parieron (vivo/muerto)</th>
+          <th style="padding:6px 8px;color:var(--gold-text)">PARA PARIR</th>
           <th style="padding:6px 8px">Terneros vivos hoy</th>
         </tr></thead><tbody>`;
       filasConDatos.forEach(f => {
         const pren = f.prenadasAjustadas;
-        totPren += pren; totAbortos += f.abortos; totNacidosMuertos += f.nacidosMuertos; totMuertas += f.muertas;
+        const salidasFuera = (f.salidasExternas?.total)||0;
+        totPren += pren; totAbortos += f.abortos; totNacidosMuertos += f.nacidosMuertos; totNacidosVivos += f.nacidosVivos;
+        totMuertasImpactan += f.muertasQueImpactanPendientes; totMuertasReg += f.muertas; totSalidas += salidasFuera;
+        totParaParir += f.pendientesAjustado;
         if (f.stockTerneros!==null) totTerneros += f.stockTerneros;
+        const muertasTxt = f.muertas>f.muertasQueImpactanPendientes
+          ? `${fn(f.muertasQueImpactanPendientes)} <span style="font-size:10px;color:var(--text3)">(${fn(f.muertas)} reg., ${fn(f.muertas-f.muertasQueImpactanPendientes)} ya resuelta${f.muertas-f.muertasQueImpactanPendientes===1?'':'s'})</span>`
+          : `${fn(f.muertasQueImpactanPendientes)}`;
         hSalud += `<tr style="border-bottom:1px solid var(--border);text-align:right">
           <td style="text-align:left;padding:6px 8px">${f.nombre} <span style="font-size:10px;color:var(--text3)">(${f.campo})</span></td>
           <td style="padding:6px 8px">${fn(pren)}</td>
           <td style="padding:6px 8px">${fn(f.abortos)} <span style="font-size:10px;color:var(--text3)">(${pct(f.abortos,pren)})</span></td>
-          <td style="padding:6px 8px">${fn(f.nacidosMuertos)} <span style="font-size:10px;color:var(--text3)">(${pct(f.nacidosMuertos,pren)})</span></td>
-          <td style="padding:6px 8px">${fn(f.muertas)} <span style="font-size:10px;color:var(--text3)">(${pct(f.muertas,pren)})</span></td>
+          <td style="padding:6px 8px">${muertasTxt}</td>
+          <td style="padding:6px 8px">${fn(salidasFuera)}</td>
+          <td style="padding:6px 8px">${fn(f.yaParieron)} <span style="font-size:10px;color:var(--text3)">(${fn(f.nacidosVivos)} vivo, ${fn(f.nacidosMuertos)} muerto${f.nacidosMuertos>0?' — '+pct(f.nacidosMuertos,pren):''})</span></td>
+          <td style="padding:6px 8px;font-weight:700;color:var(--gold-text)">${fn(f.pendientesAjustado)}</td>
           <td style="padding:6px 8px">${f.stockTerneros!==null?fn(f.stockTerneros):'—'}</td>
         </tr>`;
       });
@@ -3022,8 +3042,10 @@ function buildDashboard() {
           <td style="text-align:left;padding:6px 8px">TOTAL</td>
           <td style="padding:6px 8px">${fn(totPren)}</td>
           <td style="padding:6px 8px">${fn(totAbortos)} <span style="font-size:10px;color:var(--text3)">(${pct(totAbortos,totPren)})</span></td>
-          <td style="padding:6px 8px">${fn(totNacidosMuertos)} <span style="font-size:10px;color:var(--text3)">(${pct(totNacidosMuertos,totPren)})</span></td>
-          <td style="padding:6px 8px">${fn(totMuertas)} <span style="font-size:10px;color:var(--text3)">(${pct(totMuertas,totPren)})</span></td>
+          <td style="padding:6px 8px">${fn(totMuertasImpactan)} ${totMuertasReg>totMuertasImpactan?`<span style="font-size:10px;color:var(--text3)">(${fn(totMuertasReg)} reg.)</span>`:''}</td>
+          <td style="padding:6px 8px">${fn(totSalidas)}</td>
+          <td style="padding:6px 8px">${fn(totNacidosVivos+totNacidosMuertos)} <span style="font-size:10px;color:var(--text3)">(${fn(totNacidosVivos)} vivo, ${fn(totNacidosMuertos)} muerto)</span></td>
+          <td style="padding:6px 8px;color:var(--gold-text)">${fn(totParaParir)}</td>
           <td style="padding:6px 8px">${fn(totTerneros)}</td>
         </tr>`;
       hSalud += `</tbody></table></div></div>`;
