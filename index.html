@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_115';
+const APP_VERSION = 'index_consolidado_4_6_155_116';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -587,7 +587,9 @@ window.listarCriaMuertaSinTag_ = function(rodeoNombreOId) {
 // madre de nacido muerto que se movió pero no se cargó/tageó en Pariciones,
 // o (c) una pérdida real sin más explicación posible (menos probable, salvo
 // que Nacho confirme otra causa). No incluye Mortandad (eso se ve aparte con
-// debugPoolRodeo_, columna "Muertes").
+// debugPoolRodeo_, columna "Muertes") ni traslados a OTRO rodeo de vaca
+// activo (esos cuentan 100% como preñadas movidas por diseño — es una
+// transferencia deliberada, no un descarte, así que no son "sin explicar").
 // Uso: listarSalidasSinExplicar_()  o  listarSalidasSinExplicar_('Rodeo 1')
 window.listarSalidasSinExplicar_ = function(rodeoNombreOId, corte) {
   corte = corte || today();
@@ -608,7 +610,7 @@ window.listarSalidasSinExplicar_ = function(rodeoNombreOId, corte) {
     const info = { total: Number(ultimo.total_tacteadas)||0, prenadas: Number(ultimo.prenadas)||0, fecha: ultimo.fecha };
     const salidas = poolReproductivoRodeo_(r.rodeo_id, info, corte, idsVacaSet);
     salidas.forEach(s => {
-      if (s.tipo === 'muerte' || s.spillPrenadas <= 0) return;
+      if (s.tipo === 'muerte' || s.tipo === 'traslado_vaca' || s.spillPrenadas <= 0) return;
       const destNombre = s.tipo === 'venta' ? 'Venta directa' : rodeoNombre(s.ref.rodeo_destino_id);
       resultados.push({ rodeo: r.nombre, fecha: s.ref.fecha, cantidadTotal: s.cant, sinExplicar: s.spillPrenadas, destino: destNombre, obs: s.ref.observaciones||s.ref.observacion||'' });
     });
