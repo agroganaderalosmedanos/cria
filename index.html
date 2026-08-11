@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_106';
+const APP_VERSION = 'index_consolidado_4_6_155_107';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2790,6 +2790,9 @@ function buildDashboard() {
       <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(kpiMuertas)}</div></div>
       <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(kpiPendientes)}</div></div>
     </div>`;
+    if (typeof abortosCriaTotal2 !== 'undefined' && abortosCriaTotal2 !== kpiAbortadas) {
+      h += `<div style="font-size:11px;color:var(--clay-text);margin-top:8px">ℹ "Abortadas" acá (${fn(kpiAbortadas)}) es distinto del total de la campaña en el panel "Abortos en Cría" más abajo (${fn(abortosCriaTotal2)}) — a propósito, no es un error: acá solo cuentan los abortos ocurridos DESPUÉS del Tacto final de cada rodeo (los únicos que corresponde restar de "Pendientes de parir"). Un aborto de antes del tacto no resta nada acá, porque esa vaca ya no estaba contada como preñada en ese tacto.</div>`;
+    }
     // Proyección: cuántos terneros VIVOS se pueden llegar a tener en total al
     // cierre de la parición — lo que ya nació vivo, más una estimación de lo
     // que falta (asumiendo ~1 cría viva por vaca pendiente, mismo criterio que
