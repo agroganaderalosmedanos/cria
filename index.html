@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_103';
+const APP_VERSION = 'index_consolidado_4_6_155_104';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3476,7 +3476,7 @@ window.paBuscarHuerfanos_ = async function() {
         tipoLabel:'Traslado con "aborto" en el texto, SIN vincular a ningún Aborto', entity:'movimientos', id:m.movimiento_id,
         fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
         origen:`"${m.observaciones}" — revisar a mano si corresponde a un Aborto real o es un duplicado`,
-        soloRevision:true, marcable:true,
+        soloRevision:true, marcable:true, esAbortoSinVincular:true,
       });
     });
     // Posibles duplicados: dos o más traslados a un rodeo de categoría "venta"
@@ -3616,7 +3616,7 @@ window.paRenderHuerfanosTabla_ = function() {
         : f.desincronizado
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
           : f.soloRevision
-            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>${f.marcable ? ` <button class="btn btn-secondary btn-sm" onclick="window.paMarcarRevisado_('${f.id}')" title="Ya lo revisé, está bien así — no volver a mostrarlo en futuras búsquedas">✓ Marcar revisado</button>` : ''}`
+            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>${f.esAbortoSinVincular ? ` <button class="btn btn-primary btn-sm" onclick="window.paCrearAbortoVinculado_('${f.id}')">Crear Aborto vinculado</button>` : ''}${f.marcable ? ` <button class="btn btn-secondary btn-sm" onclick="window.paMarcarRevisado_('${f.id}')" title="Ya lo revisé, está bien así — no volver a mostrarlo en futuras búsquedas">✓ Marcar revisado</button>` : ''}`
             : f.entity && f.id
               ? `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`
               : ''}</td>
@@ -3624,6 +3624,33 @@ window.paRenderHuerfanosTabla_ = function() {
   });
   t += '</tbody></table></div>';
   el.innerHTML = t;
+};
+window.paCrearAbortoVinculado_ = async function(movId) {
+  const mov = (S.cache.movimientos||[]).find(m => String(m.movimiento_id)===String(movId));
+  if (!mov) { toast('No se encontró el movimiento — recargá la página e intentá de nuevo.', 'err'); return; }
+  const obs = String(mov.observaciones||'');
+  // Intenta extraer una caravana del texto (ej. "caravana H308" o "caravana 1578731")
+  const matchCaravana = obs.match(/caravana\s+([A-Za-z0-9]+)/i);
+  const caravanaSugerida = matchCaravana ? matchCaravana[1] : '';
+  if (!confirm(`¿Crear un registro de Aborto retroactivo para este traslado?\n\nFecha: ${fd(mov.fecha)}\nRodeo: ${rodeoNombre(mov.rodeo_origen_id)}\nCaravana detectada: ${caravanaSugerida || '(ninguna — revisar a mano después en Abortos)'}\n\nEsto va a: crear el registro en Abortos, y vincular este traslado a él — de ahí en más va a contar exacto en "Abortadas" en vez de estimado en "Trasladadas fuera".`)) return;
+  try {
+    const abortoData = {
+      fecha: mov.fecha,
+      rodeo_id: mov.rodeo_origen_id,
+      caravana_vaca: caravanaSugerida,
+      observacion: 'Creado retroactivamente desde auditoría — ' + obs.replace(/\[abid:\d+\]/gi,'').replace(/\[pid:\d+\]/gi,'').trim(),
+    };
+    const result = await apiCall('create', { body: { entity: 'abortos', data: abortoData } });
+    const nuevoAbortoId = result && (result.id || result.aborto_id || (result.data && result.data.aborto_id));
+    if (!nuevoAbortoId) throw new Error('El aborto se creó pero no se pudo obtener su ID para vincularlo — revisá manualmente en Movimientos.');
+    const obsNueva = `[abid:${nuevoAbortoId}] ` + obs;
+    await apiCall('update', { body: { entity: 'movimientos', id: movId, data: { observaciones: obsNueva } } });
+    invalidateCache('abortos');
+    invalidateCache('movimientos');
+    await Promise.all([loadEntity('abortos', true), loadEntity('movimientos', true)]);
+    toast('Aborto creado y vinculado — ya cuenta correctamente', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
 };
 window.paMarcarRevisado_ = async function(movId) {
   try {
