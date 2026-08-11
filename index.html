@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_109';
+const APP_VERSION = 'index_consolidado_4_6_155_111';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -802,7 +802,12 @@ function rodeosPorCampo(campoId) {
 }
 function rodeoOptionsHtml(rodeosList) {
   if (!rodeosList.length) return '<option value="">Sin rodeos en este campo</option>';
-  return rodeosList.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('');
+  // Ordenado alfabéticamente — antes salía en el orden en que aparecen en el
+  // catálogo (sin ningún criterio visible), lo que hacía difícil encontrar el
+  // rodeo correcto en desplegables largos (ej. confundir "Vacas Rodeo 3" con
+  // "Terneros (Vacas Rodeo 3)" al no estar cerca uno del otro).
+  const ordenados = rodeosList.slice().sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es', {numeric:true}));
+  return ordenados.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('');
 }
 // Un rodeo se muestra en el buscador de Movimientos solo si tiene stock actual O algún movimiento/venta registrado.
 // Si no tiene NINGUNA de las dos cosas, se oculta (las dos condiciones tienen que faltar juntas).
@@ -3245,7 +3250,7 @@ function buildAbortos() {  const _criaTabs = [
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="ab-hist-rodeo" onchange="abFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodosAb.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodosAb.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3406,7 +3411,7 @@ function buildPariciones() {  const _criaTabs = [
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="pa-hist-rodeo" onchange="paFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${((S.catalogs&&S.catalogs.rodeos)||[]).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${((S.catalogs&&S.catalogs.rodeos)||[]).slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3857,7 +3862,7 @@ function buildMortandad() {
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="mo-hist-rodeo" onchange="moFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodosMo.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodosMo.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -4593,7 +4598,7 @@ function buildMovimientos() {
       <div class="fg"><label>Filtrar por rodeo</label>
         <select id="mv-hist-filtro-rodeo" onchange="renderHistorialFiltrado()">
           <option value="">Todos los rodeos</option>
-          ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+          ${rodeosTodosL.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
         </select>
       </div>
     </div>
@@ -4607,7 +4612,7 @@ function buildMovimientos() {
         <div class="fg"><label>Rodeo</label>
           <select id="mv-libro-rodeo" onchange="renderLibroMovimientos_()">
             <option value="">Todos los rodeos</option>
-            ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+            ${rodeosTodosL.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
           </select>
         </div>
         <div class="fg"><label>Campo</label>
@@ -14969,7 +14974,7 @@ function buildPesadas() {
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="pes-filtro-rodeo" onchange="window.filtrarPesadas_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodos().map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodos().slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>`;
@@ -16957,6 +16962,50 @@ function openEditModal(entity, idCol, id) {
             toast('Traslado vinculado también actualizado', 'ok');
           }
         } catch(e) { toast('El aborto se guardó, pero no se pudo actualizar el traslado vinculado — revisalo manualmente en Movimientos.', 'err'); }
+      }
+      // OJO — bug encontrado por el usuario: mismo problema que con Abortos,
+      // pero para Pariciones. Si se editaba el rodeo, la fecha, o la cantidad
+      // de nacidos_vivos/nacidos_muertos de una Parición, el Movimiento de
+      // Saldo inicial (nacidos vivos) y la Mortandad (nacidos muertos) vinculados
+      // quedaban con los datos VIEJOS — causando exactamente el tipo de
+      // diferencia que se encontró en Vacas Rodeo 3 (Movimiento con 2 cabezas
+      // de más respecto a lo que la Parición dice ahora). Ahora, editar
+      // cualquiera de esos campos actualiza también los registros vinculados.
+      if (entity === 'pariciones' && (data.rodeo_id !== undefined || data.fecha !== undefined || data.nacidos_vivos !== undefined || data.nacidos_muertos !== undefined)) {
+        try {
+          if (!S.cache.movimientos) await loadEntity('movimientos');
+          if (!S.cache.mortandad) await loadEntity('mortandad');
+          const rodeoMadreNuevo = (S.catalogs.rodeos||[]).find(r => String(r.rodeo_id)===String(data.rodeo_id));
+          let rodeoTerneros = null;
+          if (rodeoMadreNuevo) {
+            const nombreTerneros = 'Terneros (' + rodeoMadreNuevo.nombre + ')';
+            rodeoTerneros = (S.catalogs.rodeos||[]).find(r => r.nombre===nombreTerneros && String(r.campo_id)===String(rodeoMadreNuevo.campo_id));
+          }
+          const movLigado = (S.cache.movimientos||[]).find(m => m.tipo==='Saldo inicial' && (m.observaciones||'').includes(`[pid:${id}]`));
+          if (movLigado && data.nacidos_vivos !== 0) {
+            await apiCall('update', { body: { entity: 'movimientos', id: movLigado.movimiento_id, data: {
+              fecha: data.fecha,
+              cantidad: data.nacidos_vivos,
+              rodeo_destino_id: rodeoTerneros ? rodeoTerneros.rodeo_id : movLigado.rodeo_destino_id,
+              campo_destino_id: rodeoTerneros ? rodeoTerneros.campo_id : movLigado.campo_destino_id,
+            } } });
+          }
+          const mortLigada = (S.cache.mortandad||[]).find(m => (m.observacion||'').includes(`[pid:${id}]`));
+          if (mortLigada && data.nacidos_muertos !== 0) {
+            await apiCall('update', { body: { entity: 'mortandad', id: mortLigada.mortandad_id, data: {
+              fecha: data.fecha,
+              cantidad: data.nacidos_muertos,
+              rodeo_id: data.rodeo_id,
+            } } });
+          }
+          if (movLigado || mortLigada) {
+            invalidateCache('movimientos');
+            invalidateCache('mortandad');
+            await Promise.all([loadEntity('movimientos', true), loadEntity('mortandad', true)]);
+            S.stock = null; await loadStock();
+            toast('Movimiento/Mortandad vinculados también actualizados', 'ok');
+          }
+        } catch(e) { toast('La parición se guardó, pero no se pudo actualizar el Movimiento/Mortandad vinculado — revisalo manualmente.', 'err'); }
       }
       toast('Registro actualizado', 'ok');
       await loadEntity(entity, true);
