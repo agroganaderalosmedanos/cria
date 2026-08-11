@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_105';
+const APP_VERSION = 'index_consolidado_4_6_155_106';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -576,10 +576,17 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
     // (que ya daría 0 de todos modos, pero así queda explícito y visible).
     const sinStock = !res.sinTactoFinal && stockActual === 0;
+    // Terneros vivos HOY en el rodeo de terneros vinculado a esta madre — para
+    // poder verificar a mano: "Parieron" (nacidos_vivos histórico) vs. cuántos
+    // de esos terneros siguen vivos en su propio rodeo (la diferencia se
+    // explica por terneros muertos, vendidos o trasladados desde que nacieron).
+    const nombreTerneros = 'Terneros (' + r.nombre + ')';
+    const rodeoTerneros = (S.catalogs.rodeos||[]).find(x => x.nombre===nombreTerneros && String(x.campo_id)===String(r.campo_id));
+    const ternerosVivos = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
-      prenadasAjustadas, pendientesAjustado,
+      prenadasAjustadas, pendientesAjustado, rodeoTernerosNombre: rodeoTerneros ? rodeoTerneros.nombre : null, ternerosVivos,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
@@ -2839,6 +2846,12 @@ function buildDashboard() {
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
           <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
         </div>`;
+        if (f.rodeoTernerosNombre) {
+          h += `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3)">
+            Para verificar a mano: <strong>${f.rodeoTernerosNombre}</strong> tiene hoy <strong>${fn(f.ternerosVivos)}</strong> terneros vivos
+            (vs. ${fn(f.nacidosVivos)} nacidos vivos históricos de esta madre — la diferencia se explica por terneros que ya murieron, se vendieron o se trasladaron desde que nacieron).
+          </div>`;
+        }
       }
       h += '</div>';
     });
