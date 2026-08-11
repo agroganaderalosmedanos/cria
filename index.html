@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_107';
+const APP_VERSION = 'index_consolidado_4_6_155_109';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -577,16 +577,28 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // (que ya daría 0 de todos modos, pero así queda explícito y visible).
     const sinStock = !res.sinTactoFinal && stockActual === 0;
     // Terneros vivos HOY en el rodeo de terneros vinculado a esta madre — para
-    // poder verificar a mano: "Parieron" (nacidos_vivos histórico) vs. cuántos
-    // de esos terneros siguen vivos en su propio rodeo (la diferencia se
-    // explica por terneros muertos, vendidos o trasladados desde que nacieron).
+    // poder verificar a mano: "Parieron" (nacidos_vivos+nacidos_muertos
+    // histórico) vs. la suma de vivos + muertos post-nacimiento + vendidos +
+    // cedidos + nacidos muertos al parto — las dos tienen que dar igual.
     const nombreTerneros = 'Terneros (' + r.nombre + ')';
     const rodeoTerneros = (S.catalogs.rodeos||[]).find(x => x.nombre===nombreTerneros && String(x.campo_id)===String(r.campo_id));
     const ternerosVivos = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
+    let ternerosMuertosPost = null, ternerosVendidos = null, ternerosCedidos = null, cruceTotal = null;
+    if (rodeoTerneros) {
+      const tid = String(rodeoTerneros.rodeo_id);
+      ternerosMuertosPost = (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===tid && (m.fecha||'')<=corte)
+        .reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+      ternerosVendidos = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===tid && (v.fecha_salida||'')<=corte)
+        .reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+      ternerosCedidos = (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===tid && (m.fecha||'')<=corte)
+        .reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      cruceTotal = ternerosVivos + ternerosMuertosPost + ternerosVendidos + ternerosCedidos + res.nacidosMuertos;
+    }
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
       prenadasAjustadas, pendientesAjustado, rodeoTernerosNombre: rodeoTerneros ? rodeoTerneros.nombre : null, ternerosVivos,
+      ternerosMuertosPost, ternerosVendidos, ternerosCedidos, cruceTotal,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
@@ -643,7 +655,7 @@ function vacasPendientesDeParir_(rodeoId) {
   ).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
   const pendientes = Math.max(0, prenadas - abortos - muertas - yaParieron);
-  return { prenadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
+  return { prenadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, fechaTacto: ultimoTactoFinal ? ultimoTactoFinal.fecha : null, sinTactoFinal: !ultimoTactoFinal };
 }
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
@@ -2825,7 +2837,7 @@ function buildDashboard() {
         h += `<div style="font-size:12px;color:var(--text3)">ℹ Sin stock actual — sus ${fn(f.exportadas||f.prenadas)} preñadas se redistribuyeron a otro(s) rodeo(s) (ver abajo cuál las recibió).</div>`;
       } else {
         h += `<div style="font-size:13px;line-height:1.9">
-          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas <span style="font-size:10px;color:var(--text3)">(tacto ${fd(f.fecha||'')})</span></span></div>`;
+          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas <span style="font-size:10px;color:var(--text3)">(tacto ${fd(f.fechaTacto||'')})</span></span></div>`;
         f.exportadasDetalle.forEach(exp => {
           h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Movidas a ${exp.aNombre} <span style="font-size:10px;color:var(--text3)">(${fd(exp.fecha)})</span></span><span>−${fn(exp.cantidad)}</span></div>`;
         });
@@ -2850,9 +2862,11 @@ function buildDashboard() {
           <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
         </div>`;
         if (f.rodeoTernerosNombre) {
+          const cuadra = f.cruceTotal === f.yaParieron;
           h += `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3)">
-            Para verificar a mano: <strong>${f.rodeoTernerosNombre}</strong> tiene hoy <strong>${fn(f.ternerosVivos)}</strong> terneros vivos
-            (vs. ${fn(f.nacidosVivos)} nacidos vivos históricos de esta madre — la diferencia se explica por terneros que ya murieron, se vendieron o se trasladaron desde que nacieron).
+            <div style="font-weight:600;margin-bottom:3px;color:var(--text2)">🔍 Cruce contra ${f.rodeoTernerosNombre}:</div>
+            <div>${fn(f.ternerosVivos)} vivos + ${fn(f.ternerosMuertosPost)} muertos (post-nac.) + ${fn(f.ternerosVendidos)} vendidos + ${fn(f.ternerosCedidos)} cedidos + ${fn(f.nacidosMuertos)} nacidos muertos = <strong>${fn(f.cruceTotal)}</strong></div>
+            <div style="color:${cuadra?'var(--green-text)':'var(--red)'};font-weight:600;margin-top:2px">${cuadra?'✓':'⚠'} vs. ${fn(f.yaParieron)} Parieron (vivos+muertos) ${cuadra?'— cierra':'— diferencia de '+fn(Math.abs(f.cruceTotal-f.yaParieron))}</div>
           </div>`;
         }
       }
@@ -12770,27 +12784,20 @@ async function exportarAuditoriaReproductivaExcel_() {
     // Además vincula cada rodeo de vacas con su rodeo de terneros por el
     // patrón de nombre que usa el backend al crearlo ("Terneros (" + nombre
     // de la madre + ")"), para poder cruzar Paridas contra Terneros vivos
-    // actuales + muertos (stock real).
+    // actuales + muertos (stock real). Reusa los mismos campos que ya calcula
+    // calcularVacasReproductivas_ (cruceTotal, etc.) — antes esta hoja tenía
+    // su propia cuenta aparte, comparando contra "nacidos vivos" solo, sin
+    // sumar los nacidos muertos; el Dashboard comparaba contra "Parieron"
+    // (vivos+muertos) — dos criterios distintos sin necesidad. Ahora los dos
+    // usan la misma base: Parieron vs. vivos+muertos post+vendidos+cedidos+nacidos muertos.
     const { filas: filasVacaRepro, totales: totVacaRepro } = calcularVacasReproductivas_(null, corte);
     const filas2 = filasVacaRepro.map(rv => {
-      const nombreTerneros = `Terneros (${rv.nombre})`;
-      const rodeoTerneros = rodeosCria.find(r => r.nombre === nombreTerneros && String(r.campo_id)===String(rv.campoId));
-      const ternerosVivos = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
-      const ternerosMuertos = rodeoTerneros
-        ? (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===String(rodeoTerneros.rodeo_id)).reduce((s,m)=>s+(Number(m.cantidad)||1),0)
-        : null;
-      const ternerosVendidos = rodeoTerneros
-        ? (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoTerneros.rodeo_id)).reduce((s,v)=>s+(Number(v.cant_animales)||0),0)
-        : null;
-      const ternerosCedidos = rodeoTerneros
-        ? (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_origen_id)===String(rodeoTerneros.rodeo_id)).reduce((s,m)=>s+(Number(m.cantidad)||0),0)
-        : null;
-      const totalReconciliado = rodeoTerneros ? (ternerosVivos + ternerosMuertos + ternerosVendidos + ternerosCedidos) : null;
-      const diferenciaReconcil = rodeoTerneros ? (rv.nacidosVivos - totalReconciliado) : null;
+      const diferenciaReconcil = rv.rodeoTernerosNombre ? (rv.yaParieron - rv.cruceTotal) : null;
       return {
         ...rv,
-        rodeoTerneros: rodeoTerneros ? rodeoTerneros.nombre : '(no encontrado)',
-        ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
+        rodeoTerneros: rv.rodeoTernerosNombre || '(no encontrado)',
+        ternerosVivos: rv.ternerosVivos, ternerosMuertos: rv.ternerosMuertosPost, ternerosVendidos: rv.ternerosVendidos, ternerosCedidos: rv.ternerosCedidos,
+        totalReconciliado: rv.cruceTotal, diferenciaReconcil,
         exportadasTxt: rv.exportadasDetalle.length ? rv.exportadasDetalle.map(e=>`−${e.cantidad} a ${e.aNombre} (${fd(e.fecha)}, tacto ${fd(e.fechaTacto)})`).join('; ') : '',
         importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre} (${fd(i.fecha)})`).join('; ') : '',
       };
@@ -12798,7 +12805,7 @@ async function exportarAuditoriaReproductivaExcel_() {
 
     const headers2 = ['Rodeo madre','Campo','Preñadas (tacteadas)','Movidas a otro rodeo','Recibidas de otro rodeo','Preñadas (ajustado)',
       'Vendidas (informativo, no resta)','Trasl. fuera no vaca (informativo, no resta)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
-      'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
+      'Rodeo de terneros','Nacidos muertos (parto)','Terneros vivos (stock hoy)','Terneros muertos (post-nac.)','Terneros vendidos','Terneros cedidos','Diferencia (Parieron − vivos+muertos+vendidos+cedidos+nacidos muertos)'];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría reproductiva`],
       ['Fecha', fd(corte)],
@@ -12826,7 +12833,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.sinTactoFinal ? '—' : f.prenadasAjustadas,
       f.salidasExternas.cantVendidaCabezas||'', f.salidasExternas.cantTrasladoNoVacaCabezas||'',
       f.abortos, f.muertas, f.yaParieron, f.sinTactoFinal ? '—' : f.pendientesAjustado,
-      f.rodeoTerneros, f.nacidosVivos,
+      f.rodeoTerneros, f.nacidosMuertos,
       f.ternerosVivos===null?'(sin rodeo)':f.ternerosVivos,
       f.ternerosMuertos===null?'—':f.ternerosMuertos,
       f.ternerosVendidos===null?'—':f.ternerosVendidos,
