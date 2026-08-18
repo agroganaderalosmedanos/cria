@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_103';
+const APP_VERSION = 'index_consolidado_4_6_155_104';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4088,6 +4088,7 @@ function buildMortandadAnalisis() {
   const rodeoFiltro = S._maRodeo || '';
   const desde = S._maDesde || '';
   const hasta = S._maHasta || '';
+  const incluirOtros = !!S._maIncluirOtros;
   const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
 
   h += `<div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">
@@ -4112,11 +4113,15 @@ function buildMortandadAnalisis() {
       <div class="fg"><label>Desde</label><input type="date" value="${desde}" onchange="S._maDesde=this.value;render()"></div>
       <div class="fg"><label>Hasta</label><input type="date" value="${hasta}" onchange="S._maHasta=this.value;render()"></div>
     </div>
-    ${(desde||hasta||campFiltro||rodeoFiltro) ? `<button class="btn btn-secondary btn-sm" onclick="S._maCampo='';S._maRodeo='';S._maDesde='';S._maHasta='';render()">✕ Limpiar filtros</button>` : ''}
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text2);margin-top:8px;cursor:pointer">
+      <input type="checkbox" ${incluirOtros?'checked':''} onchange="S._maIncluirOtros=this.checked;render()">
+      Incluir rodeos de terneros "pooled" sin vínculo a un rodeo madre (ej. "Terneros 2026") — pueden ser stock de otra campaña, por eso van apagados por defecto
+    </label>
+    ${(desde||hasta||campFiltro||rodeoFiltro) ? `<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="S._maCampo='';S._maRodeo='';S._maDesde='';S._maHasta='';render()">✕ Limpiar filtros</button>` : ''}
   </div>`;
 
   const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
-          detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta);
+          detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, incluirOtros);
 
   // ── KPIs ──
   const totalPerdidos = totalNacidosMuertos + totalTernerosMuertos;
@@ -4143,14 +4148,14 @@ function buildMortandadAnalisis() {
         <td class="tc" style="font-weight:700">${fn(f.nacidosMuertos+f.ternerosMuertos+f.abortos)}</td></tr>`;
     });
     if (otros.ternerosMuertos > 0) {
-      h += `<tr><td><strong>Otros rodeos de terneros</strong></td><td>—</td>
+      h += `<tr style="${incluirOtros?'':'opacity:.55'}"><td><strong>Otros rodeos de terneros</strong> ${incluirOtros?'':'<span class="helper-text">(no sumado al total)</span>'}</td><td>—</td>
         <td class="tc">—</td>
         <td class="tc" style="color:#8c1d17">${otros.ternerosMuertos}</td>
         <td class="tc">—</td>
         <td class="tc" style="font-weight:700">${fn(otros.ternerosMuertos)}</td></tr>`;
-      h += `<tr><td colspan="6"><span class="helper-text">"Otros rodeos de terneros" = mortandad en rodeos de terneros que no se pudieron vincular a un rodeo de vientre por nombre (ej. rodeos pooled como "Terneros/as", "Terneros 2026") — ver detalle más abajo.</span></td></tr>`;
+      h += `<tr><td colspan="6"><span class="helper-text">"Otros rodeos de terneros" = mortandad en rodeos de terneros que no se pudieron vincular a un rodeo de vientre por nombre (ej. rodeos pooled como "Terneros/as", "Terneros 2026") — pueden ser stock de otra campaña, por eso ${incluirOtros?'están incluidos en el total porque tildaste el check de arriba':'NO se suman al total salvo que tildes el check de arriba'}. Ver detalle más abajo.</span></td></tr>`;
     }
-    const totFilas = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + otros.ternerosMuertos;
+    const totFilas = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + (incluirOtros ? otros.ternerosMuertos : 0);
     h += `<tr style="background:var(--bg2);font-weight:800">
       <td colspan="2">TOTAL</td>
       <td class="tc" style="color:var(--clay-text)">${fn(totalNacidosMuertos)}</td>
@@ -4241,7 +4246,7 @@ function abortosCompletos_() {
 // Motor de cálculo compartido entre la pantalla y el export a Excel — así los
 // dos SIEMPRE dan el mismo número (mismo criterio que ya se usa en el resto
 // del sistema para Dashboard/Auditoría, ver nota de calcularVacasReproductivas_).
-function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta) {
+function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, incluirOtros) {
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
   const pariciones = S.cache.pariciones || [];
   const mortandad = S.cache.mortandad || [];
@@ -4312,7 +4317,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta) {
   const totalNacidosMuertos = detalleNacidosMuertos.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
   const totalAbortos = detalleAbortos.length;
   const otrosCant = otrosTerneros.reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-  const totalTernerosMuertos = filas.reduce((s,f)=>s+f.ternerosMuertos,0) + otrosCant;
+  const totalTernerosMuertos = filas.reduce((s,f)=>s+f.ternerosMuertos,0) + (incluirOtros ? otrosCant : 0);
 
   const detalleTernerosMuertos = mortTerneros.filter(m => {
     // Sólo lo que efectivamente entró en el conteo (matcheó el filtro, directo u "otros")
@@ -4364,8 +4369,9 @@ async function exportarMortandadAnalisisExcel_() {
     const rodeoFiltro = S._maRodeo || '';
     const desde = S._maDesde || '';
     const hasta = S._maHasta || '';
+    const incluirOtros = !!S._maIncluirOtros;
     const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
-            detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta);
+            detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, incluirOtros);
 
     const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
     const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
@@ -4388,7 +4394,8 @@ async function exportarMortandadAnalisisExcel_() {
       rodeoFiltro ? 'Rodeo: ' + rodeoNombre(rodeoFiltro) : '',
       desde ? 'Desde: ' + fd(desde) : '',
       hasta ? 'Hasta: ' + fd(hasta) : '',
-    ].filter(Boolean).join(' · ') || 'Sin filtros (todos los rodeos y fechas)';
+      'Rodeos de terneros sin vínculo: ' + (incluirOtros ? 'incluidos en el total' : 'EXCLUIDOS del total (pueden ser de otra campaña)'),
+    ].filter(Boolean).join(' · ');
 
     const wb = XLSX.utils.book_new();
 
@@ -4402,8 +4409,8 @@ async function exportarMortandadAnalisisExcel_() {
       headers1,
     ];
     filas.forEach(f => aoa1.push([f.nombre, f.campo, f.nacidosMuertos, f.ternerosMuertos, f.abortos, f.nacidosMuertos+f.ternerosMuertos+f.abortos]));
-    if (otros.ternerosMuertos > 0) aoa1.push(['Otros rodeos de terneros (sin vínculo a rodeo madre)', '—', 0, otros.ternerosMuertos, 0, otros.ternerosMuertos]);
-    const totFilas1 = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + otros.ternerosMuertos;
+    if (otros.ternerosMuertos > 0) aoa1.push([`Otros rodeos de terneros (sin vínculo — ${incluirOtros?'incluido':'NO incluido'} en TOTAL)`, '—', 0, otros.ternerosMuertos, 0, otros.ternerosMuertos]);
+    const totFilas1 = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + (incluirOtros ? otros.ternerosMuertos : 0);
     aoa1.push(['TOTAL', '', totalNacidosMuertos, totalTernerosMuertos, totalAbortos, totFilas1]);
     const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
     ws1['!cols'] = [{wch:32},{wch:16},{wch:16},{wch:24},{wch:12},{wch:14}];
