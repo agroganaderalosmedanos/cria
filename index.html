@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_104';
+const APP_VERSION = 'index_consolidado_4_6_155_105';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -982,6 +982,7 @@ async function goto(page) {
     if (!S.cache.mortandad)   maLoads.push(loadEntity('mortandad').catch(()=>{}));
     if (!S.cache.abortos)     maLoads.push(loadEntity('abortos').catch(()=>{}));
     if (!S.cache.movimientos) maLoads.push(loadEntity('movimientos').catch(()=>{}));
+    if (!S.cache.campanas)    maLoads.push(loadEntity('campanas').catch(()=>{}));
     if (maLoads.length) { S.loading = true; render(); await Promise.all(maLoads); S.loading = false; }
   }
   if (page === 'indices_reproduccion' && !S.indicesData && !S._indicesLoading) {
@@ -4078,18 +4079,33 @@ function buildMortandadAnalisis() {
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
   let h = _criaTabsHtml;
 
-  if (!S.cache.pariciones || !S.cache.mortandad || !S.cache.abortos || !S.cache.movimientos) {
-    return h + '<div class="loader"><div class="spinner"></div>Cargando pariciones, mortandad, abortos y movimientos…</div>';
+  if (!S.cache.pariciones || !S.cache.mortandad || !S.cache.abortos || !S.cache.movimientos || !S.cache.campanas) {
+    return h + '<div class="loader"><div class="spinner"></div>Cargando pariciones, mortandad, abortos, movimientos y campañas…</div>';
   }
 
   const campos = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const campanasAll = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  const campanaFiltro = S._maCampana || '';
   const campFiltro = S._maCampo || '';
   const rodeoFiltro = S._maRodeo || '';
   const desde = S._maDesde || '';
   const hasta = S._maHasta || '';
   const incluirOtros = !!S._maIncluirOtros;
   const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
+
+  // Diagnóstico de cobertura — avisa si el catálogo de Campañas tiene huecos
+  // (fechas de Pariciones/Mortandad/Abortos que no caen en ninguna campaña
+  // definida). Esto reemplaza tener que adivinar "qué registro hay que
+  // arreglar": no hay que tocar Pariciones/Mortandad/Abortos, hay que
+  // completar el catálogo de Campañas.
+  const diagCobertura = diagnosticoCoberturaCampanas_();
+  if (diagCobertura) {
+    h += `<div class="panel" style="border:1.5px solid var(--clay);background:rgba(200,150,40,0.08)">
+      <div class="panel-title" style="color:var(--clay-text)">⚠ Faltan campañas definidas</div>
+      <p class="helper-text">Hay <strong>${fn(diagCobertura.cantidad)}</strong> registros (${Object.entries(diagCobertura.porTipo).map(([t,n])=>`${n} de ${t}`).join(', ')}) con fecha entre <strong>${fd(diagCobertura.desde)}</strong> y <strong>${fd(diagCobertura.hasta)}</strong> que no caen dentro de ninguna campaña del catálogo — quedan afuera de cualquier filtro por campaña hasta que la definas. No hace falta tocar esos registros: andá a <button class="btn btn-secondary btn-sm" onclick="goto('campanas')" style="margin:0 2px">📅 Campañas</button> y cargá la que falte cubriendo ese rango de fechas.</p>
+    </div>`;
+  }
 
   h += `<div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn btn-secondary btn-sm" onclick="exportarMortandadAnalisisExcel_()" title="Descarga un Excel con el resumen y el detalle de nacidos muertos, terneros muertos post-nacimiento y abortos">📊 Exportar a Excel</button>
@@ -4098,6 +4114,16 @@ function buildMortandadAnalisis() {
     <div class="panel-title">☠ Análisis de Mortandad — nacidos muertos, terneros muertos y abortos</div>
     <p class="helper-text" style="margin-bottom:14px">Separa las tres causas de pérdida que se suelen mezclar: <strong>nacidos muertos</strong> (mortinatos cargados en Pariciones), <strong>terneros muertos después de nacer</strong> (Mortandad cargada en el rodeo propio del ternero, ya con su alta) y <strong>abortos</strong> (vacas/vaquillonas que perdieron la preñez, tabla Abortos). Separado por rodeo de vientre.</p>
     <div class="fgrid" style="margin-bottom:6px">
+      <div class="fg"><label>Campaña</label>
+        <select onchange="
+          const c=(S.cache.campanas||[]).find(x=>String(x.campana_id)===this.value);
+          S._maCampana=this.value;
+          if (c) { S._maDesde=c.fecha_inicio||''; S._maHasta=c.fecha_fin||today(); }
+          render()">
+          <option value="">Todas (usar Desde/Hasta manual)</option>
+          ${campanasAll.map(c=>`<option value="${c.campana_id}" ${String(campanaFiltro)===String(c.campana_id)?'selected':''}>${c.nombre}${!c.fecha_fin?' (en curso)':''}</option>`).join('')}
+        </select>
+      </div>
       <div class="fg"><label>Campo</label>
         <select onchange="S._maCampo=this.value;S._maRodeo='';render()">
           <option value="">Todos los campos</option>
@@ -4110,14 +4136,14 @@ function buildMortandadAnalisis() {
           ${rodeosDisponibles.filter(r=>{const c=(r.categoria||'').toLowerCase();return c==='vaca'||c==='vaquillona';}).map(r=>`<option value="${r.rodeo_id}" ${String(rodeoFiltro)===String(r.rodeo_id)?'selected':''}>${r.nombre}</option>`).join('')}
         </select>
       </div>
-      <div class="fg"><label>Desde</label><input type="date" value="${desde}" onchange="S._maDesde=this.value;render()"></div>
-      <div class="fg"><label>Hasta</label><input type="date" value="${hasta}" onchange="S._maHasta=this.value;render()"></div>
+      <div class="fg"><label>Desde</label><input type="date" value="${desde}" onchange="S._maCampana='';S._maDesde=this.value;render()"></div>
+      <div class="fg"><label>Hasta</label><input type="date" value="${hasta}" onchange="S._maCampana='';S._maHasta=this.value;render()"></div>
     </div>
     <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text2);margin-top:8px;cursor:pointer">
       <input type="checkbox" ${incluirOtros?'checked':''} onchange="S._maIncluirOtros=this.checked;render()">
-      Incluir rodeos de terneros "pooled" sin vínculo a un rodeo madre (ej. "Terneros 2026") — pueden ser stock de otra campaña, por eso van apagados por defecto
+      Incluir rodeos de terneros "pooled" sin vínculo a un rodeo madre por nombre (ej. "Terneros 2026") en el total — recomendado dejarlo desmarcado; si ya filtraste por Campaña, el filtro de fecha ya separa correctamente los animales de otra campaña aunque compartan rodeo
     </label>
-    ${(desde||hasta||campFiltro||rodeoFiltro) ? `<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="S._maCampo='';S._maRodeo='';S._maDesde='';S._maHasta='';render()">✕ Limpiar filtros</button>` : ''}
+    ${(desde||hasta||campFiltro||rodeoFiltro||campanaFiltro) ? `<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="S._maCampo='';S._maRodeo='';S._maDesde='';S._maHasta='';S._maCampana='';render()">✕ Limpiar filtros</button>` : ''}
   </div>`;
 
   const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
@@ -4362,9 +4388,10 @@ async function exportarMortandadAnalisisExcel_() {
       });
     }
     const XLSX = window.XLSX;
-    for (const ent of ['pariciones','mortandad','abortos','movimientos']) {
+    for (const ent of ['pariciones','mortandad','abortos','movimientos','campanas']) {
       if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
     }
+    const campanaFiltro = S._maCampana || '';
     const campFiltro = S._maCampo || '';
     const rodeoFiltro = S._maRodeo || '';
     const desde = S._maDesde || '';
@@ -4390,6 +4417,7 @@ async function exportarMortandadAnalisisExcel_() {
       }
     }
     const filtroTxt = [
+      campanaFiltro ? 'Campaña: ' + (((S.cache.campanas||[]).find(c=>String(c.campana_id)===String(campanaFiltro))||{}).nombre || campanaFiltro) : '',
       campFiltro ? 'Campo: ' + campoNombre(campFiltro) : '',
       rodeoFiltro ? 'Rodeo: ' + rodeoNombre(rodeoFiltro) : '',
       desde ? 'Desde: ' + fd(desde) : '',
@@ -4470,6 +4498,33 @@ async function exportarMortandadAnalisisExcel_() {
     detalleAbortos.forEach((a,i) => estilarFila_(ws4, 5+i, headers4.length, i%2===1?ST_ROW_ALT:ST_ROW));
     estilarFila_(ws4, 5+detalleAbortos.length, headers4.length, ST_TOTAL);
     XLSX.utils.book_append_sheet(wb, ws4, 'Abortos');
+
+    // ── HOJA 5: Cobertura de campañas — sólo si hay huecos ──
+    const pariciones_ = S.cache.pariciones || [];
+    const mortandad_ = S.cache.mortandad || [];
+    const abortos_ = S.cache.abortos || [];
+    const sinCampana = [];
+    pariciones_.forEach(p => { if (p.fecha && !campanaDeFecha_(p.fecha)) sinCampana.push({ tipo: 'Parición', fecha: p.fecha, rodeo: rodeoNombre(p.rodeo_id), detalle: `${p.nacidos_vivos||0} vivos / ${p.nacidos_muertos||0} muertos` }); });
+    mortandad_.forEach(m => { if (m.fecha && !campanaDeFecha_(m.fecha)) sinCampana.push({ tipo: 'Mortandad', fecha: m.fecha, rodeo: rodeoNombre(m.rodeo_id), detalle: `${m.cantidad||1} cab. — ${m.observacion||''}` }); });
+    abortos_.forEach(a => { if (a.fecha && !campanaDeFecha_(a.fecha)) sinCampana.push({ tipo: 'Aborto', fecha: a.fecha, rodeo: rodeoNombre(a.rodeo_id), detalle: a.observacion||'' }); });
+    if (sinCampana.length) {
+      sinCampana.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+      const headers5 = ['Tipo','Fecha','Rodeo','Detalle'];
+      const aoa5 = [
+        ['Cobertura de campañas — registros sin campaña definida'],
+        ['Nota', 'Estos registros tienen una fecha que no cae dentro de ninguna campaña cargada en el catálogo Campañas. No hace falta editarlos: hay que agregar/ajustar la campaña correspondiente (fecha_inicio/fecha_fin) en Configuración → Campañas para que los cubra.'],
+        [],
+        headers5,
+      ];
+      sinCampana.forEach(r => aoa5.push([r.tipo, fd(r.fecha), r.rodeo, r.detalle]));
+      const ws5 = XLSX.utils.aoa_to_sheet(aoa5);
+      ws5['!cols'] = [{wch:12},{wch:12},{wch:26},{wch:50}];
+      ws5['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers5.length-1} }, { s:{r:1,c:0}, e:{r:1,c:headers5.length-1} }];
+      estilarFila_(ws5, 0, headers5.length, ST_TITULO);
+      estilarFila_(ws5, 3, headers5.length, ST_HEADER);
+      sinCampana.forEach((r,i) => estilarFila_(ws5, 4+i, headers5.length, i%2===1?ST_ROW_ALT:ST_ROW));
+      XLSX.utils.book_append_sheet(wb, ws5, 'Cobertura campañas');
+    }
 
     const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
     const blob = new Blob([buf], {type:'application/octet-stream'});
@@ -16156,6 +16211,45 @@ function preciosValParaPeriodo_(periodo) {
 
 function campanaActivaGet_() {
   return (S.cache.campanas || []).find(c => esPorCampo_(c.activa)) || null;
+}
+
+// Deriva a qué campaña pertenece una fecha, contra el catálogo REAL de
+// Campañas (fecha_inicio/fecha_fin) — evita tener que agregar un campo
+// "campana" a mano en Pariciones/Mortandad/Abortos/Destetes y volver a
+// tipear cada registro: al ya existir el rango de fechas de cada campaña,
+// cualquier registro (viejo o nuevo) se puede clasificar por su propia
+// fecha, sin tocarlo. Una campaña sin fecha_fin se toma como "en curso"
+// (cubre desde su inicio hasta hoy).
+function campanaDeFecha_(fecha) {
+  if (!fecha) return null;
+  const campanas = S.cache.campanas || [];
+  const f = String(fecha);
+  return campanas.find(c => {
+    if (!c.fecha_inicio) return false;
+    if (f < String(c.fecha_inicio)) return false;
+    if (c.fecha_fin && f > String(c.fecha_fin)) return false;
+    return true;
+  }) || null;
+}
+
+// Diagnóstico de cobertura: cuántos registros de Pariciones/Mortandad/Abortos
+// tienen una fecha que no cae en NINGUNA campaña definida en el catálogo.
+// Esta es la respuesta real a "qué registros históricos hay que arreglar" —
+// no hay que tocar los registros, hay que completar el catálogo de Campañas
+// (fecha_inicio/fecha_fin) para que cubra todo el historial sin huecos.
+function diagnosticoCoberturaCampanas_() {
+  const pariciones = S.cache.pariciones || [];
+  const mortandad = S.cache.mortandad || [];
+  const abortos = S.cache.abortos || [];
+  const sinCampana = [];
+  pariciones.forEach(p => { if (p.fecha && !campanaDeFecha_(p.fecha)) sinCampana.push({ tipo: 'Parición', fecha: p.fecha }); });
+  mortandad.forEach(m => { if (m.fecha && !campanaDeFecha_(m.fecha)) sinCampana.push({ tipo: 'Mortandad', fecha: m.fecha }); });
+  abortos.forEach(a => { if (a.fecha && !campanaDeFecha_(a.fecha)) sinCampana.push({ tipo: 'Aborto', fecha: a.fecha }); });
+  if (!sinCampana.length) return null;
+  const fechas = sinCampana.map(r => r.fecha).sort();
+  const porTipo = {};
+  sinCampana.forEach(r => { porTipo[r.tipo] = (porTipo[r.tipo] || 0) + 1; });
+  return { cantidad: sinCampana.length, desde: fechas[0], hasta: fechas[fechas.length - 1], porTipo };
 }
 
 function buildCampanas() {
