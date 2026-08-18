@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_106';
+const APP_VERSION = 'index_consolidado_4_6_155_108';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -524,37 +524,64 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const fechaTacto = info.fecha;
     const cantVendida = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (v.fecha_salida||'')<=corte && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)))
       .reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
-    // OJO — se excluyen explícitamente los traslados que ya vienen de un
-    // Aborto (texto "aborto" en la observación, con o sin el tag [abid:...],
-    // mismo criterio que abortosCompletos_). Sin esto, cada vaca abortada se
-    // contaba DOS veces: una acá como "trasladada fuera" (estimada) y otra en
-    // "Abortadas" (exacta, de la tabla Abortos) — inflando este número muy
-    // por encima de lo real.
-    const movsTrasladoNoVaca = (S.cache.movimientos||[]).filter(m=>
+    // OJO — se excluyen del CONTEO los traslados que ya vienen de:
+    // (a) un Aborto (texto "aborto" en la observación) — ya está en "Abortadas".
+    // (b) una Parición, vía el tag [pid:<id>] — el backend lo pone tanto en el
+    //     alta del ternero como, cuando la vaca se descarta después de un parto
+    //     difícil o un nacido-muerto, en el traslado de la vaca a Vacas Venta.
+    //     Esa vaca YA está contada en "Parieron" (dio a luz, aunque el ternero
+    //     naciera muerto) — si además se resta acá por el traslado posterior,
+    //     se descuenta DOS VECES la misma vaca. El caso real: "vaca tuvo un
+    //     parto lánguido, el ternero se comió el carancho, y se descartó a la
+    //     vaca" — eso es 1 vaca que parió y después se vendió, no una vaca que
+    //     "se perdió" antes de parir.
+    // (c) un traslado marcado explícitamente como "vacía"/"vacio"/"seca" — la
+    //     tasa de preñez del rodeo asume que un traslado es una muestra al
+    //     azar (parte preñadas, parte vacías, en proporción). Pero el traslado
+    //     más común después de un tacto es EXACTAMENTE lo contrario: separar y
+    //     vender la tanda de vacías — que por definición no aporta ninguna
+    //     preñada. Aplicarle la tasa promedio del rodeo a esa tanda inflaba
+    //     "Trasladadas fuera" con preñadas que en realidad nunca existieron.
+    // Todos los traslados se siguen mostrando en el detalle de abajo (para que
+    // se vea a dónde fue cada una), pero los que caen en (a)/(b)/(c) NO restan
+    // del total de preñadas.
+    const esTrasladoYaContado_ = (m) => /aborto/i.test(String(m.observaciones||'')) || /\[pid:\d+\]/.test(String(m.observaciones||''));
+    const esTrasladoVacias_ = (m) => /\bvac[ií]as?\b|\bsecas?\b/i.test(String(m.observaciones||''));
+    const movsTrasladoNoVacaTodos = (S.cache.movimientos||[]).filter(m=>
       (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') &&
       String(m.rodeo_origen_id)===rid &&
       !idsVaca.has(String(m.rodeo_destino_id)) &&
       (m.fecha||'')<=corte &&
-      (!fechaTacto||String(m.fecha)>=String(fechaTacto)) &&
-      !/aborto/i.test(String(m.observaciones||''))
+      (!fechaTacto||String(m.fecha)>=String(fechaTacto))
     );
+    const movsTrasladoNoVaca = movsTrasladoNoVacaTodos.filter(m => !esTrasladoYaContado_(m) && !esTrasladoVacias_(m));
     const cantTrasladoNoVaca = movsTrasladoNoVaca.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
     const prenVendidas = Math.round(cantVendida * info.tasa);
     const prenTrasladoNoVaca = Math.round(cantTrasladoNoVaca * info.tasa);
+    // Vacías esperadas según el propio tacto (tacteadas − preñadas) — se
+    // muestra como referencia junto a traslados sin motivo especificado, para
+    // que sea fácil comparar "¿esta cantidad se parece a las vacías del
+    // tacto?" sin tener que ir a buscarlo a mano.
+    const vaciasTacto = Math.max(0, info.total - info.prenadas);
     // Detalle agrupado por destino + motivo (texto de la observación), para
     // que el panel muestre A DÓNDE fueron y POR QUÉ, no sólo un número suelto
     // sin contexto — así alguien que no está en el tema puede entender qué
-    // pasó sin tener que preguntar.
+    // pasó sin tener que preguntar. Se muestran TODOS (incluidos los ya
+    // contados vía Parición/Aborto/Vacías), marcados aparte, para que quede
+    // claro por qué no suman al total de "Trasladadas fuera".
     const detallePorClave = {};
-    movsTrasladoNoVaca.forEach(m => {
+    movsTrasladoNoVacaTodos.forEach(m => {
       const destNombre = rodeoNombre(m.rodeo_destino_id);
       const motivo = String(m.observaciones||'').trim() || '(sin motivo especificado)';
-      const clave = destNombre + '|' + motivo;
-      if (!detallePorClave[clave]) detallePorClave[clave] = { destino: destNombre, motivo, cantidad: 0 };
+      const yaContado = esTrasladoYaContado_(m);
+      const esVacias = esTrasladoVacias_(m);
+      const sinMotivo = !String(m.observaciones||'').trim();
+      const clave = destNombre + '|' + motivo + '|' + yaContado + '|' + esVacias;
+      if (!detallePorClave[clave]) detallePorClave[clave] = { destino: destNombre, motivo, cantidad: 0, yaContado, esVacias, sinMotivo };
       detallePorClave[clave].cantidad += Number(m.cantidad)||0;
     });
-    if (prenVendidas>0 || prenTrasladoNoVaca>0) {
-      salidasExternasPorRodeo[rid] = { ventas: prenVendidas, trasladoNoVaca: prenTrasladoNoVaca, total: prenVendidas+prenTrasladoNoVaca, detalle: Object.values(detallePorClave) };
+    if (prenVendidas>0 || prenTrasladoNoVaca>0 || Object.keys(detallePorClave).length) {
+      salidasExternasPorRodeo[rid] = { ventas: prenVendidas, trasladoNoVaca: prenTrasladoNoVaca, cantTrasladoNoVaca, tasa: info.tasa, vaciasTacto, total: prenVendidas+prenTrasladoNoVaca, detalle: Object.values(detallePorClave) };
     }
   });
 
@@ -569,7 +596,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const exportadasDetalle = exportadasDetallePorRodeo[rid] || [];
     const importadas = importadasPorRodeo[rid] || [];
     const totalImportadas = importadas.reduce((s,x)=>s+x.cantidad,0);
-    const salidasExternas = salidasExternasPorRodeo[rid] || { ventas:0, trasladoNoVaca:0, total:0 };
+    const salidasExternas = salidasExternasPorRodeo[rid] || { ventas:0, trasladoNoVaca:0, cantTrasladoNoVaca:0, tasa:0, vaciasTacto:0, total:0, detalle:[] };
     // Preñadas AJUSTADAS por movimientos entre rodeos — esta es la que se usa
     // para el total consolidado y para "Para parir", no la cruda del tacto.
     const prenadasAjustadas = Math.max(0, res.prenadas - exportadas + totalImportadas);
@@ -2815,7 +2842,7 @@ function buildDashboard() {
     if (rodeosExcluidosKpi > 0) {
       h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">ℹ ${rodeosExcluidosKpi} rodeo(s) de vacas sin stock actual — sus preñadas ya se redistribuyeron a los rodeos que las recibieron (ver "de [rodeo]" en las tarjetas de abajo), así que no se pierden ni se duplican en el total.</div>`;
     }
-    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas (ajustado) − Abortadas − Muertas − Vendidas − Trasladadas fuera − Paridas = Pendientes. "Ajustado" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (misma tasa de preñez del rodeo de origen aplicada a la cantidad movida/vendida) — el total consolidado no cambia por movimientos ENTRE rodeos de vacas propios, solo se reparte distinto; sí baja si se vendieron o se trasladaron a un rodeo que no es de categoría vaca (esas cabezas salen del sistema). "Trasladadas fuera" excluye los traslados que ya vienen de un Aborto (esos se cuentan una sola vez, en "Abortadas") y muestra abajo de cada tarjeta a qué rodeo fueron y con qué motivo (texto de la observación del traslado), para poder saber qué pasó sin tener que ir a buscarlo a mano.</div>`;
+    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas (ajustado) − Abortadas − Muertas − Vendidas − Trasladadas fuera − Paridas = Pendientes. "Ajustado" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (misma tasa de preñez del rodeo de origen aplicada a la cantidad movida/vendida) — el total consolidado no cambia por movimientos ENTRE rodeos de vacas propios, solo se reparte distinto; sí baja si se vendieron o se trasladaron a un rodeo que no es de categoría vaca (esas cabezas salen del sistema). "Trasladadas fuera" es una ESTIMACIÓN (cabezas reales × tasa de preñez del tacto) y excluye los traslados que ya vienen de un Aborto o de una Parición (ya contados en "Abortadas"/"Parieron"), y los marcados como "vacía" en la observación (no se les aplica tasa de preñez, porque por definición no eran preñadas). El detalle de abajo muestra a qué rodeo fue cada una, con qué motivo, y avisa cuando un traslado sin motivo tiene un tamaño parecido a las vacías del tacto — para que puedas cargar el motivo real y que el sistema deje de estimarle preñez de más.</div>`;
 
     // Auditoría por rodeo, en formato de cuenta — para poder chequear rodeo
     // por rodeo si los datos cargados tienen sentido, en vez de un solo total.
@@ -2839,10 +2866,21 @@ function buildDashboard() {
         if (f.salidasExternas.ventas > 0) {
           h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Vendidas</span><span>−${fn(f.salidasExternas.ventas)}</span></div>`;
         }
-        if (f.salidasExternas.trasladoNoVaca > 0) {
-          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera (no vaca) <span style="font-size:9px;color:var(--text3)">(preñadas est.)</span></span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
+        if (f.salidasExternas.trasladoNoVaca > 0 || (f.salidasExternas.detalle||[]).length) {
+          if (f.salidasExternas.trasladoNoVaca > 0) {
+            h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera (no vaca) <span style="font-size:9px;color:var(--text3)">(${fn(f.salidasExternas.cantTrasladoNoVaca)} cab. reales × ${pct((f.salidasExternas.tasa||0)*100)} preñez ≈)</span></span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
+          }
           (f.salidasExternas.detalle||[]).forEach(d => {
-            h += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding-left:10px"><span>→ ${d.destino} — ${d.motivo}</span><span>${fn(d.cantidad)} cab. reales</span></div>`;
+            if (d.yaContado) {
+              h += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding-left:10px;opacity:.65"><span>→ ${d.destino} — ${d.motivo} <em>(ya contada en Parieron/Abortos, no resta de nuevo)</em></span><span>${fn(d.cantidad)} cab.</span></div>`;
+            } else if (d.esVacias) {
+              h += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding-left:10px;opacity:.65"><span>→ ${d.destino} — ${d.motivo} <em>(vacía — no se le aplica tasa de preñez)</em></span><span>${fn(d.cantidad)} cab.</span></div>`;
+            } else {
+              h += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding-left:10px"><span>→ ${d.destino} — ${d.motivo}</span><span>${fn(d.cantidad)} cab. reales</span></div>`;
+              if (d.sinMotivo && f.salidasExternas.vaciasTacto > 0) {
+                h += `<div style="font-size:10px;color:var(--clay-text);padding-left:10px">⚠ El tacto de este rodeo dio ${fn(f.salidasExternas.vaciasTacto)} vacías — si este traslado es esa tanda, agregale "vacía" a la observación del movimiento para que no se le aplique tasa de preñez.</div>`;
+              }
+            }
           });
         }
         h += `
@@ -13209,7 +13247,10 @@ async function exportarAuditoriaReproductivaExcel_() {
         ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
         exportadasTxt: rv.exportadasDetalle.length ? rv.exportadasDetalle.map(e=>`−${e.cantidad} a ${e.aNombre} (${fd(e.fecha)}, tacto ${fd(e.fechaTacto)})`).join('; ') : '',
         importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre} (${fd(i.fecha)})`).join('; ') : '',
-        trasladoNoVacaTxt: (rv.salidasExternas.detalle||[]).length ? rv.salidasExternas.detalle.map(d=>`${d.cantidad} a ${d.destino} — ${d.motivo}`).join('; ') : '',
+        trasladoNoVacaTxt: (rv.salidasExternas.detalle||[]).length ? rv.salidasExternas.detalle.map(d=>{
+          const tag = d.yaContado ? '[YA CONTADA, no resta] ' : d.esVacias ? '[VACÍA, no resta] ' : (d.sinMotivo && rv.salidasExternas.vaciasTacto>0 ? `[SIN MOTIVO — tacto dio ${rv.salidasExternas.vaciasTacto} vacías, revisar] ` : '');
+          return `${tag}${d.cantidad} a ${d.destino} — ${d.motivo}`;
+        }).join('; ') : '',
       };
     });
 
@@ -13219,7 +13260,7 @@ async function exportarAuditoriaReproductivaExcel_() {
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría reproductiva`],
       ['Fecha', fd(corte)],
-      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto. Pendientes = Preñadas (ajustado) − Vendidas − Trasladadas fuera − Abortadas − Muertas − Parieron. "Trasl. fuera" YA EXCLUYE los traslados que vienen de un Aborto (esos están en "Abortadas", no se duplican) y es una ESTIMACIÓN (cabezas reales trasladadas × tasa de preñez del rodeo) — la columna de detalle muestra la cantidad REAL de cabezas y el motivo de cada traslado, tal cual quedó en la observación. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
+      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto. Pendientes = Preñadas (ajustado) − Vendidas − Trasladadas fuera − Abortadas − Muertas − Parieron. "Trasl. fuera" YA EXCLUYE los traslados que vienen de un Aborto o de una Parición vía [pid:] (para no restar dos veces la misma vaca) y los marcados "vacía"/"seca" en la observación (por definición no aportan preñadas — es la tanda que se separa y vende después del tacto); es una ESTIMACIÓN (cabezas reales × tasa de preñez) sólo sobre lo que queda. La columna de detalle marca [YA CONTADA], [VACÍA] o [SIN MOTIVO — revisar] cuando el tamaño del traslado se parece a las vacías del tacto de ese rodeo, para poder cargar el motivo real. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
       [],
       ['RESUMEN CONSOLIDADO', ''],
     ];
