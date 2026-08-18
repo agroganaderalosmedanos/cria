@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_102';
+const APP_VERSION = 'index_consolidado_4_6_155_103';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4179,9 +4179,11 @@ function buildMortandadAnalisis() {
   if (!detalleTernerosMuertos.length) {
     h += `<p class="helper-text">Sin mortandad de terneros para este filtro.</p>`;
   } else {
-    h += `<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Observación</th></tr></thead><tbody>`;
+    const sinVinculo = detalleTernerosMuertos.filter(m=>!m._vinculoMadre).length;
+    if (sinVinculo) h += `<p class="helper-text" style="margin-bottom:8px">⚠ ${sinVinculo} de estos ${sinVinculo===1?'está':'están'} en un rodeo de terneros "pooled" (ej. por campaña) que no se puede vincular a un rodeo de vientre puntual — aparecen en "Otros rodeos de terneros" en la tabla de arriba, marcados abajo como "— sin vínculo —".</p>`;
+    h += `<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Observación</th><th>Rodeo madre vinculado</th></tr></thead><tbody>`;
     detalleTernerosMuertos.forEach(m => {
-      h += `<tr><td>${fd(m.fecha)}</td><td>${rodeoNombre(m.rodeo_id)}</td><td class="tc">${fn(Number(m.cantidad)||1)}</td><td>${m.observacion||'—'}</td></tr>`;
+      h += `<tr><td>${fd(m.fecha)}</td><td>${rodeoNombre(m.rodeo_id)}</td><td class="tc">${fn(Number(m.cantidad)||1)}</td><td>${m.observacion||'—'}</td><td>${m._vinculoMadre || '<span style="color:var(--clay-text)">— sin vínculo —</span>'}</td></tr>`;
     });
     h += '</tbody></table></div>';
   }
@@ -4321,6 +4323,18 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta) {
       if (match) madreDirecta = rodeosAll.find(r => r.nombre === match[1] && String(r.campo_id) === String(rodeoTernero.campo_id));
     }
     return madreDirecta ? rodeoMatch_(madreDirecta.rodeo_id) : rodeoMatch_(m.rodeo_id);
+  }).map(m => {
+    // Tag informativo — a qué rodeo madre se vinculó (por el patrón "Terneros (<madre>)"),
+    // o null si es un rodeo "pooled" (ej. "Terneros 2026") que no se puede vincular a
+    // una madre puntual. Se muestra en pantalla y en el Excel para que no quede oculto
+    // por qué algo cae en "Otros rodeos de terneros".
+    const rodeoTernero = rodeosAll.find(r => String(r.rodeo_id) === String(m.rodeo_id));
+    let madreDirecta = null;
+    if (rodeoTernero) {
+      const match = /^Terneros \((.+)\)$/.exec(rodeoTernero.nombre);
+      if (match) madreDirecta = rodeosAll.find(r => r.nombre === match[1] && String(r.campo_id) === String(rodeoTernero.campo_id));
+    }
+    return { ...m, _vinculoMadre: madreDirecta ? madreDirecta.nombre : null };
   }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
 
   return {
@@ -4423,17 +4437,17 @@ async function exportarMortandadAnalisisExcel_() {
     XLSX.utils.book_append_sheet(wb, ws2, 'Nacidos muertos');
 
     // ── HOJA 3: Terneros muertos post-nacimiento ──
-    const headers3 = ['Fecha','Rodeo','Cantidad','Observación'];
-    const aoa3 = [['Detalle — Terneros muertos post-nacimiento'], ['Filtros', filtroTxt], [], headers3];
-    detalleTernerosMuertos.forEach(m => aoa3.push([fd(m.fecha), rodeoNombre(m.rodeo_id), Number(m.cantidad)||1, m.observacion||'']));
-    aoa3.push(['TOTAL','', totalTernerosMuertos, '']);
+    const headers3 = ['Fecha','Rodeo','Cantidad','Observación','Rodeo madre vinculado'];
+    const aoa3 = [['Detalle — Terneros muertos post-nacimiento'], ['Filtros', filtroTxt], ['Nota', 'Un rodeo de terneros se vincula a su rodeo madre por el nombre "Terneros (<madre>)". Los rodeos "pooled" (ej. por campaña, sin ese patrón) quedan sin vínculo — es la fila "Otros rodeos de terneros" del Resumen.'], [], headers3];
+    detalleTernerosMuertos.forEach(m => aoa3.push([fd(m.fecha), rodeoNombre(m.rodeo_id), Number(m.cantidad)||1, m.observacion||'', m._vinculoMadre || '— sin vínculo —']));
+    aoa3.push(['TOTAL','', totalTernerosMuertos, '', '']);
     const ws3 = XLSX.utils.aoa_to_sheet(aoa3);
-    ws3['!cols'] = [{wch:12},{wch:26},{wch:10},{wch:70}];
+    ws3['!cols'] = [{wch:12},{wch:26},{wch:10},{wch:60},{wch:22}];
     ws3['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers3.length-1} }];
     estilarFila_(ws3, 0, headers3.length, ST_TITULO);
-    estilarFila_(ws3, 3, headers3.length, ST_HEADER);
-    detalleTernerosMuertos.forEach((m,i) => estilarFila_(ws3, 4+i, headers3.length, i%2===1?ST_ROW_ALT:ST_ROW));
-    estilarFila_(ws3, 4+detalleTernerosMuertos.length, headers3.length, ST_TOTAL);
+    estilarFila_(ws3, 4, headers3.length, ST_HEADER);
+    detalleTernerosMuertos.forEach((m,i) => estilarFila_(ws3, 5+i, headers3.length, i%2===1?ST_ROW_ALT:ST_ROW));
+    estilarFila_(ws3, 5+detalleTernerosMuertos.length, headers3.length, ST_TOTAL);
     XLSX.utils.book_append_sheet(wb, ws3, 'Terneros muertos');
 
     // ── HOJA 4: Abortos ──
