@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_112';
+const APP_VERSION = 'index_consolidado_4_6_155_102';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -516,42 +516,20 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   // (ej: un rodeo "Vacas venta" de descarte) — su preñez sale del sistema, no
   // se redistribuye a ningún otro rodeo, pero sí hay que restarla de
   // "pendientes" (una vaca vendida ya no es nuestra, preñada o no).
-  const salidasExternasPorRodeo = {}; // rodeo_id -> { ventas, trasladoNoVaca, total, trasladoNoVacaDetalle }
+  const salidasExternasPorRodeo = {}; // rodeo_id -> { ventas, trasladoNoVaca, total }
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
     const info = infoTactoBase[rid];
     if (info.sinTactoFinal) return;
     const fechaTacto = info.fecha;
-    // OJO — bug encontrado por el usuario: antes se le aplicaba la TASA
-    // PROMEDIO de preñez del rodeo a las vacas vendidas/trasladadas fuera —
-    // asumiendo que eran una muestra al azar del rodeo. Pero la práctica común
-    // es justo lo contrario: la razón más habitual para vender/descartar una
-    // vaca (fuera de aborto o muerte) es que salió VACÍA en el tacto — no es
-    // una muestra al azar, es una selección deliberada de las NO preñadas.
-    // Aplicarles la tasa promedio (ej. 90%) las contaba como si la mayoría
-    // hubiera estado preñada, inflando mucho la resta de "pendientes". Ahora
-    // se asume por defecto que estas cabezas NO estaban preñadas (0%, no se
-    // restan) — se muestra igual la cantidad real movida, como referencia,
-    // por si alguna sí correspondía a una preñada confirmada (revisar a mano
-    // esos casos puntuales si se sabe que no fue por vacía).
     const cantVendida = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (v.fecha_salida||'')<=corte && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)))
       .reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
-    const trasladosNoVacaMovs = (S.cache.movimientos||[]).filter(m=>
-      (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') &&
-      String(m.rodeo_origen_id)===rid && !idsVaca.has(String(m.rodeo_destino_id)) &&
-      (m.fecha||'')<=corte && (!fechaTacto||String(m.fecha)>=String(fechaTacto)) &&
-      !/\[abid:\d+\]/.test(String(m.observaciones||''))
-    );
-    const cantTrasladoNoVaca = trasladosNoVacaMovs.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
-    const trasladoNoVacaDetalle = {};
-    trasladosNoVacaMovs.forEach(m => {
-      const destNombre = rodeoNombre(m.rodeo_destino_id);
-      trasladoNoVacaDetalle[destNombre] = (trasladoNoVacaDetalle[destNombre]||0) + (Number(m.cantidad)||0);
-    });
-    const prenVendidas = 0; // asumidas vacías por defecto — ver nota arriba
-    const prenTrasladoNoVaca = 0; // asumidas vacías por defecto — ver nota arriba
-    if (cantVendida>0 || cantTrasladoNoVaca>0) {
-      salidasExternasPorRodeo[rid] = { ventas: prenVendidas, trasladoNoVaca: prenTrasladoNoVaca, total: prenVendidas+prenTrasladoNoVaca, trasladoNoVacaDetalle, cantTrasladoNoVacaCabezas: cantTrasladoNoVaca, cantVendidaCabezas: cantVendida, tasaUsada: info.tasa };
+    const cantTrasladoNoVaca = (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && !idsVaca.has(String(m.rodeo_destino_id)) && (m.fecha||'')<=corte && (!fechaTacto||String(m.fecha)>=String(fechaTacto)))
+      .reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+    const prenVendidas = Math.round(cantVendida * info.tasa);
+    const prenTrasladoNoVaca = Math.round(cantTrasladoNoVaca * info.tasa);
+    if (prenVendidas>0 || prenTrasladoNoVaca>0) {
+      salidasExternasPorRodeo[rid] = { ventas: prenVendidas, trasladoNoVaca: prenTrasladoNoVaca, total: prenVendidas+prenTrasladoNoVaca };
     }
   });
 
@@ -576,29 +554,10 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
     // (que ya daría 0 de todos modos, pero así queda explícito y visible).
     const sinStock = !res.sinTactoFinal && stockActual === 0;
-    // Terneros vivos HOY en el rodeo de terneros vinculado a esta madre — para
-    // poder verificar a mano: "Parieron" (nacidos_vivos+nacidos_muertos
-    // histórico) vs. la suma de vivos + muertos post-nacimiento + vendidos +
-    // cedidos + nacidos muertos al parto — las dos tienen que dar igual.
-    const nombreTerneros = 'Terneros (' + r.nombre + ')';
-    const rodeoTerneros = (S.catalogs.rodeos||[]).find(x => x.nombre===nombreTerneros && String(x.campo_id)===String(r.campo_id));
-    const ternerosVivos = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
-    let ternerosMuertosPost = null, ternerosVendidos = null, ternerosCedidos = null, cruceTotal = null;
-    if (rodeoTerneros) {
-      const tid = String(rodeoTerneros.rodeo_id);
-      ternerosMuertosPost = (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===tid && (m.fecha||'')<=corte)
-        .reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-      ternerosVendidos = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===tid && (v.fecha_salida||'')<=corte)
-        .reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
-      ternerosCedidos = (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===tid && (m.fecha||'')<=corte)
-        .reduce((s,m)=>s+(Number(m.cantidad)||0),0);
-      cruceTotal = ternerosVivos + ternerosMuertosPost + ternerosVendidos + ternerosCedidos + res.nacidosMuertos;
-    }
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
-      prenadasAjustadas, pendientesAjustado, rodeoTernerosNombre: rodeoTerneros ? rodeoTerneros.nombre : null, ternerosVivos,
-      ternerosMuertosPost, ternerosVendidos, ternerosCedidos, cruceTotal,
+      prenadasAjustadas, pendientesAjustado,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
@@ -655,7 +614,7 @@ function vacasPendientesDeParir_(rodeoId) {
   ).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
   const pendientes = Math.max(0, prenadas - abortos - muertas - yaParieron);
-  return { prenadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, fechaTacto: ultimoTactoFinal ? ultimoTactoFinal.fecha : null, sinTactoFinal: !ultimoTactoFinal };
+  return { prenadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
 }
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
@@ -802,12 +761,7 @@ function rodeosPorCampo(campoId) {
 }
 function rodeoOptionsHtml(rodeosList) {
   if (!rodeosList.length) return '<option value="">Sin rodeos en este campo</option>';
-  // Ordenado alfabéticamente — antes salía en el orden en que aparecen en el
-  // catálogo (sin ningún criterio visible), lo que hacía difícil encontrar el
-  // rodeo correcto en desplegables largos (ej. confundir "Vacas Rodeo 3" con
-  // "Terneros (Vacas Rodeo 3)" al no estar cerca uno del otro).
-  const ordenados = rodeosList.slice().sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''), 'es', {numeric:true}));
-  return ordenados.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('');
+  return rodeosList.map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('');
 }
 // Un rodeo se muestra en el buscador de Movimientos solo si tiene stock actual O algún movimiento/venta registrado.
 // Si no tiene NINGUNA de las dos cosas, se oculta (las dos condiciones tienen que faltar juntas).
@@ -938,6 +892,7 @@ const NAV = [
     { k: 'abortos',              icon: 'ti-ban',         label: 'Abortos' },
     { k: 'pariciones',           icon: 'ti-baby',        label: 'Pariciones' },
     { k: 'curva_nacimientos',    icon: 'ti-chart-line',  label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis',   icon: 'ti-skull',       label: 'Análisis de Mortandad' },
     { k: 'destetes',             icon: 'ti-checklist',   label: 'Destetes' },
   ]},
   { section: 'Recría', icon: 'ti-arrow-up-circle', defaultPage: 'recria_dashboard', items: [
@@ -1020,6 +975,14 @@ async function goto(page) {
     if (!S.cache.pariciones)       loads.push(loadEntity('pariciones').catch(()=>{}));
     if (!S.cache.servicios)        loads.push(loadEntity('servicios').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); render(); });
+  }
+  if (page === 'mortandad_analisis') {
+    const maLoads = [];
+    if (!S.cache.pariciones)  maLoads.push(loadEntity('pariciones').catch(()=>{}));
+    if (!S.cache.mortandad)   maLoads.push(loadEntity('mortandad').catch(()=>{}));
+    if (!S.cache.abortos)     maLoads.push(loadEntity('abortos').catch(()=>{}));
+    if (!S.cache.movimientos) maLoads.push(loadEntity('movimientos').catch(()=>{}));
+    if (maLoads.length) { S.loading = true; render(); await Promise.all(maLoads); S.loading = false; }
   }
   if (page === 'indices_reproduccion' && !S.indicesData && !S._indicesLoading) {
     S._indicesLoading = true;
@@ -1303,6 +1266,7 @@ function buildPage(page) {
     case 'abortos':    return buildAbortos();
     case 'pariciones': return buildPariciones();
     case 'curva_nacimientos': return buildCurvaNacimientos();
+    case 'mortandad_analisis': return buildMortandadAnalisis();
     case 'mortandad':  return buildMortandad();
     case 'destetes':   return buildDestetes();
     case 'movimientos': return buildMovimientos();
@@ -2807,9 +2771,6 @@ function buildDashboard() {
       <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(kpiMuertas)}</div></div>
       <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(kpiPendientes)}</div></div>
     </div>`;
-    if (typeof abortosCriaTotal2 !== 'undefined' && abortosCriaTotal2 !== kpiAbortadas) {
-      h += `<div style="font-size:11px;color:var(--clay-text);margin-top:8px">ℹ "Abortadas" acá (${fn(kpiAbortadas)}) es distinto del total de la campaña en el panel "Abortos en Cría" más abajo (${fn(abortosCriaTotal2)}) — a propósito, no es un error: acá solo cuentan los abortos ocurridos DESPUÉS del Tacto final de cada rodeo (los únicos que corresponde restar de "Pendientes de parir"). Un aborto de antes del tacto no resta nada acá, porque esa vaca ya no estaba contada como preñada en ese tacto.</div>`;
-    }
     // Proyección: cuántos terneros VIVOS se pueden llegar a tener en total al
     // cierre de la parición — lo que ya nació vivo, más una estimación de lo
     // que falta (asumiendo ~1 cría viva por vaca pendiente, mismo criterio que
@@ -2828,7 +2789,7 @@ function buildDashboard() {
     if (rodeosExcluidosKpi > 0) {
       h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">ℹ ${rodeosExcluidosKpi} rodeo(s) de vacas sin stock actual — sus preñadas ya se redistribuyeron a los rodeos que las recibieron (ver "de [rodeo]" en las tarjetas de abajo), así que no se pierden ni se duplican en el total.</div>`;
     }
-    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas (ajustado) − Abortadas − Muertas − Paridas = Pendientes. "Ajustado" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto — el total consolidado no cambia por movimientos ENTRE rodeos de vacas propios, solo se reparte distinto. Las Ventas directas y los Traslados a un rodeo no reproductivo (fuera de un Aborto, que ya se cuenta aparte) se muestran informativamente pero NO restan de Pendientes — se asume que esas cabezas se vendieron/descartaron por haber salido vacías en el tacto, no al azar. Si alguna correspondía a una vaca confirmada preñada, hay que restarla a mano.</div>`;
+    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas (ajustado) − Abortadas − Muertas − Vendidas − Trasladadas fuera − Paridas = Pendientes. "Ajustado" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (misma tasa de preñez del rodeo de origen aplicada a la cantidad movida/vendida) — el total consolidado no cambia por movimientos ENTRE rodeos de vacas propios, solo se reparte distinto; sí baja si se vendieron o se trasladaron a un rodeo que no es de categoría vaca (esas cabezas salen del sistema).</div>`;
 
     // Auditoría por rodeo, en formato de cuenta — para poder chequear rodeo
     // por rodeo si los datos cargados tienen sentido, en vez de un solo total.
@@ -2842,38 +2803,25 @@ function buildDashboard() {
         h += `<div style="font-size:12px;color:var(--text3)">ℹ Sin stock actual — sus ${fn(f.exportadas||f.prenadas)} preñadas se redistribuyeron a otro(s) rodeo(s) (ver abajo cuál las recibió).</div>`;
       } else {
         h += `<div style="font-size:13px;line-height:1.9">
-          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas <span style="font-size:10px;color:var(--text3)">(tacto ${fd(f.fechaTacto||'')})</span></span></div>`;
+          <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas <span style="font-size:10px;color:var(--text3)">(tacto ${fd(f.fecha||'')})</span></span></div>`;
         f.exportadasDetalle.forEach(exp => {
           h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Movidas a ${exp.aNombre} <span style="font-size:10px;color:var(--text3)">(${fd(exp.fecha)})</span></span><span>−${fn(exp.cantidad)}</span></div>`;
         });
         f.importadas.forEach(imp => {
           h += `<div style="display:flex;justify-content:space-between;color:var(--green-text)"><span>De ${imp.deNombre} <span style="font-size:10px;color:var(--text3)">(${fd(imp.fecha)})</span></span><span>+${fn(imp.cantidad)}</span></div>`;
         });
-        if (f.salidasExternas.cantVendidaCabezas > 0) {
-          h += `<div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px"><span>Vendidas (${fn(f.salidasExternas.cantVendidaCabezas)} cab., asumidas vacías — no resta)</span><span>−0</span></div>`;
+        if (f.salidasExternas.ventas > 0) {
+          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Vendidas</span><span>−${fn(f.salidasExternas.ventas)}</span></div>`;
         }
-        if (f.salidasExternas.cantTrasladoNoVacaCabezas > 0) {
-          const destinos = Object.entries(f.salidasExternas.trasladoNoVacaDetalle||{}).map(([nombre,cant])=>`${cant} a ${nombre}`).join(', ');
-          h += `<div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px">
-            <span>Trasladadas a rodeo no reproductivo (${fn(f.salidasExternas.cantTrasladoNoVacaCabezas)} cab.: ${destinos}) <span title="Se asume que estas cabezas NO estaban preñadas — la razón más habitual para vender/descartar una vaca fuera de aborto o muerte es que salió vacía en el tacto, no es una muestra al azar del rodeo. Si alguna de estas SÍ correspondía a una vaca confirmada preñada, hay que restarla a mano de Pendientes.">ⓘ asumidas vacías</span></span>
-            <span>−0</span>
-          </div>`;
+        if (f.salidasExternas.trasladoNoVaca > 0) {
+          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera (no vaca)</span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
         }
-
         h += `
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
           <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
         </div>`;
-        if (f.rodeoTernerosNombre) {
-          const cuadra = f.cruceTotal === f.yaParieron;
-          h += `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3)">
-            <div style="font-weight:600;margin-bottom:3px;color:var(--text2)">🔍 Cruce contra ${f.rodeoTernerosNombre}:</div>
-            <div>${fn(f.ternerosVivos)} vivos + ${fn(f.ternerosMuertosPost)} muertos (post-nac.) + ${fn(f.ternerosVendidos)} vendidos + ${fn(f.ternerosCedidos)} cedidos + ${fn(f.nacidosMuertos)} nacidos muertos = <strong>${fn(f.cruceTotal)}</strong></div>
-            <div style="color:${cuadra?'var(--green-text)':'var(--red)'};font-weight:600;margin-top:2px">${cuadra?'✓':'⚠'} vs. ${fn(f.yaParieron)} Parieron (vivos+muertos) ${cuadra?'— cierra':'— diferencia de '+fn(Math.abs(f.cruceTotal-f.yaParieron))}</div>
-          </div>`;
-        }
       }
       h += '</div>';
     });
@@ -2905,6 +2853,7 @@ function buildServicios() {  const _criaTabs = [
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -3108,6 +3057,7 @@ function buildTactos() {  const _criaTabs = [
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -3205,6 +3155,7 @@ function buildAbortos() {  const _criaTabs = [
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -3250,7 +3201,7 @@ function buildAbortos() {  const _criaTabs = [
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="ab-hist-rodeo" onchange="abFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodosAb.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodosAb.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3364,6 +3315,7 @@ function buildPariciones() {  const _criaTabs = [
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -3411,7 +3363,7 @@ function buildPariciones() {  const _criaTabs = [
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="pa-hist-rodeo" onchange="paFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${((S.catalogs&&S.catalogs.rodeos)||[]).slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${((S.catalogs&&S.catalogs.rodeos)||[]).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3510,15 +3462,14 @@ window.paBuscarHuerfanos_ = async function() {
     const trasladosAbortoSinTag = (S.cache.movimientos||[]).filter(m =>
       (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') &&
       /aborto/i.test(String(m.observaciones||'')) &&
-      !/\[abid:\d+\]/.test(String(m.observaciones||'')) &&
-      !/\[revisado\]/i.test(String(m.observaciones||''))
+      !/\[abid:\d+\]/.test(String(m.observaciones||''))
     );
     trasladosAbortoSinTag.forEach(m => {
       filas.push({
         tipoLabel:'Traslado con "aborto" en el texto, SIN vincular a ningún Aborto', entity:'movimientos', id:m.movimiento_id,
         fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
         origen:`"${m.observaciones}" — revisar a mano si corresponde a un Aborto real o es un duplicado`,
-        soloRevision:true, marcable:true, esAbortoSinVincular:true,
+        soloRevision:true,
       });
     });
     // Posibles duplicados: dos o más traslados a un rodeo de categoría "venta"
@@ -3526,7 +3477,6 @@ window.paBuscarHuerfanos_ = async function() {
     // dos veces por error.
     const trasladosVenta = (S.cache.movimientos||[]).filter(m => {
       if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return false;
-      if (/\[revisado\]/i.test(String(m.observaciones||''))) return false;
       const rDest = (S.catalogs.rodeos||[]).find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
       return rDest && /venta/i.test(rDest.nombre||'');
     });
@@ -3542,7 +3492,7 @@ window.paBuscarHuerfanos_ = async function() {
           tipoLabel:'Posible duplicado (mismo rodeo, fecha, cantidad y observación que otro)', entity:'movimientos', id:m.movimiento_id,
           fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
           origen:`Hay ${grupo.length} traslados idénticos — revisar si corresponde borrar alguno`,
-          soloRevision:true, marcable:true,
+          soloRevision:true,
         });
       });
     });
@@ -3555,60 +3505,31 @@ window.paBuscarHuerfanos_ = async function() {
     // cortos exactamente por esa cantidad. La solución de fondo es crear el
     // Movimiento real que falta, una sola vez — así TODOS los cálculos leen el
     // mismo dato completo y dejan de discrepar entre sí.
-    //
-    // OJO — bug encontrado por el usuario: antes esto intentaba matchear cada
-    // Parición individual contra un Movimiento con la MISMA fecha exacta. En
-    // la práctica el Movimiento real a veces se carga unos días después del
-    // hecho (ej. Parición del 22/6, Movimiento cargado el 30/6 junto con otro
-    // trámite) — al no coincidir la fecha, el chequeo creía que faltaba y
-    // terminó creando un Movimiento DUPLICADO, inflando el stock de más.
-    // Ahora se compara el TOTAL acumulado por rodeo de terneros (todos los
-    // nacidos_vivos de sus Pariciones vs. todos los ingresos por Saldo inicial
-    // a ese rodeo, tengan tag o no) — más seguro que intentar adivinar cuál
-    // Movimiento corresponde a cuál Parición puntual.
     const rodeosPorIdMovFaltante = Object.fromEntries((S.catalogs.rodeos||[]).map(r=>[String(r.rodeo_id),r]));
-    const totalNacidosPorTernero = {}; // rodeo_terneros_id -> total nacidos_vivos (de todas las pariciones de su madre)
-    const paricionesPorTernero = {};   // rodeo_terneros_id -> [pariciones]
     (S.cache.pariciones||[]).forEach(p => {
       if (!p.nacidos_vivos) return;
       const rodeoMadreF = rodeosPorIdMovFaltante[String(p.rodeo_id)];
       const nombreTernerosF = rodeoMadreF ? ('Terneros (' + rodeoMadreF.nombre + ')') : null;
       const rodeoTernerosF = (nombreTernerosF && rodeoMadreF) ? (S.catalogs.rodeos||[]).find(r => r.nombre===nombreTernerosF && String(r.campo_id)===String(rodeoMadreF.campo_id)) : null;
-      const key = rodeoTernerosF ? String(rodeoTernerosF.rodeo_id) : ('__sin_rodeo__' + p.paricion_id);
-      totalNacidosPorTernero[key] = (totalNacidosPorTernero[key]||0) + Number(p.nacidos_vivos);
-      if (!paricionesPorTernero[key]) paricionesPorTernero[key] = [];
-      paricionesPorTernero[key].push({ paricion: p, rodeoTerneros: rodeoTernerosF, nombreTerneros: nombreTernerosF });
-    });
-    // Total de ENTRADAS reales (Saldo inicial) a cada rodeo de terneros —
-    // tenga o no el tag [pid:...], para no descartar cargas viejas sin tag.
-    const totalIngresosPorTernero = {};
-    (S.cache.movimientos||[]).forEach(m => {
-      if (m.tipo !== 'Saldo inicial') return;
-      const key = String(m.rodeo_destino_id);
-      totalIngresosPorTernero[key] = (totalIngresosPorTernero[key]||0) + (Number(m.cantidad)||0);
-    });
-    Object.keys(totalNacidosPorTernero).forEach(key => {
-      const totalNacidos = totalNacidosPorTernero[key];
-      const totalIngresos = totalIngresosPorTernero[key] || 0;
-      const faltante = totalNacidos - totalIngresos;
-      if (faltante <= 0) return; // ya está cubierto (o hasta de más — no hay nada para crear acá)
-      const grupo = paricionesPorTernero[key];
-      const primero = grupo[0];
-      const esSinRodeo = key.indexOf('__sin_rodeo__') === 0;
+      const tieneMovReal = (S.cache.movimientos||[]).some(m => {
+        if (m.tipo !== 'Saldo inicial') return false;
+        if (String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1) return true;
+        if (rodeoTernerosF && String(m.rodeo_destino_id)===String(rodeoTernerosF.rodeo_id) &&
+            String(m.fecha)===String(p.fecha) && Number(m.cantidad)===Number(p.nacidos_vivos)) return true;
+        return false;
+      });
+      if (tieneMovReal) return;
       filas.push({
-        tipoLabel: 'Rodeo de terneros con menos ingresos registrados que nacidos vivos (posible Movimiento faltante)',
+        tipoLabel: 'Parición SIN Movimiento de Saldo inicial (causa real de las diferencias de stock)',
         entity: 'movimientos', id: null,
-        fecha: grupo[grupo.length-1].paricion.fecha, // fecha de la parición más reciente del grupo, como referencia
-        rodeo: esSinRodeo ? (primero.nombreTerneros || '(rodeo de terneros no identificado)') : (primero.rodeoTerneros ? primero.rodeoTerneros.nombre : '—'),
-        cantidad: faltante,
-        origen: esSinRodeo
-          ? 'No se pudo identificar el rodeo de terneros — revisar manualmente'
-          : `${totalNacidos} nacidos vivos (${grupo.length} parición${grupo.length>1?'es':''}) vs ${totalIngresos} ingresados por Movimiento — revisar CUÁL parición falta antes de crear, puede no ser la más reciente`,
-        crearMov: !esSinRodeo,
-        paricionIdCrear: primero.paricion.paricion_id,
-        rodeoTernerosId: !esSinRodeo ? primero.rodeoTerneros.rodeo_id : null,
-        rodeoTernerosCampoId: !esSinRodeo ? primero.rodeoTerneros.campo_id : null,
-        soloRevision: true, // siempre pedir que el usuario confirme la fecha/cantidad antes de crear — ver nota abajo
+        fecha: p.fecha,
+        rodeo: rodeoTernerosF ? rodeoTernerosF.nombre : (nombreTernerosF || '(rodeo de terneros no identificado)'),
+        cantidad: p.nacidos_vivos,
+        origen: rodeoTernerosF ? 'Falta crear el Movimiento de ingreso' : 'No se pudo identificar el rodeo de terneros — revisar manualmente',
+        crearMov: !!rodeoTernerosF,
+        paricionIdCrear: p.paricion_id,
+        rodeoTernerosId: rodeoTernerosF ? rodeoTernerosF.rodeo_id : null,
+        rodeoTernerosCampoId: rodeoTernerosF ? rodeoTernerosF.campo_id : null,
       });
     });
     if (!filas.length) {
@@ -3658,7 +3579,7 @@ window.paRenderHuerfanosTabla_ = function() {
         : f.desincronizado
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
           : f.soloRevision
-            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>${f.esAbortoSinVincular ? ` <button class="btn btn-primary btn-sm" onclick="window.paCrearAbortoVinculado_('${f.id}')">Crear Aborto vinculado</button>` : ''}${f.marcable ? ` <button class="btn btn-secondary btn-sm" onclick="window.paMarcarRevisado_('${f.id}')" title="Ya lo revisé, está bien así — no volver a mostrarlo en futuras búsquedas">✓ Marcar revisado</button>` : ''}`
+            ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
             : f.entity && f.id
               ? `<button class="btn btn-danger btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar</button>`
               : ''}</td>
@@ -3666,45 +3587,6 @@ window.paRenderHuerfanosTabla_ = function() {
   });
   t += '</tbody></table></div>';
   el.innerHTML = t;
-};
-window.paCrearAbortoVinculado_ = async function(movId) {
-  const mov = (S.cache.movimientos||[]).find(m => String(m.movimiento_id)===String(movId));
-  if (!mov) { toast('No se encontró el movimiento — recargá la página e intentá de nuevo.', 'err'); return; }
-  const obs = String(mov.observaciones||'');
-  // Intenta extraer una caravana del texto (ej. "caravana H308" o "caravana 1578731")
-  const matchCaravana = obs.match(/caravana\s+([A-Za-z0-9]+)/i);
-  const caravanaSugerida = matchCaravana ? matchCaravana[1] : '';
-  if (!confirm(`¿Crear un registro de Aborto retroactivo para este traslado?\n\nFecha: ${fd(mov.fecha)}\nRodeo: ${rodeoNombre(mov.rodeo_origen_id)}\nCaravana detectada: ${caravanaSugerida || '(ninguna — revisar a mano después en Abortos)'}\n\nEsto va a: crear el registro en Abortos, y vincular este traslado a él — de ahí en más va a contar exacto en "Abortadas" en vez de estimado en "Trasladadas fuera".`)) return;
-  try {
-    const abortoData = {
-      fecha: mov.fecha,
-      rodeo_id: mov.rodeo_origen_id,
-      caravana_vaca: caravanaSugerida,
-      observacion: 'Creado retroactivamente desde auditoría — ' + obs.replace(/\[abid:\d+\]/gi,'').replace(/\[pid:\d+\]/gi,'').trim(),
-    };
-    const result = await apiCall('create', { body: { entity: 'abortos', data: abortoData } });
-    const nuevoAbortoId = result && (result.id || result.aborto_id || (result.data && result.data.aborto_id));
-    if (!nuevoAbortoId) throw new Error('El aborto se creó pero no se pudo obtener su ID para vincularlo — revisá manualmente en Movimientos.');
-    const obsNueva = `[abid:${nuevoAbortoId}] ` + obs;
-    await apiCall('update', { body: { entity: 'movimientos', id: movId, data: { observaciones: obsNueva } } });
-    invalidateCache('abortos');
-    invalidateCache('movimientos');
-    await Promise.all([loadEntity('abortos', true), loadEntity('movimientos', true)]);
-    toast('Aborto creado y vinculado — ya cuenta correctamente', 'ok');
-    window.paBuscarHuerfanos_();
-  } catch (err) { toast(err.message, 'err'); }
-};
-window.paMarcarRevisado_ = async function(movId) {
-  try {
-    const mov = (S.cache.movimientos||[]).find(m => String(m.movimiento_id)===String(movId));
-    if (!mov) { toast('No se encontró el movimiento — recargá la página e intentá de nuevo.', 'err'); return; }
-    const obsNueva = String(mov.observaciones||'').trim() + ' [revisado]';
-    await apiCall('update', { body: { entity: 'movimientos', id: movId, data: { observaciones: obsNueva } } });
-    invalidateCache('movimientos');
-    await loadEntity('movimientos', true);
-    toast('Marcado como revisado — no va a volver a aparecer en esta auditoría', 'ok');
-    window.paBuscarHuerfanos_();
-  } catch (err) { toast(err.message, 'err'); }
 };
 window.paBorrarHuerfano_ = async function(entity, id) {
   if (!confirm('¿Borrar este registro huérfano? Esta acción no se puede deshacer.')) return;
@@ -3735,12 +3617,8 @@ window.paCorregirDesincronizado_ = async function(entity, movId, abortoId) {
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
-window.paCrearMovimientoFaltante_ = async function(paricionId, rodeoTernerosId, rodeoTernerosCampoId, fechaSugerida, cantidad) {
-  const advertencia = `Este número (${cantidad} cabezas) sale de comparar el TOTAL de nacidos vivos de este rodeo contra el TOTAL ya ingresado por Movimientos — no de un solo registro puntual. Antes de crear nada, ANDÁ AL LIBRO DE MOVIMIENTOS de este rodeo de terneros y confirmá con tus propios ojos que esas cabezas realmente faltan (movimientos cargados con fecha distinta a la de la Parición pueden ya estar cubriéndolo, y esto crearía un duplicado).\n\n¿Confirmás que ya revisaste el Libro y estas cabezas realmente faltan?`;
-  if (!confirm(advertencia)) return;
-  const fecha = prompt('Fecha del Movimiento a crear (AAAA-MM-DD) — ajustá si corresponde a una fecha distinta de la sugerida:', fechaSugerida);
-  if (!fecha) return;
-  if (!confirm(`Última confirmación: crear Saldo inicial de ${cantidad} cabezas, fecha ${fd(fecha)}, en este rodeo de terneros.`)) return;
+window.paCrearMovimientoFaltante_ = async function(paricionId, rodeoTernerosId, rodeoTernerosCampoId, fecha, cantidad) {
+  if (!confirm(`¿Crear el Movimiento de Saldo inicial que falta? Va a sumar ${cantidad} cabezas al stock de este rodeo de terneros, con fecha ${fd(fecha)} — así deja de faltar en Stock/Stock de Hacienda mientras el Libro ya lo venía compensando solo ahí.`)) return;
   try {
     const data = {
       tipo: 'Saldo inicial',
@@ -3862,7 +3740,7 @@ function buildMortandad() {
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="mo-hist-rodeo" onchange="moFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodosMo.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodosMo.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3940,6 +3818,7 @@ function buildCurvaNacimientos() {
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -4173,6 +4052,419 @@ function buildCurvaNacimientos() {
   return h;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ANÁLISIS DE MORTANDAD — separa las 3 causas de pérdida de terneros que se
+// venían mezclando o había que calcular a mano cruzando hojas: nacidos
+// muertos (Pariciones), terneros muertos después de nacer (Mortandad, en el
+// rodeo de terneros — excluyendo los nacido-muerto, que están en Mortandad
+// pero bajo el rodeo de la MADRE, ver esMortandadPorParicion_) y abortos
+// (tabla Abortos). Filtra por fecha (desde/hasta) y campo, y separa todo por
+// rodeo de vientre (vaca/vaquillona) — el ternero-rodeo vinculado se resuelve
+// por el mismo patrón de nombre "Terneros (<rodeo madre>)" que usa el resto
+// del sistema (ver calcularVacasReproductivas_ / exportarAuditoriaReproductivaExcel_).
+function buildMortandadAnalisis() {
+  const _criaTabs = [
+    { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
+    { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
+    { k: 'servicios', icon: '⚭', label: 'Servicios' },
+    { k: 'tactos', icon: '◔', label: 'Tactos' },
+    { k: 'abortos', icon: '⊘', label: 'Abortos' },
+    { k: 'pariciones', icon: '✦', label: 'Pariciones' },
+    { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
+    { k: 'destetes', icon: '⊞', label: 'Destetes' },
+  ];
+  const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
+  let h = _criaTabsHtml;
+
+  if (!S.cache.pariciones || !S.cache.mortandad || !S.cache.abortos || !S.cache.movimientos) {
+    return h + '<div class="loader"><div class="spinner"></div>Cargando pariciones, mortandad, abortos y movimientos…</div>';
+  }
+
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const campFiltro = S._maCampo || '';
+  const rodeoFiltro = S._maRodeo || '';
+  const desde = S._maDesde || '';
+  const hasta = S._maHasta || '';
+  const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
+
+  h += `<div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-secondary btn-sm" onclick="exportarMortandadAnalisisExcel_()" title="Descarga un Excel con el resumen y el detalle de nacidos muertos, terneros muertos post-nacimiento y abortos">📊 Exportar a Excel</button>
+  </div>`;
+  h += `<div class="panel">
+    <div class="panel-title">☠ Análisis de Mortandad — nacidos muertos, terneros muertos y abortos</div>
+    <p class="helper-text" style="margin-bottom:14px">Separa las tres causas de pérdida que se suelen mezclar: <strong>nacidos muertos</strong> (mortinatos cargados en Pariciones), <strong>terneros muertos después de nacer</strong> (Mortandad cargada en el rodeo propio del ternero, ya con su alta) y <strong>abortos</strong> (vacas/vaquillonas que perdieron la preñez, tabla Abortos). Separado por rodeo de vientre.</p>
+    <div class="fgrid" style="margin-bottom:6px">
+      <div class="fg"><label>Campo</label>
+        <select onchange="S._maCampo=this.value;S._maRodeo='';render()">
+          <option value="">Todos los campos</option>
+          ${campos.map(c=>`<option value="${c.campo_id}" ${String(campFiltro)===String(c.campo_id)?'selected':''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Rodeo (de vientre)</label>
+        <select onchange="S._maRodeo=this.value;render()">
+          <option value="">Todos los rodeos</option>
+          ${rodeosDisponibles.filter(r=>{const c=(r.categoria||'').toLowerCase();return c==='vaca'||c==='vaquillona';}).map(r=>`<option value="${r.rodeo_id}" ${String(rodeoFiltro)===String(r.rodeo_id)?'selected':''}>${r.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Desde</label><input type="date" value="${desde}" onchange="S._maDesde=this.value;render()"></div>
+      <div class="fg"><label>Hasta</label><input type="date" value="${hasta}" onchange="S._maHasta=this.value;render()"></div>
+    </div>
+    ${(desde||hasta||campFiltro||rodeoFiltro) ? `<button class="btn btn-secondary btn-sm" onclick="S._maCampo='';S._maRodeo='';S._maDesde='';S._maHasta='';render()">✕ Limpiar filtros</button>` : ''}
+  </div>`;
+
+  const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
+          detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta);
+
+  // ── KPIs ──
+  const totalPerdidos = totalNacidosMuertos + totalTernerosMuertos;
+  h += `<div class="kpi-grid" style="margin-bottom:16px">
+    <div class="kpi-card"><div class="kpi-label">Nacidos muertos</div><div class="kpi-value" style="color:var(--clay-text)">${fn(totalNacidosMuertos)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Terneros muertos post-nac.</div><div class="kpi-value" style="color:#8c1d17">${fn(totalTernerosMuertos)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Abortos</div><div class="kpi-value" style="color:var(--bordeaux)">${fn(totalAbortos)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Total terneros perdidos</div><div class="kpi-value">${fn(totalPerdidos)}</div></div>
+  </div>`;
+
+  // ── Tabla por rodeo de vientre ──
+  h += `<div class="panel"><div class="panel-title">Por rodeo de vientre</div>`;
+  if (!filas.length && !otros.length) {
+    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin nacidos muertos, mortandad de terneros ni abortos para este filtro.</div></div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo (madre)</th><th>Campo</th><th class="tc">Nacidos muertos</th><th class="tc">Terneros muertos post-nac.</th><th class="tc">Abortos</th><th class="tc">Total pérdidas</th>
+    </tr></thead><tbody>`;
+    filas.forEach(f => {
+      h += `<tr><td><strong>${f.nombre}</strong></td><td>${f.campo}</td>
+        <td class="tc" style="color:var(--clay-text)">${f.nacidosMuertos||'—'}</td>
+        <td class="tc" style="color:#8c1d17">${f.ternerosMuertos||'—'}</td>
+        <td class="tc" style="color:var(--bordeaux)">${f.abortos||'—'}</td>
+        <td class="tc" style="font-weight:700">${fn(f.nacidosMuertos+f.ternerosMuertos+f.abortos)}</td></tr>`;
+    });
+    if (otros.ternerosMuertos > 0) {
+      h += `<tr><td><strong>Otros rodeos de terneros</strong></td><td>—</td>
+        <td class="tc">—</td>
+        <td class="tc" style="color:#8c1d17">${otros.ternerosMuertos}</td>
+        <td class="tc">—</td>
+        <td class="tc" style="font-weight:700">${fn(otros.ternerosMuertos)}</td></tr>`;
+      h += `<tr><td colspan="6"><span class="helper-text">"Otros rodeos de terneros" = mortandad en rodeos de terneros que no se pudieron vincular a un rodeo de vientre por nombre (ej. rodeos pooled como "Terneros/as", "Terneros 2026") — ver detalle más abajo.</span></td></tr>`;
+    }
+    const totFilas = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + otros.ternerosMuertos;
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="2">TOTAL</td>
+      <td class="tc" style="color:var(--clay-text)">${fn(totalNacidosMuertos)}</td>
+      <td class="tc" style="color:#8c1d17">${fn(totalTernerosMuertos)}</td>
+      <td class="tc" style="color:var(--bordeaux)">${fn(totalAbortos)}</td>
+      <td class="tc">${fn(totFilas)}</td></tr>`;
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  // ── Detalle: Nacidos muertos ──
+  h += `<div class="panel"><div class="panel-title">🐣 Detalle — Nacidos muertos</div>`;
+  if (!detalleNacidosMuertos.length) {
+    h += `<p class="helper-text">Sin nacidos muertos para este filtro.</p>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo (madre)</th><th class="tc">Cantidad</th><th>Observación</th></tr></thead><tbody>`;
+    detalleNacidosMuertos.forEach(p => {
+      h += `<tr><td>${fd(p.fecha)}</td><td>${rodeoNombre(p.rodeo_id)}</td><td class="tc">${fn(Number(p.nacidos_muertos)||0)}</td><td>${p.observacion||'—'}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  // ── Detalle: Terneros muertos post-nacimiento ──
+  h += `<div class="panel"><div class="panel-title">☠ Detalle — Terneros muertos post-nacimiento</div>`;
+  if (!detalleTernerosMuertos.length) {
+    h += `<p class="helper-text">Sin mortandad de terneros para este filtro.</p>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th class="tc">Cantidad</th><th>Observación</th></tr></thead><tbody>`;
+    detalleTernerosMuertos.forEach(m => {
+      h += `<tr><td>${fd(m.fecha)}</td><td>${rodeoNombre(m.rodeo_id)}</td><td class="tc">${fn(Number(m.cantidad)||1)}</td><td>${m.observacion||'—'}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  // ── Detalle: Abortos ──
+  h += `<div class="panel"><div class="panel-title">⊘ Detalle — Abortos</div>`;
+  if (!detalleAbortos.length) {
+    h += `<p class="helper-text">Sin abortos para este filtro.</p>`;
+  } else {
+    const legacyCount = detalleAbortos.filter(a=>a._legacy).length;
+    if (legacyCount) h += `<p class="helper-text" style="margin-bottom:8px">⚠ ${legacyCount} de estos ${legacyCount===1?'fue detectado':'fueron detectados'} por texto "aborto" en Movimientos, sin registro formal en la tabla Abortos (marcados abajo). Si querés que queden prolijos, podés recargarlos desde la pantalla de Abortos.</p>`;
+    h += `<div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo</th><th>Caravana</th><th>Observación</th><th>Origen</th></tr></thead><tbody>`;
+    detalleAbortos.forEach(a => {
+      h += `<tr><td>${fd(a.fecha)}</td><td>${rodeoNombre(a.rodeo_id)}</td><td>${a.caravana_vaca||'—'}</td><td>${a.observacion||'—'}</td><td>${a._legacy ? '<span style="color:var(--clay-text)">Movimientos (sin [abid])</span>' : 'Abortos'}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  return h;
+}
+
+// Une los abortos con registro FORMAL (tabla Abortos, vinculados a su Traslado
+// por [abid:<id>]) con los abortos "legacy" — cargados directo como Traslado
+// en Movimientos con "aborto" en la observación, pero SIN pasar nunca por el
+// formulario de Abortos (típicamente porque se cargaron antes de que existiera
+// esa función, o a mano). Sin esto, el análisis de mortandad los ignoraba por
+// completo — en la campaña actual, 10 de 12 abortos reales están sólo acá.
+function abortosCompletos_() {
+  const abortosReal = S.cache.abortos || [];
+  const movimientos = S.cache.movimientos || [];
+  const abidsCubiertos = new Set(
+    abortosReal.map(a => String(a.aborto_id)).filter(Boolean)
+  );
+  const legacy = movimientos.filter(m => {
+    const obs = String(m.observaciones || '');
+    if (!/aborto/i.test(obs)) return false;
+    const match = /\[abid:(\d+)\]/.exec(obs);
+    if (match && abidsCubiertos.has(match[1])) return false; // ya está en la tabla Abortos, no duplicar
+    return true;
+  }).map(m => {
+    const caravanaMatch = /caravana\s*([\w\d]+)/i.exec(String(m.observaciones||''));
+    return {
+      fecha: m.fecha,
+      rodeo_id: m.rodeo_origen_id,
+      caravana_vaca: caravanaMatch ? caravanaMatch[1] : '',
+      observacion: m.observaciones || '',
+      _legacy: true, // sin registro formal en Abortos — detectado en Movimientos
+    };
+  });
+  return [...abortosReal.map(a => ({...a, _legacy: false})), ...legacy];
+}
+
+// Motor de cálculo compartido entre la pantalla y el export a Excel — así los
+// dos SIEMPRE dan el mismo número (mismo criterio que ya se usa en el resto
+// del sistema para Dashboard/Auditoría, ver nota de calcularVacasReproductivas_).
+function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta) {
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const pariciones = S.cache.pariciones || [];
+  const mortandad = S.cache.mortandad || [];
+  const abortos = abortosCompletos_();
+
+  const rodeoMatch_ = (rodeoId) => {
+    if (rodeoFiltro) return String(rodeoId) === String(rodeoFiltro);
+    if (campFiltro) {
+      const r = rodeosAll.find(x => String(x.rodeo_id) === String(rodeoId));
+      return r && String(r.campo_id) === String(campFiltro);
+    }
+    return true;
+  };
+  const fechaMatch_ = (fecha) => {
+    if (desde && (fecha||'') < desde) return false;
+    if (hasta && (fecha||'') > hasta) return false;
+    return true;
+  };
+
+  const madres = rodeosAll.filter(r => {
+    const cat = (r.categoria||'').toLowerCase();
+    return (cat==='vaca'||cat==='vaquillona') && rodeoMatch_(r.rodeo_id);
+  });
+
+  const detalleNacidosMuertos = pariciones.filter(p => rodeoMatch_(p.rodeo_id) && fechaMatch_(p.fecha) && (Number(p.nacidos_muertos)||0) > 0)
+    .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const detalleAbortos = abortos.filter(a => rodeoMatch_(a.rodeo_id) && fechaMatch_(a.fecha))
+    .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+
+  // Terneros muertos post-nacimiento: mortandad en rodeos ternero/ternera,
+  // excluyendo los nacido-muerto (esos ya están en Pariciones, no acá).
+  const rodeosTerneroCat = rodeosAll.filter(r => { const c=(r.categoria||'').toLowerCase(); return c==='ternero'||c==='ternera'; });
+  const mortTerneros = mortandad.filter(m => !esMortandadPorParicion_(m) && fechaMatch_(m.fecha) &&
+    rodeosTerneroCat.some(r => String(r.rodeo_id) === String(m.rodeo_id)));
+
+  // Vincula cada rodeo de terneros a su rodeo madre por el patrón de nombre
+  // "Terneros (<madre>)" — mismo patrón que usa el resto del sistema.
+  const ternerosPorMadre = {}; // madreRodeoId -> [mortandad...]
+  const otrosTerneros = [];
+  mortTerneros.forEach(m => {
+    const rodeoTernero = rodeosAll.find(r => String(r.rodeo_id) === String(m.rodeo_id));
+    // Si el rodeo del ternero se llama "Terneros (X)", la madre es el rodeo "X".
+    let madreDirecta = null;
+    if (rodeoTernero) {
+      const match = /^Terneros \((.+)\)$/.exec(rodeoTernero.nombre);
+      if (match) madreDirecta = rodeosAll.find(r => r.nombre === match[1] && String(r.campo_id) === String(rodeoTernero.campo_id));
+    }
+    if (madreDirecta && rodeoMatch_(madreDirecta.rodeo_id)) {
+      const key = String(madreDirecta.rodeo_id);
+      if (!ternerosPorMadre[key]) ternerosPorMadre[key] = [];
+      ternerosPorMadre[key].push(m);
+    } else if (!madreDirecta && rodeoMatch_(m.rodeo_id)) {
+      // No se pudo vincular a una madre — pooled/genérico (ej. "Terneros/as", "Terneros 2026").
+      otrosTerneros.push(m);
+    }
+    // Si madreDirecta existe pero NO matchea el filtro actual (campo/rodeo elegido
+    // es otro), el registro queda afuera — correcto, no debe contarse en este filtro.
+  });
+
+  const filas = madres.map(madre => {
+    const nacidosMuertos = detalleNacidosMuertos.filter(p => String(p.rodeo_id)===String(madre.rodeo_id)).reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
+    const abortosCant = detalleAbortos.filter(a => String(a.rodeo_id)===String(madre.rodeo_id)).length;
+    const ternerosMuertos = (ternerosPorMadre[String(madre.rodeo_id)]||[]).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+    return { nombre: madre.nombre, campo: campoNombre(madre.campo_id), nacidosMuertos, ternerosMuertos, abortos: abortosCant };
+  }).filter(f => f.nacidosMuertos + f.ternerosMuertos + f.abortos > 0)
+    .sort((a,b)=>(b.nacidosMuertos+b.ternerosMuertos+b.abortos)-(a.nacidosMuertos+a.ternerosMuertos+a.abortos));
+
+  const totalNacidosMuertos = detalleNacidosMuertos.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
+  const totalAbortos = detalleAbortos.length;
+  const otrosCant = otrosTerneros.reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const totalTernerosMuertos = filas.reduce((s,f)=>s+f.ternerosMuertos,0) + otrosCant;
+
+  const detalleTernerosMuertos = mortTerneros.filter(m => {
+    // Sólo lo que efectivamente entró en el conteo (matcheó el filtro, directo u "otros")
+    const rodeoTernero = rodeosAll.find(r => String(r.rodeo_id) === String(m.rodeo_id));
+    let madreDirecta = null;
+    if (rodeoTernero) {
+      const match = /^Terneros \((.+)\)$/.exec(rodeoTernero.nombre);
+      if (match) madreDirecta = rodeosAll.find(r => r.nombre === match[1] && String(r.campo_id) === String(rodeoTernero.campo_id));
+    }
+    return madreDirecta ? rodeoMatch_(madreDirecta.rodeo_id) : rodeoMatch_(m.rodeo_id);
+  }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+
+  return {
+    filas, otros: { ternerosMuertos: otrosCant },
+    totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
+    detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos,
+  };
+}
+
+async function exportarMortandadAnalisisExcel_() {
+  toast('Generando Excel de análisis de mortandad... puede tardar unos segundos', 'ok');
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(s);
+      });
+    }
+    const XLSX = window.XLSX;
+    for (const ent of ['pariciones','mortandad','abortos','movimientos']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+    const campFiltro = S._maCampo || '';
+    const rodeoFiltro = S._maRodeo || '';
+    const desde = S._maDesde || '';
+    const hasta = S._maHasta || '';
+    const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
+            detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta);
+
+    const BORDE = { style:'thin', color:{rgb:'D9D9D9'} };
+    const B = { top:BORDE, bottom:BORDE, left:BORDE, right:BORDE };
+    const ST_TITULO = { font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'8C1D17'}}, alignment:{horizontal:'left',vertical:'center'}, border:B };
+    const ST_HEADER = { font:{bold:true,color:{rgb:'8C1D17'}}, fill:{fgColor:{rgb:'F3DAD8'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+    const ST_ROW = { alignment:{horizontal:'center'}, border:B };
+    const ST_ROW_ALT = { alignment:{horizontal:'center'}, border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_ROWLBL = { border:B };
+    const ST_ROWLBL_ALT = { border:B, fill:{fgColor:{rgb:'F7F7F7'}} };
+    const ST_TOTAL = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'8C1D17'}}, alignment:{horizontal:'center'}, border:B };
+    function estilarFila_(ws, r0, ncols, style) {
+      for (let c = 0; c < ncols; c++) {
+        const addr = XLSX.utils.encode_cell({ r:r0, c });
+        if (!ws[addr]) ws[addr] = { t:'s', v:'' };
+        ws[addr].s = style;
+      }
+    }
+    const filtroTxt = [
+      campFiltro ? 'Campo: ' + campoNombre(campFiltro) : '',
+      rodeoFiltro ? 'Rodeo: ' + rodeoNombre(rodeoFiltro) : '',
+      desde ? 'Desde: ' + fd(desde) : '',
+      hasta ? 'Hasta: ' + fd(hasta) : '',
+    ].filter(Boolean).join(' · ') || 'Sin filtros (todos los rodeos y fechas)';
+
+    const wb = XLSX.utils.book_new();
+
+    // ── HOJA 1: Resumen ──
+    const headers1 = ['Rodeo (madre)','Campo','Nacidos muertos','Terneros muertos post-nac.','Abortos','Total pérdidas'];
+    const aoa1 = [
+      ['Agroganadera Los Médanos — Análisis de Mortandad (Cría)'],
+      ['Generado', fd(today())],
+      ['Filtros', filtroTxt],
+      [],
+      headers1,
+    ];
+    filas.forEach(f => aoa1.push([f.nombre, f.campo, f.nacidosMuertos, f.ternerosMuertos, f.abortos, f.nacidosMuertos+f.ternerosMuertos+f.abortos]));
+    if (otros.ternerosMuertos > 0) aoa1.push(['Otros rodeos de terneros (sin vínculo a rodeo madre)', '—', 0, otros.ternerosMuertos, 0, otros.ternerosMuertos]);
+    const totFilas1 = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + otros.ternerosMuertos;
+    aoa1.push(['TOTAL', '', totalNacidosMuertos, totalTernerosMuertos, totalAbortos, totFilas1]);
+    const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+    ws1['!cols'] = [{wch:32},{wch:16},{wch:16},{wch:24},{wch:12},{wch:14}];
+    ws1['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers1.length-1} }];
+    estilarFila_(ws1, 0, headers1.length, ST_TITULO);
+    estilarFila_(ws1, 4, headers1.length, ST_HEADER);
+    const filasTotal1 = filas.length + (otros.ternerosMuertos>0?1:0);
+    for (let i=0;i<filasTotal1;i++) {
+      const r0 = 5+i, alt = i%2===1;
+      for (let c=0;c<headers1.length;c++) {
+        const addr = XLSX.utils.encode_cell({r:r0,c});
+        if (!ws1[addr]) ws1[addr] = { t:'s', v:'' };
+        ws1[addr].s = c<=1 ? (alt?ST_ROWLBL_ALT:ST_ROWLBL) : (alt?ST_ROW_ALT:ST_ROW);
+      }
+    }
+    estilarFila_(ws1, 5+filasTotal1, headers1.length, ST_TOTAL);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Resumen');
+
+    // ── HOJA 2: Nacidos muertos ──
+    const headers2 = ['Fecha','Rodeo (madre)','Cantidad','Observación'];
+    const aoa2 = [['Detalle — Nacidos muertos'], ['Filtros', filtroTxt], [], headers2];
+    detalleNacidosMuertos.forEach(p => aoa2.push([fd(p.fecha), rodeoNombre(p.rodeo_id), Number(p.nacidos_muertos)||0, p.observacion||'']));
+    aoa2.push(['TOTAL','', totalNacidosMuertos, '']);
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!cols'] = [{wch:12},{wch:22},{wch:10},{wch:70}];
+    ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }];
+    estilarFila_(ws2, 0, headers2.length, ST_TITULO);
+    estilarFila_(ws2, 3, headers2.length, ST_HEADER);
+    detalleNacidosMuertos.forEach((p,i) => estilarFila_(ws2, 4+i, headers2.length, i%2===1?ST_ROW_ALT:ST_ROW));
+    estilarFila_(ws2, 4+detalleNacidosMuertos.length, headers2.length, ST_TOTAL);
+    XLSX.utils.book_append_sheet(wb, ws2, 'Nacidos muertos');
+
+    // ── HOJA 3: Terneros muertos post-nacimiento ──
+    const headers3 = ['Fecha','Rodeo','Cantidad','Observación'];
+    const aoa3 = [['Detalle — Terneros muertos post-nacimiento'], ['Filtros', filtroTxt], [], headers3];
+    detalleTernerosMuertos.forEach(m => aoa3.push([fd(m.fecha), rodeoNombre(m.rodeo_id), Number(m.cantidad)||1, m.observacion||'']));
+    aoa3.push(['TOTAL','', totalTernerosMuertos, '']);
+    const ws3 = XLSX.utils.aoa_to_sheet(aoa3);
+    ws3['!cols'] = [{wch:12},{wch:26},{wch:10},{wch:70}];
+    ws3['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers3.length-1} }];
+    estilarFila_(ws3, 0, headers3.length, ST_TITULO);
+    estilarFila_(ws3, 3, headers3.length, ST_HEADER);
+    detalleTernerosMuertos.forEach((m,i) => estilarFila_(ws3, 4+i, headers3.length, i%2===1?ST_ROW_ALT:ST_ROW));
+    estilarFila_(ws3, 4+detalleTernerosMuertos.length, headers3.length, ST_TOTAL);
+    XLSX.utils.book_append_sheet(wb, ws3, 'Terneros muertos');
+
+    // ── HOJA 4: Abortos ──
+    const headers4 = ['Fecha','Rodeo','Caravana','Observación','Origen'];
+    const aoa4 = [['Detalle — Abortos'], ['Filtros', filtroTxt], ['Nota', 'Los abortos "Movimientos (sin [abid])" no tienen registro formal en la tabla Abortos — se detectaron por el texto "aborto" en la observación del Traslado. Se cuentan igual porque representan una vaca real trasladada a Vacas Venta por aborto.'], [], headers4];
+    detalleAbortos.forEach(a => aoa4.push([fd(a.fecha), rodeoNombre(a.rodeo_id), a.caravana_vaca||'', a.observacion||'', a._legacy ? 'Movimientos (sin [abid])' : 'Abortos']));
+    aoa4.push(['TOTAL','', '', '', totalAbortos]);
+    const ws4 = XLSX.utils.aoa_to_sheet(aoa4);
+    ws4['!cols'] = [{wch:12},{wch:22},{wch:16},{wch:55},{wch:22}];
+    ws4['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers4.length-1} }];
+    estilarFila_(ws4, 0, headers4.length, ST_TITULO);
+    estilarFila_(ws4, 4, headers4.length, ST_HEADER);
+    detalleAbortos.forEach((a,i) => estilarFila_(ws4, 5+i, headers4.length, i%2===1?ST_ROW_ALT:ST_ROW));
+    estilarFila_(ws4, 5+detalleAbortos.length, headers4.length, ST_TOTAL);
+    XLSX.utils.book_append_sheet(wb, ws4, 'Abortos');
+
+    const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Los_Medanos_Analisis_Mortandad_${today()}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Excel de análisis de mortandad descargado', 'ok');
+  } catch(err) {
+    console.error(err);
+    toast('Error al generar el Excel: ' + err.message, 'err');
+  }
+}
+
 function buildDestetes() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
@@ -4182,6 +4474,7 @@ function buildDestetes() {  const _criaTabs = [
     { k: 'abortos', icon: '⊘', label: 'Abortos' },
     { k: 'pariciones', icon: '✦', label: 'Pariciones' },
     { k: 'curva_nacimientos', icon: '📈', label: 'Curva de Nacimientos' },
+    { k: 'mortandad_analisis', icon: '☠', label: 'Análisis de Mortandad' },
     { k: 'destetes', icon: '⊞', label: 'Destetes' },
   ];
   const _criaTabsHtml = `<div class="page-header"><div class="page-title">Cría</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${_criaTabs.map(t=>`<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}</div></div>`;
@@ -4598,7 +4891,7 @@ function buildMovimientos() {
       <div class="fg"><label>Filtrar por rodeo</label>
         <select id="mv-hist-filtro-rodeo" onchange="renderHistorialFiltrado()">
           <option value="">Todos los rodeos</option>
-          ${rodeosTodosL.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+          ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
         </select>
       </div>
     </div>
@@ -4612,7 +4905,7 @@ function buildMovimientos() {
         <div class="fg"><label>Rodeo</label>
           <select id="mv-libro-rodeo" onchange="renderLibroMovimientos_()">
             <option value="">Todos los rodeos</option>
-            ${rodeosTodosL.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
+            ${rodeosTodosL.map(r => `<option value="${r.rodeo_id}">${r.nombre} (${campoNombre(r.campo_id)})</option>`).join('')}
           </select>
         </div>
         <div class="fg"><label>Campo</label>
@@ -12789,32 +13082,39 @@ async function exportarAuditoriaReproductivaExcel_() {
     // Además vincula cada rodeo de vacas con su rodeo de terneros por el
     // patrón de nombre que usa el backend al crearlo ("Terneros (" + nombre
     // de la madre + ")"), para poder cruzar Paridas contra Terneros vivos
-    // actuales + muertos (stock real). Reusa los mismos campos que ya calcula
-    // calcularVacasReproductivas_ (cruceTotal, etc.) — antes esta hoja tenía
-    // su propia cuenta aparte, comparando contra "nacidos vivos" solo, sin
-    // sumar los nacidos muertos; el Dashboard comparaba contra "Parieron"
-    // (vivos+muertos) — dos criterios distintos sin necesidad. Ahora los dos
-    // usan la misma base: Parieron vs. vivos+muertos post+vendidos+cedidos+nacidos muertos.
+    // actuales + muertos (stock real).
     const { filas: filasVacaRepro, totales: totVacaRepro } = calcularVacasReproductivas_(null, corte);
     const filas2 = filasVacaRepro.map(rv => {
-      const diferenciaReconcil = rv.rodeoTernerosNombre ? (rv.yaParieron - rv.cruceTotal) : null;
+      const nombreTerneros = `Terneros (${rv.nombre})`;
+      const rodeoTerneros = rodeosCria.find(r => r.nombre === nombreTerneros && String(r.campo_id)===String(rv.campoId));
+      const ternerosVivos = rodeoTerneros ? Math.max(0, stockACorte[String(rodeoTerneros.rodeo_id)]||0) : null;
+      const ternerosMuertos = rodeoTerneros
+        ? (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===String(rodeoTerneros.rodeo_id)).reduce((s,m)=>s+(Number(m.cantidad)||1),0)
+        : null;
+      const ternerosVendidos = rodeoTerneros
+        ? (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rodeoTerneros.rodeo_id)).reduce((s,v)=>s+(Number(v.cant_animales)||0),0)
+        : null;
+      const ternerosCedidos = rodeoTerneros
+        ? (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&String(m.rodeo_origen_id)===String(rodeoTerneros.rodeo_id)).reduce((s,m)=>s+(Number(m.cantidad)||0),0)
+        : null;
+      const totalReconciliado = rodeoTerneros ? (ternerosVivos + ternerosMuertos + ternerosVendidos + ternerosCedidos) : null;
+      const diferenciaReconcil = rodeoTerneros ? (rv.nacidosVivos - totalReconciliado) : null;
       return {
         ...rv,
-        rodeoTerneros: rv.rodeoTernerosNombre || '(no encontrado)',
-        ternerosVivos: rv.ternerosVivos, ternerosMuertos: rv.ternerosMuertosPost, ternerosVendidos: rv.ternerosVendidos, ternerosCedidos: rv.ternerosCedidos,
-        totalReconciliado: rv.cruceTotal, diferenciaReconcil,
+        rodeoTerneros: rodeoTerneros ? rodeoTerneros.nombre : '(no encontrado)',
+        ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
         exportadasTxt: rv.exportadasDetalle.length ? rv.exportadasDetalle.map(e=>`−${e.cantidad} a ${e.aNombre} (${fd(e.fecha)}, tacto ${fd(e.fechaTacto)})`).join('; ') : '',
         importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre} (${fd(i.fecha)})`).join('; ') : '',
       };
     });
 
     const headers2 = ['Rodeo madre','Campo','Preñadas (tacteadas)','Movidas a otro rodeo','Recibidas de otro rodeo','Preñadas (ajustado)',
-      'Vendidas (informativo, no resta)','Trasl. fuera no vaca (informativo, no resta)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
-      'Rodeo de terneros','Nacidos muertos (parto)','Terneros vivos (stock hoy)','Terneros muertos (post-nac.)','Terneros vendidos','Terneros cedidos','Diferencia (Parieron − vivos+muertos+vendidos+cedidos+nacidos muertos)'];
+      'Vendidas','Trasl. fuera (no vaca)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
+      'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría reproductiva`],
       ['Fecha', fd(corte)],
-      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto. Pendientes = Preñadas (ajustado) − Abortadas − Muertas − Parieron. Las columnas "Vendidas" y "Trasl. fuera no vaca" son SOLO INFORMATIVAS — no restan de Pendientes, porque se asume que esas cabezas se vendieron/descartaron por haber salido vacías en el tacto (la razón más común), no al azar. Si alguna correspondía a una preñada confirmada, hay que restarla a mano. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
+      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto. Pendientes = Preñadas (ajustado) − Vendidas − Trasladadas fuera − Abortadas − Muertas − Parieron. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
       [],
       ['RESUMEN CONSOLIDADO', ''],
     ];
@@ -12836,9 +13136,9 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.sinTactoFinal ? 'sin tacto final' : f.prenadas,
       f.exportadasTxt, f.importadasTxt,
       f.sinTactoFinal ? '—' : f.prenadasAjustadas,
-      f.salidasExternas.cantVendidaCabezas||'', f.salidasExternas.cantTrasladoNoVacaCabezas||'',
+      f.salidasExternas.ventas||'', f.salidasExternas.trasladoNoVaca||'',
       f.abortos, f.muertas, f.yaParieron, f.sinTactoFinal ? '—' : f.pendientesAjustado,
-      f.rodeoTerneros, f.nacidosMuertos,
+      f.rodeoTerneros, f.nacidosVivos,
       f.ternerosVivos===null?'(sin rodeo)':f.ternerosVivos,
       f.ternerosMuertos===null?'—':f.ternerosMuertos,
       f.ternerosVendidos===null?'—':f.ternerosVendidos,
@@ -14974,7 +15274,7 @@ function buildPesadas() {
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="pes-filtro-rodeo" onchange="window.filtrarPesadas_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodos().slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es',{numeric:true})).map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosTodos().map(r => `<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>`;
@@ -16962,61 +17262,6 @@ function openEditModal(entity, idCol, id) {
             toast('Traslado vinculado también actualizado', 'ok');
           }
         } catch(e) { toast('El aborto se guardó, pero no se pudo actualizar el traslado vinculado — revisalo manualmente en Movimientos.', 'err'); }
-      }
-      // OJO — bug encontrado por el usuario: mismo problema que con Abortos,
-      // pero para Pariciones. Si se editaba el rodeo, la fecha, o la cantidad
-      // de nacidos_vivos/nacidos_muertos de una Parición, el Movimiento de
-      // Saldo inicial (nacidos vivos) y la Mortandad (nacidos muertos) vinculados
-      // quedaban con los datos VIEJOS — causando exactamente el tipo de
-      // diferencia que se encontró en Vacas Rodeo 3 (Movimiento con 2 cabezas
-      // de más respecto a lo que la Parición dice ahora). Ahora, editar
-      // cualquiera de esos campos actualiza también los registros vinculados.
-      if (entity === 'pariciones' && (data.rodeo_id !== undefined || data.fecha !== undefined || data.nacidos_vivos !== undefined || data.nacidos_muertos !== undefined)) {
-        try {
-          if (!S.cache.movimientos) await loadEntity('movimientos');
-          if (!S.cache.mortandad) await loadEntity('mortandad');
-          const rodeoMadreNuevo = (S.catalogs.rodeos||[]).find(r => String(r.rodeo_id)===String(data.rodeo_id));
-          let rodeoTerneros = null;
-          if (rodeoMadreNuevo) {
-            const nombreTerneros = 'Terneros (' + rodeoMadreNuevo.nombre + ')';
-            rodeoTerneros = (S.catalogs.rodeos||[]).find(r => r.nombre===nombreTerneros && String(r.campo_id)===String(rodeoMadreNuevo.campo_id));
-          }
-          const movLigado = (S.cache.movimientos||[]).find(m => m.tipo==='Saldo inicial' && (m.observaciones||'').includes(`[pid:${id}]`));
-          if (movLigado) {
-            if (Number(data.nacidos_vivos) > 0) {
-              await apiCall('update', { body: { entity: 'movimientos', id: movLigado.movimiento_id, data: {
-                fecha: data.fecha,
-                cantidad: data.nacidos_vivos,
-                rodeo_destino_id: rodeoTerneros ? rodeoTerneros.rodeo_id : movLigado.rodeo_destino_id,
-                campo_destino_id: rodeoTerneros ? rodeoTerneros.campo_id : movLigado.campo_destino_id,
-              } } });
-            } else {
-              // Nacidos vivos corregido a 0 — ya no corresponde ningún Movimiento
-              // de ingreso; el que había queda huérfano y hay que borrarlo, no
-              // dejarlo con una cantidad vieja.
-              await apiCall('delete', { body: { entity: 'movimientos', id: movLigado.movimiento_id } });
-            }
-          }
-          const mortLigada = (S.cache.mortandad||[]).find(m => (m.observacion||'').includes(`[pid:${id}]`));
-          if (mortLigada) {
-            if (Number(data.nacidos_muertos) > 0) {
-              await apiCall('update', { body: { entity: 'mortandad', id: mortLigada.mortandad_id, data: {
-                fecha: data.fecha,
-                cantidad: data.nacidos_muertos,
-                rodeo_id: data.rodeo_id,
-              } } });
-            } else {
-              await apiCall('delete', { body: { entity: 'mortandad', id: mortLigada.mortandad_id } });
-            }
-          }
-          if (movLigado || mortLigada) {
-            invalidateCache('movimientos');
-            invalidateCache('mortandad');
-            await Promise.all([loadEntity('movimientos', true), loadEntity('mortandad', true)]);
-            S.stock = null; await loadStock();
-            toast('Movimiento/Mortandad vinculados también actualizados', 'ok');
-          }
-        } catch(e) { toast('La parición se guardó, pero no se pudo actualizar el Movimiento/Mortandad vinculado — revisalo manualmente.', 'err'); }
       }
       toast('Registro actualizado', 'ok');
       await loadEntity(entity, true);
