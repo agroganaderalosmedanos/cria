@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_111';
+const APP_VERSION = 'index_consolidado_4_6_155_112';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -566,6 +566,12 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
       const totalVerificado = ternerosVivos + ternerosMuertos + ternerosVendidos + ternerosCedidos;
       controlTerneros = {
         rodeoNombre: rodeoTerneros.nombre, ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos,
+        // Nacidos muertos de ESTE rodeo madre (de Pariciones, no de Mortandad
+        // — nunca tuvieron rodeo propio) — se muestra aparte para que quien
+        // arme la cuenta a mano contra el rodeo de terneros sepa que tiene
+        // que restarlos también: esas vacas ya parieron, aunque la cría no
+        // haya generado ningún movimiento del lado de los terneros.
+        nacidosMuertos: res.nacidosMuertos,
         totalVerificado, diferencia: res.nacidosVivos - totalVerificado,
       };
     }
@@ -2835,8 +2841,8 @@ function buildDashboard() {
         </div>
         ${f.controlTerneros ? (
           f.controlTerneros.diferencia === 0
-          ? `<div style="font-size:10.5px;color:var(--green-text);margin-top:6px">✓ Control cruzado con ${f.controlTerneros.rodeoNombre}: coincide (${fn(f.controlTerneros.ternerosVivos)} vivos + ${fn(f.controlTerneros.ternerosMuertos)} muertos + ${fn(f.controlTerneros.ternerosVendidos)} vendidos + ${fn(f.controlTerneros.ternerosCedidos)} cedidos = ${fn(f.controlTerneros.totalVerificado)} nacidos vivos).</div>`
-          : `<div style="font-size:10.5px;color:var(--clay-text);margin-top:6px">⚠ Control cruzado con ${f.controlTerneros.rodeoNombre}: no coincide — Pariciones dice ${fn(f.nacidosVivos)} nacidos vivos, pero en el rodeo de terneros hoy se verifican ${fn(f.controlTerneros.totalVerificado)} (${fn(f.controlTerneros.ternerosVivos)} vivos + ${fn(f.controlTerneros.ternerosMuertos)} muertos + ${fn(f.controlTerneros.ternerosVendidos)} vendidos + ${fn(f.controlTerneros.ternerosCedidos)} cedidos). Diferencia: ${f.controlTerneros.diferencia > 0 ? '+' : ''}${fn(f.controlTerneros.diferencia)}. Revisá si falta una alta de parición o si hay un ternero en el rodeo equivocado.</div>`
+          ? `<div style="font-size:10.5px;color:var(--green-text);margin-top:6px">✓ Control cruzado con ${f.controlTerneros.rodeoNombre}: coincide (${fn(f.controlTerneros.ternerosVivos)} vivos + ${fn(f.controlTerneros.ternerosMuertos)} muertos + ${fn(f.controlTerneros.ternerosVendidos)} vendidos + ${fn(f.controlTerneros.ternerosCedidos)} cedidos = ${fn(f.controlTerneros.totalVerificado)} nacidos vivos).${f.controlTerneros.nacidosMuertos>0 ? ` <em>(+ ${fn(f.controlTerneros.nacidosMuertos)} nacidos muertos de este rodeo, que nunca tienen alta ni rodeo propio — si armás la cuenta a mano, restalos aparte de Pariciones, no del lado de los terneros.)</em>` : ''}</div>`
+          : `<div style="font-size:10.5px;color:var(--clay-text);margin-top:6px">⚠ Control cruzado con ${f.controlTerneros.rodeoNombre}: no coincide — Pariciones dice ${fn(f.nacidosVivos)} nacidos vivos, pero en el rodeo de terneros hoy se verifican ${fn(f.controlTerneros.totalVerificado)} (${fn(f.controlTerneros.ternerosVivos)} vivos + ${fn(f.controlTerneros.ternerosMuertos)} muertos + ${fn(f.controlTerneros.ternerosVendidos)} vendidos + ${fn(f.controlTerneros.ternerosCedidos)} cedidos). Diferencia: ${f.controlTerneros.diferencia > 0 ? '+' : ''}${fn(f.controlTerneros.diferencia)}. Revisá si falta una alta de parición o si hay un ternero en el rodeo equivocado.${f.controlTerneros.nacidosMuertos>0 ? ` (Este rodeo también tuvo ${fn(f.controlTerneros.nacidosMuertos)} nacidos muertos — ya están descontados de Pariciones, no hace falta restarlos de nuevo acá.)` : ''}</div>`
         ) : `<div style="font-size:10.5px;color:var(--text3);margin-top:6px">ℹ No se encontró el rodeo "Terneros (${f.nombre})" — no se pudo cruzar contra los terneros.</div>`}`;
       }
       h += '</div>';
@@ -13184,6 +13190,7 @@ async function exportarAuditoriaReproductivaExcel_() {
         ternerosCedidos: ct ? ct.ternerosCedidos : null,
         totalReconciliado: ct ? ct.totalVerificado : null,
         diferenciaReconcil: ct ? ct.diferencia : null,
+        nacidosMuertosRodeo: ct ? ct.nacidosMuertos : rv.nacidosMuertos,
         exportadasTxt: rv.exportadasDetalle.length ? rv.exportadasDetalle.map(e=>`−${e.cantidad} a ${e.aNombre} (${fd(e.fecha)}, tacto ${fd(e.fechaTacto)})`).join('; ') : '',
         importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre} (${fd(i.fecha)})`).join('; ') : '',
       };
@@ -13191,11 +13198,11 @@ async function exportarAuditoriaReproductivaExcel_() {
 
     const headers2 = ['Rodeo madre','Campo','Preñadas (tacteadas)','Movidas a otro rodeo','Recibidas de otro rodeo','Preñadas (ajustado)',
       'Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
-      'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
+      'Rodeo de terneros','Nacidos vivos (histórico)','Nacidos muertos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría reproductiva`],
       ['Fecha', fd(corte)],
-      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (esto sí es válido: no cambia el total, sólo lo reparte entre rodeos propios). Pendientes = Preñadas (ajustado) − Abortadas − Muertas − Parieron. "Preñadas" es directamente el resultado del tacto de ese rodeo — no se intenta estimar ni rastrear qué pasa con una vaca que se vende o se traslada fuera del sistema reproductivo; sólo se descuenta lo que tiene registro propio y confiable (Pariciones, Abortos, Mortandad). "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
+      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (esto sí es válido: no cambia el total, sólo lo reparte entre rodeos propios). Pendientes = Preñadas (ajustado) − Abortadas − Muertas − Parieron. "Preñadas" es directamente el resultado del tacto de ese rodeo — no se intenta estimar ni rastrear qué pasa con una vaca que se vende o se traslada fuera del sistema reproductivo; sólo se descuenta lo que tiene registro propio y confiable (Pariciones, Abortos, Mortandad). "Diferencia" compara nacidos VIVOS (histórico) contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena. "Nacidos muertos (histórico)" se muestra aparte: esas crías nunca tienen alta ni rodeo propio, así que si armás esta cuenta a mano contra el rodeo de terneros, tenés que restarlos vos por tu cuenta (ya están descontados de "Parieron", pero no aparecen en ninguna columna del lado de terneros).'],
       [],
       ['RESUMEN CONSOLIDADO', ''],
     ];
@@ -13218,7 +13225,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.exportadasTxt, f.importadasTxt,
       f.sinTactoFinal ? '—' : f.prenadasAjustadas,
       f.abortos, f.muertas, f.yaParieron, f.sinTactoFinal ? '—' : f.pendientesAjustado,
-      f.rodeoTerneros, f.nacidosVivos,
+      f.rodeoTerneros, f.nacidosVivos, f.nacidosMuertosRodeo||0,
       f.ternerosVivos===null?'(sin rodeo)':f.ternerosVivos,
       f.ternerosMuertos===null?'—':f.ternerosMuertos,
       f.ternerosVendidos===null?'—':f.ternerosVendidos,
@@ -13226,7 +13233,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.diferenciaReconcil===null?'—':f.diferenciaReconcil,
     ]));
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:20},{wch:13},{wch:14},{wch:14},{wch:20},{wch:14},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
+    ws2['!cols'] = [{wch:20},{wch:13},{wch:14},{wch:14},{wch:20},{wch:14},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:16},{wch:18},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
     ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
     estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
