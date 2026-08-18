@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_112';
+const APP_VERSION = 'index_consolidado_4_6_155_113';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2825,25 +2825,35 @@ function buildDashboard() {
       } else if (f.sinStock) {
         h += `<div style="font-size:12px;color:var(--text3)">ℹ Sin stock actual — sus ${fn(f.exportadas||f.prenadas)} preñadas se redistribuyeron a otro(s) rodeo(s) (ver abajo cuál las recibió).</div>`;
       } else {
+        const condicionesParir = f.prenadasAjustadas - f.abortos - f.muertas;
+        const ct = f.controlTerneros;
         h += `<div style="font-size:13px;line-height:1.9">
           <div style="display:flex;justify-content:space-between"><span>${fn(f.prenadas)} tacteadas preñadas <span style="font-size:10px;color:var(--text3)">(tacto ${fd(f.fecha||'')})</span></span></div>`;
-        f.exportadasDetalle.forEach(exp => {
-          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Movidas a ${exp.aNombre} <span style="font-size:10px;color:var(--text3)">(${fd(exp.fecha)})</span></span><span>−${fn(exp.cantidad)}</span></div>`;
-        });
         f.importadas.forEach(imp => {
           h += `<div style="display:flex;justify-content:space-between;color:var(--green-text)"><span>De ${imp.deNombre} <span style="font-size:10px;color:var(--text3)">(${fd(imp.fecha)})</span></span><span>+${fn(imp.cantidad)}</span></div>`;
         });
+        f.exportadasDetalle.forEach(exp => {
+          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Movidas a ${exp.aNombre} <span style="font-size:10px;color:var(--text3)">(${fd(exp.fecha)})</span></span><span>−${fn(exp.cantidad)}</span></div>`;
+        });
         h += `
-          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
-          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
-          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortadas</span><span>−${fn(f.abortos)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertas</span><span>−${fn(f.muertas)}</span></div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:2px;padding-top:2px"><span>Vacas en condiciones de parir</span><span>${fn(condicionesParir)}</span></div>
+          <div style="display:flex;justify-content:space-between;color:var(--text2);margin-top:4px"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>`;
+        if (ct) {
+          h += `<div style="font-size:11px;color:var(--text3);padding-left:10px">↳ ${fn(ct.ternerosVivos)} terneros vivos + ${fn(ct.ternerosMuertos)} terneros muertos${ct.ternerosVendidos>0?` + ${fn(ct.ternerosVendidos)} vendidos`:''}${ct.ternerosCedidos>0?` + ${fn(ct.ternerosCedidos)} cedidos`:''}${ct.nacidosMuertos>0?` + ${fn(ct.nacidosMuertos)} nacidos muertos`:''} = ${fn(f.yaParieron)}</div>`;
+          if (ct.diferencia !== 0) {
+            h += `<div style="font-size:11px;color:var(--clay-text);padding-left:10px">⚠ No cierra contra el rodeo de terneros — Pariciones dice ${fn(f.nacidosVivos)} nacidos vivos, pero ahí se verifican ${fn(ct.totalVerificado)}. Diferencia: ${ct.diferencia > 0 ? '+' : ''}${fn(ct.diferencia)}. Revisá si falta una alta de parición o hay un ternero en el rodeo equivocado.</div>`;
+          }
+        } else {
+          h += `<div style="font-size:11px;color:var(--text3);padding-left:10px">ℹ No se encontró el rodeo "Terneros (${f.nombre})" para desglosar.</div>`;
+        }
+        h += `
           <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
-        </div>
-        ${f.controlTerneros ? (
-          f.controlTerneros.diferencia === 0
-          ? `<div style="font-size:10.5px;color:var(--green-text);margin-top:6px">✓ Control cruzado con ${f.controlTerneros.rodeoNombre}: coincide (${fn(f.controlTerneros.ternerosVivos)} vivos + ${fn(f.controlTerneros.ternerosMuertos)} muertos + ${fn(f.controlTerneros.ternerosVendidos)} vendidos + ${fn(f.controlTerneros.ternerosCedidos)} cedidos = ${fn(f.controlTerneros.totalVerificado)} nacidos vivos).${f.controlTerneros.nacidosMuertos>0 ? ` <em>(+ ${fn(f.controlTerneros.nacidosMuertos)} nacidos muertos de este rodeo, que nunca tienen alta ni rodeo propio — si armás la cuenta a mano, restalos aparte de Pariciones, no del lado de los terneros.)</em>` : ''}</div>`
-          : `<div style="font-size:10.5px;color:var(--clay-text);margin-top:6px">⚠ Control cruzado con ${f.controlTerneros.rodeoNombre}: no coincide — Pariciones dice ${fn(f.nacidosVivos)} nacidos vivos, pero en el rodeo de terneros hoy se verifican ${fn(f.controlTerneros.totalVerificado)} (${fn(f.controlTerneros.ternerosVivos)} vivos + ${fn(f.controlTerneros.ternerosMuertos)} muertos + ${fn(f.controlTerneros.ternerosVendidos)} vendidos + ${fn(f.controlTerneros.ternerosCedidos)} cedidos). Diferencia: ${f.controlTerneros.diferencia > 0 ? '+' : ''}${fn(f.controlTerneros.diferencia)}. Revisá si falta una alta de parición o si hay un ternero en el rodeo equivocado.${f.controlTerneros.nacidosMuertos>0 ? ` (Este rodeo también tuvo ${fn(f.controlTerneros.nacidosMuertos)} nacidos muertos — ya están descontados de Pariciones, no hace falta restarlos de nuevo acá.)` : ''}</div>`
-        ) : `<div style="font-size:10.5px;color:var(--text3);margin-top:6px">ℹ No se encontró el rodeo "Terneros (${f.nombre})" — no se pudo cruzar contra los terneros.</div>`}`;
+        </div>`;
+        if (ct) {
+          h += `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;display:flex;justify-content:space-between"><span>🐄 Terneros al pie de este rodeo</span><span style="font-weight:700">${fn(ct.ternerosVivos)}</span></div>`;
+        }
       }
       h += '</div>';
     });
