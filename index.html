@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_105';
+const APP_VERSION = 'index_consolidado_4_6_155_106';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -516,7 +516,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   // (ej: un rodeo "Vacas venta" de descarte) — su preñez sale del sistema, no
   // se redistribuye a ningún otro rodeo, pero sí hay que restarla de
   // "pendientes" (una vaca vendida ya no es nuestra, preñada o no).
-  const salidasExternasPorRodeo = {}; // rodeo_id -> { ventas, trasladoNoVaca, total }
+  const salidasExternasPorRodeo = {}; // rodeo_id -> { ventas, trasladoNoVaca, total, detalle }
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
     const info = infoTactoBase[rid];
@@ -524,12 +524,37 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const fechaTacto = info.fecha;
     const cantVendida = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===rid && (v.fecha_salida||'')<=corte && (!fechaTacto||String(v.fecha_salida)>=String(fechaTacto)))
       .reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
-    const cantTrasladoNoVaca = (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid && !idsVaca.has(String(m.rodeo_destino_id)) && (m.fecha||'')<=corte && (!fechaTacto||String(m.fecha)>=String(fechaTacto)))
-      .reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+    // OJO — se excluyen explícitamente los traslados que ya vienen de un
+    // Aborto (texto "aborto" en la observación, con o sin el tag [abid:...],
+    // mismo criterio que abortosCompletos_). Sin esto, cada vaca abortada se
+    // contaba DOS veces: una acá como "trasladada fuera" (estimada) y otra en
+    // "Abortadas" (exacta, de la tabla Abortos) — inflando este número muy
+    // por encima de lo real.
+    const movsTrasladoNoVaca = (S.cache.movimientos||[]).filter(m=>
+      (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') &&
+      String(m.rodeo_origen_id)===rid &&
+      !idsVaca.has(String(m.rodeo_destino_id)) &&
+      (m.fecha||'')<=corte &&
+      (!fechaTacto||String(m.fecha)>=String(fechaTacto)) &&
+      !/aborto/i.test(String(m.observaciones||''))
+    );
+    const cantTrasladoNoVaca = movsTrasladoNoVaca.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
     const prenVendidas = Math.round(cantVendida * info.tasa);
     const prenTrasladoNoVaca = Math.round(cantTrasladoNoVaca * info.tasa);
+    // Detalle agrupado por destino + motivo (texto de la observación), para
+    // que el panel muestre A DÓNDE fueron y POR QUÉ, no sólo un número suelto
+    // sin contexto — así alguien que no está en el tema puede entender qué
+    // pasó sin tener que preguntar.
+    const detallePorClave = {};
+    movsTrasladoNoVaca.forEach(m => {
+      const destNombre = rodeoNombre(m.rodeo_destino_id);
+      const motivo = String(m.observaciones||'').trim() || '(sin motivo especificado)';
+      const clave = destNombre + '|' + motivo;
+      if (!detallePorClave[clave]) detallePorClave[clave] = { destino: destNombre, motivo, cantidad: 0 };
+      detallePorClave[clave].cantidad += Number(m.cantidad)||0;
+    });
     if (prenVendidas>0 || prenTrasladoNoVaca>0) {
-      salidasExternasPorRodeo[rid] = { ventas: prenVendidas, trasladoNoVaca: prenTrasladoNoVaca, total: prenVendidas+prenTrasladoNoVaca };
+      salidasExternasPorRodeo[rid] = { ventas: prenVendidas, trasladoNoVaca: prenTrasladoNoVaca, total: prenVendidas+prenTrasladoNoVaca, detalle: Object.values(detallePorClave) };
     }
   });
 
@@ -2790,7 +2815,7 @@ function buildDashboard() {
     if (rodeosExcluidosKpi > 0) {
       h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">ℹ ${rodeosExcluidosKpi} rodeo(s) de vacas sin stock actual — sus preñadas ya se redistribuyeron a los rodeos que las recibieron (ver "de [rodeo]" en las tarjetas de abajo), así que no se pierden ni se duplican en el total.</div>`;
     }
-    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas (ajustado) − Abortadas − Muertas − Vendidas − Trasladadas fuera − Paridas = Pendientes. "Ajustado" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (misma tasa de preñez del rodeo de origen aplicada a la cantidad movida/vendida) — el total consolidado no cambia por movimientos ENTRE rodeos de vacas propios, solo se reparte distinto; sí baja si se vendieron o se trasladaron a un rodeo que no es de categoría vaca (esas cabezas salen del sistema).</div>`;
+    h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas (ajustado) − Abortadas − Muertas − Vendidas − Trasladadas fuera − Paridas = Pendientes. "Ajustado" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto (misma tasa de preñez del rodeo de origen aplicada a la cantidad movida/vendida) — el total consolidado no cambia por movimientos ENTRE rodeos de vacas propios, solo se reparte distinto; sí baja si se vendieron o se trasladaron a un rodeo que no es de categoría vaca (esas cabezas salen del sistema). "Trasladadas fuera" excluye los traslados que ya vienen de un Aborto (esos se cuentan una sola vez, en "Abortadas") y muestra abajo de cada tarjeta a qué rodeo fueron y con qué motivo (texto de la observación del traslado), para poder saber qué pasó sin tener que ir a buscarlo a mano.</div>`;
 
     // Auditoría por rodeo, en formato de cuenta — para poder chequear rodeo
     // por rodeo si los datos cargados tienen sentido, en vez de un solo total.
@@ -2815,7 +2840,10 @@ function buildDashboard() {
           h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Vendidas</span><span>−${fn(f.salidasExternas.ventas)}</span></div>`;
         }
         if (f.salidasExternas.trasladoNoVaca > 0) {
-          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera (no vaca)</span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
+          h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera (no vaca) <span style="font-size:9px;color:var(--text3)">(preñadas est.)</span></span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
+          (f.salidasExternas.detalle||[]).forEach(d => {
+            h += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding-left:10px"><span>→ ${d.destino} — ${d.motivo}</span><span>${fn(d.cantidad)} cab. reales</span></div>`;
+          });
         }
         h += `
           <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
@@ -13181,16 +13209,17 @@ async function exportarAuditoriaReproductivaExcel_() {
         ternerosVivos, ternerosMuertos, ternerosVendidos, ternerosCedidos, totalReconciliado, diferenciaReconcil,
         exportadasTxt: rv.exportadasDetalle.length ? rv.exportadasDetalle.map(e=>`−${e.cantidad} a ${e.aNombre} (${fd(e.fecha)}, tacto ${fd(e.fechaTacto)})`).join('; ') : '',
         importadasTxt: rv.importadas.length ? rv.importadas.map(i=>`+${i.cantidad} de ${i.deNombre} (${fd(i.fecha)})`).join('; ') : '',
+        trasladoNoVacaTxt: (rv.salidasExternas.detalle||[]).length ? rv.salidasExternas.detalle.map(d=>`${d.cantidad} a ${d.destino} — ${d.motivo}`).join('; ') : '',
       };
     });
 
     const headers2 = ['Rodeo madre','Campo','Preñadas (tacteadas)','Movidas a otro rodeo','Recibidas de otro rodeo','Preñadas (ajustado)',
-      'Vendidas','Trasl. fuera (no vaca)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
+      'Vendidas','Trasl. fuera (no vaca, preñadas est.)','Detalle traslado fuera (destino y motivo, cabezas reales)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
       'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
     const aoa2 = [
       [`Agroganadera Los Médanos — Auditoría reproductiva`],
       ['Fecha', fd(corte)],
-      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto. Pendientes = Preñadas (ajustado) − Vendidas − Trasladadas fuera − Abortadas − Muertas − Parieron. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
+      ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" ya redistribuye la preñez entre rodeos cuando se movieron vacas después del tacto. Pendientes = Preñadas (ajustado) − Vendidas − Trasladadas fuera − Abortadas − Muertas − Parieron. "Trasl. fuera" YA EXCLUYE los traslados que vienen de un Aborto (esos están en "Abortadas", no se duplican) y es una ESTIMACIÓN (cabezas reales trasladadas × tasa de preñez del rodeo) — la columna de detalle muestra la cantidad REAL de cabezas y el motivo de cada traslado, tal cual quedó en la observación. "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
       [],
       ['RESUMEN CONSOLIDADO', ''],
     ];
@@ -13212,7 +13241,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.sinTactoFinal ? 'sin tacto final' : f.prenadas,
       f.exportadasTxt, f.importadasTxt,
       f.sinTactoFinal ? '—' : f.prenadasAjustadas,
-      f.salidasExternas.ventas||'', f.salidasExternas.trasladoNoVaca||'',
+      f.salidasExternas.ventas||'', f.salidasExternas.trasladoNoVaca||'', f.trasladoNoVacaTxt,
       f.abortos, f.muertas, f.yaParieron, f.sinTactoFinal ? '—' : f.pendientesAjustado,
       f.rodeoTerneros, f.nacidosVivos,
       f.ternerosVivos===null?'(sin rodeo)':f.ternerosVivos,
@@ -13222,7 +13251,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.diferenciaReconcil===null?'—':f.diferenciaReconcil,
     ]));
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:20},{wch:13},{wch:14},{wch:14},{wch:20},{wch:14},{wch:10},{wch:14},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
+    ws2['!cols'] = [{wch:20},{wch:13},{wch:14},{wch:14},{wch:20},{wch:14},{wch:10},{wch:14},{wch:40},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
     ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
     estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
