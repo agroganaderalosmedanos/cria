@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_107';
+const APP_VERSION = 'index_consolidado_4_6_155_108';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -562,14 +562,17 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
     totales.nacidosVivos += res.nacidosVivos;
-    // "Entoradas" (total tacteadas) y "Descartadas" (vendidas/trasladadas fuera
-    // del sistema de vacas) son hechos históricos del rodeo — se suman siempre,
-    // incluso si el rodeo terminó sin stock (vaciado por venta) o directamente
-    // no aportó preñadas al total (ver comentario de sinStock arriba).
-    totales.entoradas += (infoTactoBase[rid] && !infoTactoBase[rid].sinTactoFinal) ? infoTactoBase[rid].total : 0;
-    totales.descartadas += salidasExternas.total;
     if (res.sinTactoFinal) { totales.rodeosSinTactoFinal++; return; }
     if (sinStock) { totales.rodeosExcluidos++; return; }
+    // Entoradas/Descartadas se suman con la MISMA regla de inclusión que
+    // Preñadas/Paridas/Abortadas/Muertas (mismo set de rodeos, después de los
+    // "return" de arriba) — a propósito, para que la cuenta de auditoría
+    // cierre siempre exacto: Preñadas = Paridas + Pendientes + Abortadas +
+    // Muertas + Descartadas. Si "Entoradas" se sumara para TODOS los rodeos
+    // (incluidos los sinStock, que no aportan a Preñadas) el Índice de Preñez
+    // quedaría mal calculado y la ecuación no cerraría.
+    totales.entoradas += (infoTactoBase[rid]?.total) || 0;
+    totales.descartadas += salidasExternas.total;
     totales.prenadas += prenadasAjustadas;
     totales.paridas += res.yaParieron;
     totales.abortadas += res.abortos;
@@ -2466,15 +2469,23 @@ function buildDashboard() {
     ventasCab: ventasCabCria, mortCab: mortCabCria,
   };
 
-  // ── KPIs reproductivos — Vacas Entoradas / Preñadas / Índice de Preñez, y
-  // Abortadas / Muertas / Descartadas / Terneros en stock. Usa la misma
-  // calcularVacasReproductivas_ que "Estado de Vientres" y el Excel de
-  // auditoría, así los tres SIEMPRE dan el mismo número. Nota de cuadre:
-  // Preñadas − Abortadas − Muertas − Descartadas = Paridas + Pendientes de parir
-  // (el detalle rodeo por rodeo de Paridas/Pendientes vive en Estado de Vientres).
+  // ── KPIs reproductivos — Vacas Entoradas / Vacías / Preñadas / Índice de
+  // Preñez, y la apertura de a dónde van esas preñadas (Paridas / Pendientes /
+  // Abortadas / Muertas / Descartadas). Usa la misma calcularVacasReproductivas_
+  // que "Estado de Vientres" y el Excel de auditoría, así los tres SIEMPRE dan
+  // el mismo número. La cuenta cierra EXACTO porque Entoradas/Descartadas ahora
+  // se suman con la misma regla de inclusión que Preñadas/Paridas/Abortadas/
+  // Muertas (ver comentario en calcularVacasReproductivas_). "Terneros en
+  // stock" es un panel APARTE a propósito — es un conteo físico de HOY, no una
+  // apertura de la preñez, así que no tiene por qué cerrar con los números de
+  // arriba (y de hecho puede incluir terneros de una campaña anterior si
+  // todavía no se trasladaron/vendieron — ver charla pendiente sobre etiquetar
+  // los rodeos de terneros por campaña).
   const { totales: totVacaDash } = calcularVacasReproductivas_(campSelecField, corteCria);
   if (totVacaDash) {
+    const vacias = Math.max(0, totVacaDash.entoradas - totVacaDash.prenadas);
     const indicePrenez = totVacaDash.entoradas > 0 ? (totVacaDash.prenadas / totVacaDash.entoradas * 100) : null;
+    const sumaApertura = totVacaDash.paridas + totVacaDash.pendientes + totVacaDash.abortadas + totVacaDash.muertas + totVacaDash.descartadas;
     // Terneros vivos en stock HOY (al corte) — rodeos de categoría ternero/a de Cría.
     const stockTerneros = rodeosCriaFilt
       .filter(r => normAct_(r.categoria).includes('ternero'))
@@ -2484,15 +2495,33 @@ function buildDashboard() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
         <div class="kpi"><div class="kpi-label">Vacas entoradas</div><div class="kpi-val">${fn(totVacaDash.entoradas)}</div></div>
         <div class="kpi"><div class="kpi-label">Vacas preñadas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.prenadas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Vacías</div><div class="kpi-val" style="color:var(--text2)">${fn(vacias)}</div></div>
         <div class="kpi"><div class="kpi-label">Índice de preñez</div><div class="kpi-val" style="color:var(--green-text)">${indicePrenez!==null?fn(indicePrenez,1)+' %':'—'}</div></div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px">
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">Entoradas − Preñadas = Vacías → ${fn(totVacaDash.entoradas)} − ${fn(totVacaDash.prenadas)} = ${fn(vacias)}</div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿A dónde van las ${fn(totVacaDash.prenadas)} preñadas?</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:8px">
+        <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.paridas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(totVacaDash.pendientes)}</div></div>
         <div class="kpi"><div class="kpi-label">Abortadas</div><div class="kpi-val" style="color:var(--clay-text)">${fn(totVacaDash.abortadas)}</div></div>
         <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(totVacaDash.muertas)}</div></div>
         <div class="kpi"><div class="kpi-label">Descartadas</div><div class="kpi-val" style="color:var(--text2)">${fn(totVacaDash.descartadas)}</div></div>
-        <div class="kpi"><div class="kpi-label">Terneros (stock actual)</div><div class="kpi-val" style="color:var(--gold-text)">${fn(stockTerneros)}</div></div>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:10px">Preñadas − Abortadas − Muertas − Descartadas = Paridas + Pendientes de parir. Detalle rodeo por rodeo en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:11px;padding:0 4px">🐮 Estado de Vientres</button>.</div>
+      <div style="font-size:11px;color:${sumaApertura===totVacaDash.prenadas?'var(--text3)':'var(--red)'};margin-top:8px">
+        Paridas + Pendientes + Abortadas + Muertas + Descartadas = Preñadas → ${fn(totVacaDash.paridas)} + ${fn(totVacaDash.pendientes)} + ${fn(totVacaDash.abortadas)} + ${fn(totVacaDash.muertas)} + ${fn(totVacaDash.descartadas)} = ${fn(sumaApertura)}${sumaApertura===totVacaDash.prenadas?' ✓':' ⚠ no cierra contra '+fn(totVacaDash.prenadas)+' preñadas — revisar en Estado de Vientres'}
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">Detalle rodeo por rodeo en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:11px;padding:0 4px">🐮 Estado de Vientres</button>.</div>
+
+      <div style="border-top:1px dashed var(--border);margin-top:16px;padding-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-weight:600;font-size:13px">🐣 Terneros — stock físico actual</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">Conteo de HOY en los rodeos de terneros/as — no es una apertura de las preñadas de arriba, es otro conteo aparte.</div>
+          </div>
+          <div class="kpi-val" style="color:var(--gold-text);font-size:22px">${fn(stockTerneros)}</div>
+        </div>
+      </div>
     </div>`;
   }
 
