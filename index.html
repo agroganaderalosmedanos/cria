@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_106';
+const APP_VERSION = 'index_consolidado_4_6_155_107';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -534,7 +534,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
 
   const stockACorte = stockPorRodeoACorte_(corte);
-  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, rodeosSinTactoFinal:0, rodeosExcluidos:0 };
+  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0 };
   const filas = [];
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
@@ -562,6 +562,12 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
     totales.nacidosVivos += res.nacidosVivos;
+    // "Entoradas" (total tacteadas) y "Descartadas" (vendidas/trasladadas fuera
+    // del sistema de vacas) son hechos históricos del rodeo — se suman siempre,
+    // incluso si el rodeo terminó sin stock (vaciado por venta) o directamente
+    // no aportó preñadas al total (ver comentario de sinStock arriba).
+    totales.entoradas += (infoTactoBase[rid] && !infoTactoBase[rid].sinTactoFinal) ? infoTactoBase[rid].total : 0;
+    totales.descartadas += salidasExternas.total;
     if (res.sinTactoFinal) { totales.rodeosSinTactoFinal++; return; }
     if (sinStock) { totales.rodeosExcluidos++; return; }
     totales.prenadas += prenadasAjustadas;
@@ -2286,8 +2292,8 @@ function buildDashboard() {
   // 3. Insumos consumidos campaña (alimentación y veterinaria) en rodeos Cría
   const prodPorId = Object.fromEntries((productos||[]).map(p=>[String(p.producto_id),p]));
   const consumosCria = consumos.filter(c => rodeosCriaIds.has(String(c.rodeo_id)) && (!campSelecField || String(c.campo_id)===String(campSelecField)));
-  let totalAlim = 0, totalVeter = 0;
-  const detalleAlimCria = [], detalleVetCria = [];
+  let totalAlim = 0, totalVeter = 0, cantAlimCria = 0;
+  const detalleVetCria = [];
   consumosCria.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
     const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -2299,7 +2305,7 @@ function buildDashboard() {
       detalleVetCria.push({fecha:c.fecha,prod:prod?.nombre||'—',cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
     } else {
       totalAlim += costo;
-      detalleAlimCria.push({fecha:c.fecha,prod:prod?.nombre||'—',cant:Number(c.cantidad)||0,rodeo:rodeoNombre(c.rodeo_id),costo});
+      cantAlimCria++;
     }
   });
 
@@ -2460,6 +2466,36 @@ function buildDashboard() {
     ventasCab: ventasCabCria, mortCab: mortCabCria,
   };
 
+  // ── KPIs reproductivos — Vacas Entoradas / Preñadas / Índice de Preñez, y
+  // Abortadas / Muertas / Descartadas / Terneros en stock. Usa la misma
+  // calcularVacasReproductivas_ que "Estado de Vientres" y el Excel de
+  // auditoría, así los tres SIEMPRE dan el mismo número. Nota de cuadre:
+  // Preñadas − Abortadas − Muertas − Descartadas = Paridas + Pendientes de parir
+  // (el detalle rodeo por rodeo de Paridas/Pendientes vive en Estado de Vientres).
+  const { totales: totVacaDash } = calcularVacasReproductivas_(campSelecField, corteCria);
+  if (totVacaDash) {
+    const indicePrenez = totVacaDash.entoradas > 0 ? (totVacaDash.prenadas / totVacaDash.entoradas * 100) : null;
+    // Terneros vivos en stock HOY (al corte) — rodeos de categoría ternero/a de Cría.
+    const stockTerneros = rodeosCriaFilt
+      .filter(r => normAct_(r.categoria).includes('ternero'))
+      .reduce((s,r) => s + Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0), 0);
+    h += `<div class="panel">
+      <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+        <div class="kpi"><div class="kpi-label">Vacas entoradas</div><div class="kpi-val">${fn(totVacaDash.entoradas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Vacas preñadas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.prenadas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Índice de preñez</div><div class="kpi-val" style="color:var(--green-text)">${indicePrenez!==null?fn(indicePrenez,1)+' %':'—'}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px">
+        <div class="kpi"><div class="kpi-label">Abortadas</div><div class="kpi-val" style="color:var(--clay-text)">${fn(totVacaDash.abortadas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(totVacaDash.muertas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Descartadas</div><div class="kpi-val" style="color:var(--text2)">${fn(totVacaDash.descartadas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Terneros (stock actual)</div><div class="kpi-val" style="color:var(--gold-text)">${fn(stockTerneros)}</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:10px">Preñadas − Abortadas − Muertas − Descartadas = Paridas + Pendientes de parir. Detalle rodeo por rodeo en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:11px;padding:0 4px">🐮 Estado de Vientres</button>.</div>
+    </div>`;
+  }
+
   // ── RENDER ──────────────────────────────────────────────────────────
   // Panel ingresos/egresos
   h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
@@ -2515,7 +2551,10 @@ function buildDashboard() {
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalCompras,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🌿 Alimentación e insumos</div></div>
+          <div>
+            <div style="font-weight:600">🌿 Alimentación e insumos</div>
+            <div style="font-size:11px;color:var(--text3)">${cantAlimCria} consumos campaña ${campSelec} · <a href="javascript:void(0)" onclick="goto('insumos')">ver detalle en Insumos y Veterinaria</a></div>
+          </div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalAlim>0?fnMoneda_(totalAlim,_criaMoneda):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -2733,7 +2772,6 @@ function buildDashboard() {
       <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(tot,_criaMoneda)}</td></tr>`;
     return t+'</tbody></table></div></div>';
   };
-  if (detalleAlimCria.length) h += buildInsumoTableCria_(detalleAlimCria, '🌿 Alimentación e insumos — detalle');
   if (detalleVetCria.length)  h += buildInsumoTableCria_(detalleVetCria,  '💉 Veterinaria — detalle');
 
   // Mortandad y Abortos — en el Dashboard va solo el total con impacto en el
