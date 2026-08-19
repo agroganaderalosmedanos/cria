@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_108';
+const APP_VERSION = 'index_consolidado_4_6_155_109';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -563,14 +563,22 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // madre después se vació por traslado — se suman siempre.
     totales.nacidosVivos += res.nacidosVivos;
     if (res.sinTactoFinal) { totales.rodeosSinTactoFinal++; return; }
-    if (sinStock) { totales.rodeosExcluidos++; return; }
-    // Entoradas/Descartadas se suman con la MISMA regla de inclusión que
-    // Preñadas/Paridas/Abortadas/Muertas (mismo set de rodeos, después de los
-    // "return" de arriba) — a propósito, para que la cuenta de auditoría
-    // cierre siempre exacto: Preñadas = Paridas + Pendientes + Abortadas +
-    // Muertas + Descartadas. Si "Entoradas" se sumara para TODOS los rodeos
-    // (incluidos los sinStock, que no aportan a Preñadas) el Índice de Preñez
-    // quedaría mal calculado y la ecuación no cerraría.
+    if (sinStock) totales.rodeosExcluidos++;
+    // OJO — bug real encontrado y corregido: antes, un rodeo "sin stock"
+    // (vaciado por traslado o por venta total) se excluía COMPLETO del total,
+    // incluida su cuota de "Entoradas". Pero sus preñadas NO desaparecen: si
+    // se vació por traslado a otro rodeo de vacas, esas preñadas ya se suman
+    // en el rodeo DESTINO vía "importadas" (que si sigue incluido en el
+    // total); si se vació por venta, quedan en "Descartadas". En los dos
+    // casos, las preñadas de este rodeo YA están contadas en algún lado del
+    // total — pero si además excluíamos sus Entoradas, esas cabezas quedaban
+    // sin denominador, y el total de Preñadas terminaba siendo MAYOR que el
+    // de Entoradas (Índice de Preñez > 100%, matemáticamente imposible).
+    // La cuenta cierra sola si TODOS los rodeos con Tacto final aportan a
+    // TODOS los totales por igual, sin excepción por "sin stock": un rodeo
+    // completamente vaciado por traslado ya aporta 0 a Preñadas acá (porque
+    // exportadas canceló sus preñadas), así que incluirlo no duplica nada —
+    // pero si no lo incluimos, sus Entoradas se pierden igual.
     totales.entoradas += (infoTactoBase[rid]?.total) || 0;
     totales.descartadas += salidasExternas.total;
     totales.prenadas += prenadasAjustadas;
@@ -2483,6 +2491,7 @@ function buildDashboard() {
   // los rodeos de terneros por campaña).
   const { totales: totVacaDash } = calcularVacasReproductivas_(campSelecField, corteCria);
   if (totVacaDash) {
+    const preñadasMayorQueEntoradas = totVacaDash.prenadas > totVacaDash.entoradas;
     const vacias = Math.max(0, totVacaDash.entoradas - totVacaDash.prenadas);
     const indicePrenez = totVacaDash.entoradas > 0 ? (totVacaDash.prenadas / totVacaDash.entoradas * 100) : null;
     const sumaApertura = totVacaDash.paridas + totVacaDash.pendientes + totVacaDash.abortadas + totVacaDash.muertas + totVacaDash.descartadas;
@@ -2492,11 +2501,12 @@ function buildDashboard() {
       .reduce((s,r) => s + Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0), 0);
     h += `<div class="panel">
       <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
+      ${preñadasMayorQueEntoradas ? `<div style="background:rgba(220,50,50,0.08);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--red);font-weight:600">⚠ Preñadas (${fn(totVacaDash.prenadas)}) es mayor que Entoradas (${fn(totVacaDash.entoradas)}) — matemáticamente imposible. Revisá en algún rodeo si el campo "Preñadas" del Tacto final quedó cargado más alto que "Total tacteadas".</div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
         <div class="kpi"><div class="kpi-label">Vacas entoradas</div><div class="kpi-val">${fn(totVacaDash.entoradas)}</div></div>
         <div class="kpi"><div class="kpi-label">Vacas preñadas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.prenadas)}</div></div>
         <div class="kpi"><div class="kpi-label">Vacías</div><div class="kpi-val" style="color:var(--text2)">${fn(vacias)}</div></div>
-        <div class="kpi"><div class="kpi-label">Índice de preñez</div><div class="kpi-val" style="color:var(--green-text)">${indicePrenez!==null?fn(indicePrenez,1)+' %':'—'}</div></div>
+        <div class="kpi"><div class="kpi-label">Índice de preñez</div><div class="kpi-val" style="color:${preñadasMayorQueEntoradas?'var(--red)':'var(--green-text)'}">${indicePrenez!==null?fn(indicePrenez,1)+' %':'—'}</div></div>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:8px">Entoradas − Preñadas = Vacías → ${fn(totVacaDash.entoradas)} − ${fn(totVacaDash.prenadas)} = ${fn(vacias)}</div>
 
