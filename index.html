@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_109';
+const APP_VERSION = 'index_consolidado_4_6_155_110';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3482,7 +3482,7 @@ function buildPariciones() {  const _criaTabs = [
   </div>`;
   h += `<div class="panel">
     <div class="panel-title">🔍 Auditoría de Pariciones/Abortos y Movimientos vinculados</div>
-    <p class="helper-text" style="margin-bottom:10px">Busca tres cosas: (1) Movimientos/Mortandad "huérfanos", de una Parición o Aborto que ya no existe; (2) Movimientos desincronizados, de un Aborto que se editó después; (3) Pariciones con nacidos vivos que NUNCA tuvieron su Movimiento de Saldo inicial creado — la causa real de que el Libro de Movimientos no coincida con Stock/Stock de Hacienda. Este botón las busca todas.</p>
+    <p class="helper-text" style="margin-bottom:10px">Busca cuatro cosas: (1) Movimientos/Mortandad "huérfanos", de una Parición o Aborto que ya no existe; (2) Movimientos desincronizados, de un Aborto que se editó después; (3) Pariciones con nacidos vivos que NUNCA tuvieron su Movimiento de Saldo inicial creado — la causa real de que el Libro de Movimientos no coincida con Stock/Stock de Hacienda; (4) Movimientos/Mortandad desincronizados de una Parición que se editó después (de antes de que existiera esta cascada). Este botón las busca todas.</p>
     <button class="btn btn-secondary btn-sm" onclick="window.paBuscarHuerfanos_()">🔍 Buscar huérfanos</button>
     <div id="pa-huerfanos-resultado" style="margin-top:12px"></div>
   </div>`;
@@ -3589,6 +3589,42 @@ window.paBuscarHuerfanos_ = async function() {
           fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
           origen:`Aborto id ${match[1]} ahora es: ${rodeoNombre(abortoActual.rodeo_id)}, ${fd(abortoActual.fecha)}`,
           desincronizado:true, abortoId:match[1],
+        });
+      }
+    });
+    // Movimiento/Mortandad vinculados a una Parición que SIGUE existiendo, pero
+    // que puede haberse editado (fecha, rodeo o cantidad) después de creada —
+    // de antes de que existiera la cascada de edición (ver updateEntity en el
+    // backend). Se detecta comparando ambos, igual que ya se hace con Abortos.
+    const paricionesPorId = Object.fromEntries((S.cache.pariciones||[]).map(p=>[String(p.paricion_id),p]));
+    (S.cache.movimientos||[]).forEach(m => {
+      if (m.tipo !== 'Saldo inicial') return;
+      const match = /\[pid:(\d+)\]/.exec(String(m.observaciones||''));
+      if (!match || !idsPariciones.has(match[1])) return;
+      const paricionActual = paricionesPorId[match[1]];
+      const fechaDistinta = String(paricionActual.fecha) !== String(m.fecha);
+      const cantidadDistinta = (Number(paricionActual.nacidos_vivos)||0) !== (Number(m.cantidad)||0);
+      if (fechaDistinta || cantidadDistinta) {
+        filas.push({
+          tipoLabel:'Movimiento desincronizado (Nacimiento de Parición)', entity:'movimientos', id:m.movimiento_id,
+          fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_destino_id), cantidad:m.cantidad,
+          origen:`Parición id ${match[1]} ahora es: ${fd(paricionActual.fecha)}, ${paricionActual.nacidos_vivos} nacidos vivos`,
+          desincronizadoParicion:true, paricionIdSync:match[1],
+        });
+      }
+    });
+    (S.cache.mortandad||[]).forEach(m => {
+      const match = /\[pid:(\d+)\]/.exec(String(m.observacion||''));
+      if (!match || !idsPariciones.has(match[1])) return;
+      const paricionActual = paricionesPorId[match[1]];
+      const fechaDistinta = String(paricionActual.fecha) !== String(m.fecha);
+      const cantidadDistinta = (Number(paricionActual.nacidos_muertos)||0) !== (Number(m.cantidad)||0);
+      if (fechaDistinta || cantidadDistinta) {
+        filas.push({
+          tipoLabel:'Mortandad desincronizada (nacido muerto de Parición)', entity:'mortandad', id:m.mortandad_id,
+          fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_id), cantidad:m.cantidad,
+          origen:`Parición id ${match[1]} ahora es: ${fd(paricionActual.fecha)}, ${paricionActual.nacidos_muertos} nacidos muertos`,
+          desincronizadoParicion:true, paricionIdSync:match[1],
         });
       }
     });
@@ -3702,7 +3738,7 @@ window.paRenderHuerfanosTabla_ = function() {
   ];
   const flecha = (key) => sortCol===key ? (sortDir==='asc'?' ▲':' ▼') : '';
   let t = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600;margin-bottom:10px">
-    ⚠ Se encontraron ${filas.length} registro(s) para revisar — huérfanos (de Pariciones/Abortos ya borrados) o desincronizados (el aborto se editó — rodeo/fecha — pero el traslado vinculado quedó con los datos viejos).
+    ⚠ Se encontraron ${filas.length} registro(s) para revisar — huérfanos (de Pariciones/Abortos ya borrados) o desincronizados (el aborto o la parición se editaron — rodeo/fecha/cantidad — pero el traslado/movimiento vinculado quedó con los datos viejos).
   </div>`;
   t += `<div class="tw"><table class="dt"><thead><tr>
     ${cols.map(c=>`<th class="${c.cls||''}" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}" onclick="S._paHuerfanosSortDir=(S._paHuerfanosSortCol==='${c.key}'&&S._paHuerfanosSortDir==='asc')?'desc':'asc';S._paHuerfanosSortCol='${c.key}';window.paRenderHuerfanosTabla_()">${c.label}${flecha(c.key)}</th>`).join('')}
@@ -3716,6 +3752,8 @@ window.paRenderHuerfanosTabla_ = function() {
         ? `<button class="btn btn-primary btn-sm" onclick="window.paCrearMovimientoFaltante_('${f.paricionIdCrear}','${f.rodeoTernerosId}','${f.rodeoTernerosCampoId}','${f.fecha}','${f.cantidad}')">Crear movimiento</button>`
         : f.desincronizado
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
+        : f.desincronizadoParicion
+        ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizadoParicion_('${f.paricionIdSync}')">Corregir</button>`
           : f.soloRevision
             ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
             : f.entity && f.id
@@ -3752,6 +3790,20 @@ window.paCorregirDesincronizado_ = async function(entity, movId, abortoId) {
     await loadEntity('movimientos', true);
     S.stock = null; await loadStock();
     toast('Traslado corregido', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
+};
+window.paCorregirDesincronizadoParicion_ = async function(paricionId) {
+  if (!confirm('¿Volver a sincronizar el Movimiento/Mortandad de esta Parición con sus datos actuales?')) return;
+  try {
+    // Update "vacío" (sin cambiar ningún campo) — solo dispara la cascada de
+    // sincronización del backend, que relee la Parición y reescribe el
+    // Movimiento/Mortandad vinculados para que coincidan con los datos de hoy.
+    await apiCall('update', { body: { entity: 'pariciones', id: paricionId, data: {} } });
+    invalidateCache('movimientos'); invalidateCache('mortandad');
+    await loadEntity('movimientos', true); await loadEntity('mortandad', true);
+    S.stock = null; await loadStock();
+    toast('Sincronizado', 'ok');
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
