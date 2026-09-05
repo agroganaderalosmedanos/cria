@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_121';
+const APP_VERSION = 'index_consolidado_4_6_155_122';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -600,7 +600,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
 
   const stockACorte = stockPorRodeoACorte_(corte);
-  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0 };
+  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, nacidosMuertos:0, ternerosAlPie:0, ternerosMuertosPostParto:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0 };
   const filas = [];
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
@@ -675,6 +675,9 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     totales.abortadas += res.abortos;
     totales.muertas += res.muertas;
     totales.pendientes += pendientesAjustado;
+    totales.nacidosMuertos += res.nacidosMuertos || 0;
+    totales.ternerosAlPie += ternerosAlPie || 0;
+    totales.ternerosMuertosPostParto += ternerosMuertosPostParto || 0;
   });
   totales.terneroProyectado = totales.nacidosVivos + totales.pendientes;
   return { filas, totales };
@@ -3031,15 +3034,25 @@ function buildEstadoVientres() {
   const kpiPrenadas = totVaca.prenadas, kpiParidas = totVaca.paridas, kpiAbortadas = totVaca.abortadas,
         kpiMuertas = totVaca.muertas, kpiPendientes = totVaca.pendientes, kpiNacidosVivos = totVaca.nacidosVivos,
         rodeosSinTactoFinalKpi = totVaca.rodeosSinTactoFinal, rodeosExcluidosKpi = totVaca.rodeosExcluidos,
-        kpiTerneroProyectado = totVaca.terneroProyectado;
+        kpiTerneroProyectado = totVaca.terneroProyectado, kpiDescartadas = totVaca.descartadas,
+        kpiTernerosAlPie = totVaca.ternerosAlPie, kpiTernerosMuertosPostParto = totVaca.ternerosMuertosPostParto,
+        kpiNacidosMuertos = totVaca.nacidosMuertos;
   h += `<div class="panel"><div class="panel-title">🐮 Vacas — resumen de la campaña</div>`;
   h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
     <div class="kpi"><div class="kpi-label">Preñadas (ajustado por movimientos)</div><div class="kpi-val">${fn(kpiPrenadas)}</div></div>
     <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(kpiParidas)}</div></div>
     <div class="kpi"><div class="kpi-label">Abortadas</div><div class="kpi-val" style="color:var(--clay-text)">${fn(kpiAbortadas)}</div></div>
+    <div class="kpi"><div class="kpi-label">Trasladadas (sanidad/venta, sin contar abortos)</div><div class="kpi-val" style="color:var(--text2)">${fn(kpiDescartadas)}</div></div>
     <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(kpiMuertas)}</div></div>
     <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(kpiPendientes)}</div></div>
-  </div>`;
+  </div>
+  <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿Cómo se componen las ${fn(kpiParidas)} paridas?</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:8px">
+    <div class="kpi"><div class="kpi-label">Terneros al pie</div><div class="kpi-val kpi-pos">${fn(kpiTernerosAlPie)}</div></div>
+    <div class="kpi"><div class="kpi-label">Terneros muertos (post-parto)</div><div class="kpi-val kpi-neg">${fn(kpiTernerosMuertosPostParto)}<span style="font-size:13px;font-weight:600;color:var(--text3)"> (${kpiParidas>0?fn(kpiTernerosMuertosPostParto/kpiParidas*100,1):'—'}%)</span></div></div>
+    <div class="kpi"><div class="kpi-label">Nacidos muertos</div><div class="kpi-val kpi-neg">${fn(kpiNacidosMuertos)}<span style="font-size:13px;font-weight:600;color:var(--text3)"> (${kpiParidas>0?fn(kpiNacidosMuertos/kpiParidas*100,1):'—'}%)</span></div></div>
+  </div>
+  <div style="font-size:11px;color:var(--text3);margin-top:6px">Porcentaje sobre el total de vacas paridas (${fn(kpiParidas)}). Terneros al pie + Terneros muertos + Nacidos muertos = Paridas, si no hay algún caso sin cargar bien (ver detalle ⚠ en las tarjetas de abajo).</div>`;
   // Proyección: cuántos terneros VIVOS se pueden llegar a tener en total al
   // cierre de la parición — lo que ya nació vivo, más una estimación de lo
   // que falta (asumiendo ~1 cría viva por vaca pendiente, mismo criterio que
