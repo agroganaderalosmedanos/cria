@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_118';
+const APP_VERSION = 'index_consolidado_4_6_155_119';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -506,6 +506,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre, fecha}]
   (S.cache.movimientos||[]).filter(m=>(m.fecha||'')<=corte).forEach(m => {
     if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
+    if (/\[abid:\d+\]/.test(String(m.observaciones||''))) return; // ya se cuenta en "Abortos" — no restar dos veces
     const origId = String(m.rodeo_origen_id), destId = String(m.rodeo_destino_id);
     if (!idsVaca.has(origId)) return; // el origen tiene que ser un rodeo de vacas con tacto para saber que ya era preñada confirmada
     const infoOrig = infoTactoBase[origId];
@@ -645,6 +646,7 @@ function vacasPendientesDeParir_(rodeoId) {
   (S.cache.movimientos || []).forEach(m => {
     if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return;
     if (fechaTacto && String(m.fecha) < String(fechaTacto)) return;
+    if (/\[abid:\d+\]/.test(String(m.observaciones||''))) return; // ya se cuenta en "Abortos" — no restar dos veces
     const cant = Number(m.cantidad) || 0;
     if (cant <= 0) return;
     if (String(m.rodeo_origen_id) === String(rodeoId)) exportadas += cant;
@@ -3005,12 +3007,12 @@ function buildEstadoVientres() {
       f.importadas.forEach(imp => {
         h += `<div style="display:flex;justify-content:space-between;color:var(--green-text)"><span>De ${imp.deNombre} <span style="font-size:10px;color:var(--text3)">(${fd(imp.fecha)})</span></span><span>+${fn(imp.cantidad)}</span></div>`;
       });
-      if (f.salidasExternas.ventas > 0) {
-        h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Vendidas <span style="font-size:10px;color:var(--text3)">(resta del origen, no se suma en ningún lado)</span></span><span>−${fn(f.salidasExternas.ventas)}</span></div>`;
-      }
-      if (f.salidasExternas.trasladoNoVaca > 0) {
-        h += `<div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Trasladadas fuera, no vaca <span style="font-size:10px;color:var(--text3)">(resta del origen, no se suma en ningún lado)</span></span><span>−${fn(f.salidasExternas.trasladoNoVaca)}</span></div>`;
-      }
+      // Nota: "Vendidas" y "Trasladadas fuera, no vaca" NO se muestran acá
+      // aparte — ya están itemizadas arriba en el bloque de exportadasDetalle
+      // (que incluye TODOS los destinos, sean rodeo de vacas, venta, o
+      // descarte). Mostrarlas también agregadas acá era la misma cantidad
+      // repetida dos veces en pantalla — no se restaba dos veces en la
+      // cuenta, pero daba esa impresión.
       h += `
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
@@ -3962,7 +3964,7 @@ window.paActualizarAvisoPendientes_ = function() {
     ];
     if (importadas > 0) filas.push({ label: 'Preñadas importadas (traslado de otro rodeo)', val: importadas, signo: '+' });
     if (importadas > 0 || exportadas > 0) filas.push({ label: 'TOTAL PREÑADAS', val: prenadas + importadas, signo: '=', total: true });
-    if (exportadas > 0) filas.push({ label: 'Vacas trasladadas o vendidas', val: exportadas, signo: '−' });
+    if (exportadas > 0) filas.push({ label: 'Vacas trasladadas o vendidas (sin contar abortos)', val: exportadas, signo: '−' });
     if (muertas > 0) filas.push({ label: 'Vacas muertas', val: muertas, signo: '−' });
     if (abortos > 0) filas.push({ label: 'Vacas abortadas', val: abortos, signo: '−' });
     if (nacidosVivos > 0) filas.push({ label: 'Terneros al pie (nacidos vivos)', val: nacidosVivos, signo: '−' });
