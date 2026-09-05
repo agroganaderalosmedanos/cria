@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_124';
+const APP_VERSION = 'index_consolidado_4_6_155_125';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3170,8 +3170,11 @@ function buildServicios() {  const _criaTabs = [
       <div class="fg"><label>Rodeo</label>
         <select id="sv-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
-      <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}"></div>
+      <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}" onchange="document.getElementById('sv-campana').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
       <div class="fg"><label>Fecha fin <span class="opt">(opcional)</span></label><input type="date" id="sv-fecha-fin"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="sv-campana">${svCampanaOptionsHtml_(today())}</select>
+      </div>
     </div>
 
     <!-- IATF: múltiples toros con cantidad -->
@@ -3213,8 +3216,17 @@ function buildServicios() {  const _criaTabs = [
   // con Cantidad y Toro como columnas propias (así estaba en los datos desde
   // siempre, el problema era solo de visualización).
   const itemsConCampana = items.map(it => {
-    const c = campanaDeFecha_(it.fecha_inicio);
-    return { ...it, _campanaNombre: c ? c.nombre : '⚠ Sin campaña' };
+    let nombreCampana;
+    if (it.campana_id) {
+      const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(it.campana_id));
+      nombreCampana = c ? c.nombre : '⚠ Campaña inválida';
+    } else {
+      // Registro viejo, cargado antes de que existiera el selector de Campaña
+      // — se propone la que corresponde por fecha, a modo informativo.
+      const c = campanaDeFecha_(it.fecha_inicio);
+      nombreCampana = c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
+    }
+    return { ...it, _campanaNombre: nombreCampana };
   });
   h += buildEntityTable(itemsConCampana, [
     { key: 'fecha_inicio', label: 'Inicio', render: v => fd(v) },
@@ -3223,7 +3235,7 @@ function buildServicios() {  const _criaTabs = [
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
     { key: 'cantidad', label: 'Cantidad', render: v => v ? fn(v) : '—' },
     { key: 'identificacion_toro', label: 'Toro', render: v => v || '—' },
-    { key: '_campanaNombre', label: 'Campaña', render: v => v === '⚠ Sin campaña' ? `<span style="color:var(--clay-text)">${v}</span>` : v },
+    { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : (v.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${v}</span>` : v) },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'servicios', 'servicio_id');
 
@@ -3285,10 +3297,12 @@ function attachServiciosEvents() {
     const fechaIniEl = document.getElementById('sv-fecha-ini');
     const fechaFinEl = document.getElementById('sv-fecha-fin');
     const obsEl = document.getElementById('sv-obs');
+    const campanaEl = document.getElementById('sv-campana');
     const rodeo_id = rodeoEl ? rodeoEl.value : '';
     const fecha_inicio = fechaIniEl ? fechaIniEl.value : '';
     const fecha_fin = fechaFinEl ? fechaFinEl.value : '';
     const observacion = obsEl ? obsEl.value.trim() : '';
+    const campana_id = campanaEl ? campanaEl.value : '';
     if (!fecha_inicio || !rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
 
     if (tipo === 'IATF') {
@@ -3306,7 +3320,7 @@ function attachServiciosEvents() {
       try {
         for (const fila of filas) {
           await apiCall('create', { body: { entity: 'servicios', data: {
-            tipo, rodeo_id, fecha_inicio, fecha_fin, observacion,
+            tipo, rodeo_id, fecha_inicio, fecha_fin, observacion, campana_id,
             identificacion_toro: fila.identificacion_toro,
             cantidad: fila.cantidad,
           }}});
@@ -3320,7 +3334,7 @@ function attachServiciosEvents() {
     } else {
       const toroEl = document.getElementById('sv-toro');
       const data = {
-        tipo, rodeo_id, fecha_inicio, fecha_fin, observacion,
+        tipo, rodeo_id, fecha_inicio, fecha_fin, observacion, campana_id,
         identificacion_toro: toroEl ? toroEl.value.trim() : '',
       };
       save.disabled = true;
@@ -16671,6 +16685,17 @@ function campanaDeFecha_(fecha) {
     return true;
   }) || null;
 }
+// Opciones del selector de Campaña para el formulario de Servicios — propone
+// la campaña que corresponde a la fecha (según el catálogo de Campañas),
+// pero queda seleccionable/editable por si el usuario necesita asignarla a
+// otra (ej: un caso límite, o mientras se termina de cargar la campaña
+// siguiente en el catálogo).
+function svCampanaOptionsHtml_(fecha) {
+  const campanas = (S.cache.campanas || []).slice().sort((a,b) => String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  if (!campanas.length) return '<option value="">— No hay campañas cargadas —</option>';
+  const propuesta = campanaDeFecha_(fecha);
+  return campanas.map(c => `<option value="${c.campana_id}" ${propuesta && String(propuesta.campana_id)===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
+}
 
 // Diagnóstico de cobertura: cuántos registros de Pariciones/Mortandad/Abortos
 // tienen una fecha que no cae en NINGUNA campaña definida en el catálogo.
@@ -17579,6 +17604,7 @@ function fieldInputType_(key, value) {
   if (key === 'rodeo_id' || key === 'rodeo_origen_id' || key === 'rodeo_destino_id') return 'rodeo';
   if (key === 'campo_id' || key === 'campo_origen_id' || key === 'campo_destino_id') return 'campo';
   if (key === 'producto_id') return 'producto';
+  if (key === 'campana_id') return 'campana';
   if (key === 'activo' || key === 'por_campo') return 'boolean';
   if (key === 'tipo' || key === 'tipo_tacto' || key === 'tipo_venta' || key === 'estado') return 'text';
   if (typeof value === 'number' || (!isNaN(value) && value !== '' && value !== null)) return 'number';
@@ -17631,7 +17657,7 @@ function openEditModal(entity, idCol, id) {
     cantidad: 'Cantidad', observaciones: 'Observación', precio_cabeza: '💲 Precio por cabeza ($)',
     precio_kg: '💲 Precio por kg ($)', peso_prom_kg: '⚖️ Peso prom. de ingreso (kg)',
     cant_animales: 'Cantidad animales', comprador: 'Comprador', peso_campo_kg: 'Kg campo',
-    precio_pactado: '$/kg pactado', campana: 'Campaña', estado: 'Estado',
+    precio_pactado: '$/kg pactado', campana: 'Campaña', campana_id: 'Campaña', estado: 'Estado',
     materia_seca_pct: 'Materia seca (%) — opcional, para conversión alimenticia', por_campo: 'Por campo', activo: 'Activo',
     superficie_ha: 'Hectáreas — opcional, para Margen Bruto/ha', nombre: 'Nombre',
     precio_unitario: '💲 Precio unitario ($)', proveedor: 'Proveedor', producto_id: 'Producto',
@@ -17657,6 +17683,10 @@ function openEditModal(entity, idCol, id) {
     } else if (type === 'producto') {
       fieldsHtml += `<div class="fg"><label>${labelText}</label>
         <select id="${fid}">${productosL.map(p => `<option value="${p.producto_id}" ${String(p.producto_id)===String(item[k])?'selected':''}>${p.nombre}</option>`).join('')}</select></div>`;
+    } else if (type === 'campana') {
+      const campanasL = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+      fieldsHtml += `<div class="fg"><label>${labelText}</label>
+        <select id="${fid}"><option value="">— Sin campaña —</option>${campanasL.map(c => `<option value="${c.campana_id}" ${String(c.campana_id)===String(item[k])?'selected':''}>${c.nombre}${!c.fecha_fin?' (en curso)':''}</option>`).join('')}</select></div>`;
     } else if (type === 'boolean') {
       const esTrue = esPorCampo_(item[k]);
       fieldsHtml += `<div class="fg"><label>${labelText}</label>
