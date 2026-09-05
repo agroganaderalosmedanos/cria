@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_129';
+const APP_VERSION = 'index_consolidado_4_6_155_130';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3697,17 +3697,17 @@ function buildPariciones() {  const _criaTabs = [
     ${rodeosConServicio().length === 0 ? '<p class="helper-text" style="color:var(--clay-text);margin-bottom:14px">⚠ Ningún rodeo tiene un Servicio registrado todavía. Cargá el servicio primero en la sección Servicios.</p>' : ''}
     <div class="fgrid">
       <div class="fg"><label>Campo</label>
-        <select id="pa-campo" onchange="document.getElementById('pa-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value)); window.paActualizarAvisoPendientes_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="pa-campo" onchange="document.getElementById('pa-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="pa-fecha" value="${today()}"></div>
       <div class="fg"><label>Rodeo</label>
-        <select id="pa-rodeo" onchange="window.paActualizarAvisoPendientes_()">${rodeoOptionsHtml(rodeosAptos)}</select>
+        <select id="pa-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg"><label>Nacidos vivos</label><input type="number" id="pa-vivos" placeholder="Ej: 12" min="0"></div>
       <div class="fg"><label>Nacidos muertos</label><input type="number" id="pa-muertos" placeholder="Ej: 0" min="0" value="0"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="pa-obs" placeholder="Opcional"></div>
     </div>
-    <div id="pa-aviso-pendientes" style="margin-top:10px"></div>
+    <p class="helper-text" style="margin-top:6px">¿Cuántas faltan parir en este rodeo? Mirá el detalle en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:12px;padding:0 4px">🐮 Estado de Vientres</button>.</p>
     <button class="btn btn-primary" id="pa-save" style="margin-top:6px">Registrar parición</button>
   </div>`;
   h += `<div class="panel">
@@ -3718,12 +3718,7 @@ function buildPariciones() {  const _criaTabs = [
   </div>`;
   h += `<div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por campo</label>
-      <select id="pa-hist-campo" onchange="
-        const rid=document.getElementById('pa-hist-rodeo');
-        const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
-        rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
-        rid.value='';
-        paFiltrarHistorial_()">
+      <select id="pa-hist-campo" onchange="paCampoHistorialCambio_(this.value)">
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
       </select>
@@ -3731,7 +3726,7 @@ function buildPariciones() {  const _criaTabs = [
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="pa-hist-rodeo" onchange="paFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${((S.catalogs&&S.catalogs.rodeos)||[]).map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosConServicio().map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3746,6 +3741,11 @@ function buildPariciones() {  const _criaTabs = [
   h += `</div>`;
   return h;
 }
+window.paCampoHistorialCambio_ = function(campoId) {
+  const rid = document.getElementById('pa-hist-rodeo');
+  if (rid) rid.innerHTML = '<option value="">Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConServicioPorCampo(campoId));
+  paFiltrarHistorial_();
+};
 window.paFiltrarHistorial_ = function() {
   const campoId = document.getElementById('pa-hist-campo')?.value || '';
   const rodeoId = document.getElementById('pa-hist-rodeo')?.value || '';
@@ -4124,48 +4124,7 @@ window.paCrearMovimientoFaltante_ = async function(paricionId, rodeoTernerosId, 
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
-window.paActualizarAvisoPendientes_ = function() {
-  const aviso = document.getElementById('pa-aviso-pendientes');
-  if (!aviso) return;
-  const rodeoId = document.getElementById('pa-rodeo')?.value;
-  if (!rodeoId) { aviso.innerHTML = ''; return; }
-  const { prenadas, importadas, exportadas, prenadasAjustadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal } = vacasPendientesDeParir_(rodeoId);
-  if (sinTactoFinal) {
-    aviso.innerHTML = `<div style="background:rgba(200,150,40,0.1);border:1px solid var(--clay);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--clay-text);font-weight:600">
-      ⚠ Este rodeo no tiene un "Tacto final" cargado todavía — no vamos a poder calcular cuántas faltan parir (el Tacto IATF solo no alcanza, hace falta el total confirmado en el tacto final).
-    </div>`;
-  } else {
-    // Desglose línea por línea (en vez de un solo número resumido) para poder
-    // auditar visualmente de dónde sale "vacas que faltan parir" sin tener que
-    // adivinar qué término está mal — mismo formato que usa Crist para su
-    // cuenta manual de control.
-    const filas = [
-      { label: 'Preñadas (tacto final)', val: prenadas, signo: '' },
-    ];
-    if (importadas > 0) filas.push({ label: 'Preñadas importadas (traslado de otro rodeo)', val: importadas, signo: '+' });
-    if (importadas > 0 || exportadas > 0) filas.push({ label: 'TOTAL PREÑADAS', val: prenadas + importadas, signo: '=', total: true });
-    if (exportadas > 0) filas.push({ label: 'Vacas trasladadas o vendidas (sin contar abortos)', val: exportadas, signo: '−' });
-    if (muertas > 0) filas.push({ label: 'Vacas muertas', val: muertas, signo: '−' });
-    if (abortos > 0) filas.push({ label: 'Vacas abortadas', val: abortos, signo: '−' });
-    if (nacidosVivos > 0) filas.push({ label: 'Terneros al pie (nacidos vivos)', val: nacidosVivos, signo: '−' });
-    if (nacidosMuertos > 0) filas.push({ label: 'Terneros muertos (nacidos muertos)', val: nacidosMuertos, signo: '−' });
-    const filasHtml = filas.map(f => `
-      <div style="display:flex;justify-content:space-between;padding:3px 0;${f.total?'border-top:1px solid var(--border);margin-top:2px;padding-top:6px;font-weight:700':''}">
-        <span>${f.label}</span><span>${f.signo} ${fn(f.val)}</span>
-      </div>`).join('');
-    aviso.innerHTML = `<div style="background:var(--bg2);border-radius:8px;padding:10px 14px;font-size:12.5px;color:var(--text2)">
-      🐮 <strong>Detalle del rodeo</strong>
-      ${filasHtml}
-      <div style="display:flex;justify-content:space-between;padding:6px 0 0;border-top:1px solid var(--border);margin-top:4px;font-weight:700;color:var(--gold-text)">
-        <span>VACAS QUE FALTAN PARIR</span><span>${fn(pendientes)}</span>
-      </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">No identifica cuál vaca parió/abortó/murió/se trasladó — asume que cualquier baja pudo haber sido una de las preñadas.</div>
-    </div>`;
-  }
-};
-
 function attachParicionesEvents() {
-  paActualizarAvisoPendientes_();
   const save = document.getElementById('pa-save');
   if (save) save.onclick = async () => {
     const data = {
