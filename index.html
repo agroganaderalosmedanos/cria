@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_126';
+const APP_VERSION = 'index_consolidado_4_6_155_127';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3396,17 +3396,48 @@ function buildTactos() {  const _criaTabs = [
     <button class="btn btn-primary" id="tc-save" style="margin-top:6px">Registrar tacto</button>
   </div>`;
 
-  h += buildEntityTable(items, [
+  // Historial con filtros de campo y rodeo — usa rodeosConServicioPorCampo,
+  // igual que el formulario de arriba, para no listar Toros/Novillos/etc. en
+  // el filtro (a diferencia del bug ya detectado en Abortos/Pariciones).
+  h += `<div class="fgrid" style="margin-bottom:10px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="tc-hist-campo" onchange="
+        const rid=document.getElementById('tc-hist-rodeo');
+        rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rodeosConServicioPorCampo(this.value));
+        tcFiltrarHistorial_()">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="tc-hist-rodeo" onchange="tcFiltrarHistorial_()">
+        <option value="">Todos los rodeos</option>
+        ${rodeosConServ.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="tc-hist-tabla">` + buildTactosTabla_(items) + `</div>`;
+
+  return h;
+}
+// Columnas + armado de la tabla de historial de Tactos — separado en función
+// propia para poder reusarlo tanto en el render inicial como en el refiltrado
+// por campo/rodeo (igual patrón que Abortos).
+function buildTactosTabla_(items) {
+  const itemsConCampana = items.map(it => {
+    const camp = campanaDeServicioRodeo_(it.rodeo_id, it.fecha);
+    return { ...it, _campanaNombre: camp ? camp.nombre : '⚠ Sin Servicio con campaña' };
+  }).slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  return buildEntityTable(itemsConCampana, [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
     { key: 'tipo_tacto', label: 'Tipo', render: v => `<span class="pill ${v === 'Tacto IATF' ? 'pill-gold' : 'pill-green'}">${v}</span>` },
     { key: 'total_tacteadas', label: 'Tacteadas', render: v => fn(v) },
     { key: 'prenadas', label: 'Preñadas', render: v => fn(v) },
     { key: 'vacias', label: 'Vacías', render: v => fn(v) },
+    { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : v },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'tactos', 'tacto_id');
-
-  return h;
 }
 window.updateTactoCalc = function() {
   const total = Number(document.getElementById('tc-total') && document.getElementById('tc-total').value) || 0;
@@ -3421,6 +3452,20 @@ window.updateTactoCalc = function() {
   } else { calcEl.innerHTML = ''; }
 };
 function attachTactosEvents() {
+  window.tcFiltrarHistorial_ = function() {
+    const campoId = document.getElementById('tc-hist-campo')?.value || '';
+    const rodeoId = document.getElementById('tc-hist-rodeo')?.value || '';
+    const items = (S.cache.tactos || []).filter(t => {
+      if (rodeoId && String(t.rodeo_id) !== rodeoId) return false;
+      if (campoId && !rodeoId) {
+        const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(t.rodeo_id));
+        if (!r || String(r.campo_id) !== campoId) return false;
+      }
+      return true;
+    });
+    const el = document.getElementById('tc-hist-tabla');
+    if (el) { el.innerHTML = buildTactosTabla_(items); attachTableDeleteEvents('tactos', 'tacto_id'); }
+  };
   document.querySelectorAll('#tc-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#tc-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
     p.classList.add('selected');
@@ -16675,6 +16720,20 @@ function campanaActivaGet_() {
 // cualquier registro (viejo o nuevo) se puede clasificar por su propia
 // fecha, sin tocarlo. Una campaña sin fecha_fin se toma como "en curso"
 // (cubre desde su inicio hasta hoy).
+// Campaña que corresponde a un Tacto (o cualquier evento posterior a un
+// Servicio): se toma del Servicio más reciente de ESE rodeo con fecha_inicio
+// anterior o igual a la fecha del evento — no se recalcula por separado, para
+// que Tactos/Pariciones queden siempre en la MISMA campaña que su Servicio,
+// aunque las fechas de las campañas del catálogo tengan algún hueco o se
+// hayan ajustado después.
+function campanaDeServicioRodeo_(rodeoId, fechaEvento) {
+  const servicios = (S.cache.servicios || [])
+    .filter(s => String(s.rodeo_id) === String(rodeoId) && s.campana_id && (!fechaEvento || String(s.fecha_inicio) <= String(fechaEvento)))
+    .sort((a, b) => String(b.fecha_inicio).localeCompare(String(a.fecha_inicio)));
+  if (!servicios.length) return null;
+  const camp = (S.cache.campanas || []).find(c => String(c.campana_id) === String(servicios[0].campana_id));
+  return camp || null;
+}
 function campanaDeFecha_(fecha) {
   if (!fecha) return null;
   const campanas = S.cache.campanas || [];
