@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_119';
+const APP_VERSION = 'index_consolidado_4_6_155_120';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -371,6 +371,30 @@ function esMortandadPorParicion_(m) {
   const obs = String(m.observacion || '');
   return /\[pid:\d+\]/.test(obs) && /^Nacido muerto/i.test(obs);
 }
+// Detecta si un Traslado de salida de un rodeo de vacas/vaquillonas NO debe
+// restar de "preñadas pendientes de parir". Tres casos confirmados por el
+// usuario:
+// 1. Ya está vinculado a un Aborto formal ([abid:...]) — se cuenta en
+//    "Abortos", contarlo también acá lo restaría dos veces.
+// 2. Ya está vinculado a una Parición ([pid:...]) — la vaca ya parió (cría
+//    viva o muerta) y se cuenta en "Parieron"; si además se trasladó
+//    después (ej. descarte post-parto), no hay que restarla de nuevo.
+// 3. La observación dice explícitamente "vacía(s)" o "ternero muerto" (sin
+//    tag, cargado a mano antes de que existiera el tag automático) — mismo
+//    criterio que el caso 1/2 pero detectado por texto en vez de tag, igual
+//    que ya se hace con abortos sueltos (abortosCompletos_).
+// Compartida entre vacasPendientesDeParir_ y calcularVacasReproductivas_
+// para que las dos SIEMPRE den el mismo número — antes cada una tenía su
+// propia lógica y se desincronizaban.
+function trasladoNoRestaPrenadas_(m) {
+  if (!m) return false;
+  const obs = String(m.observaciones || '');
+  if (/\[abid:\d+\]/.test(obs)) return true;
+  if (/\[pid:\d+\]/.test(obs)) return true;
+  if (/vac[ií]a/i.test(obs)) return true;
+  if (/ternero\s*muert[oa]/i.test(obs)) return true;
+  return false;
+}
 // Último peso promedio registrado de un rodeo, respetando la fecha de corte
 // (no usa pesadas posteriores al corte, para no adelantar información).
 function ultimaPesadaACorte_(rodeoId, corte) {
@@ -493,9 +517,12 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
   // Preñadas que SALEN/ENTRAN de cada rodeo por Traslado, después del tacto
   // final de origen. Regla confirmada: una vaca preñada que SALE del rodeo
-  // — por el motivo que sea (vacía, abortada, enferma, parió muerta, sanidad,
-  // venta) — YA NO VA A PARIR ACÁ, así que SIEMPRE resta del origen, sin
-  // importar a qué rodeo va. Solo se SUMA como pendiente en el rodeo de
+  // — por el motivo que sea (enferma, sanidad, venta) — YA NO VA A PARIR ACÁ,
+  // así que resta del origen, sin importar a qué rodeo va. EXCEPCIONES (ver
+  // trasladoNoRestaPrenadas_): si la vaca era VACÍA (nunca fue preñada), si
+  // ya está contada en "Abortos" ([abid:...]), o si ya está contada en
+  // "Parieron" ([pid:...] o "ternero muerto" en el texto) — en esos casos no
+  // se resta de nuevo acá. Solo se SUMA como pendiente en el rodeo de
   // DESTINO cuando ese destino TAMBIÉN es un rodeo de vacas/vaquillonas (ahí
   // sigue siendo preñada y va a parir, solo que en otro lado); si el destino
   // es Venta/Descarte/Enfermas, la cabeza entra a ESE rodeo pero no se vuelve
@@ -506,7 +533,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre, fecha}]
   (S.cache.movimientos||[]).filter(m=>(m.fecha||'')<=corte).forEach(m => {
     if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
-    if (/\[abid:\d+\]/.test(String(m.observaciones||''))) return; // ya se cuenta en "Abortos" — no restar dos veces
+    if (trasladoNoRestaPrenadas_(m)) return; // vacía, ya contada en Abortos, o ya contada en Parieron
     const origId = String(m.rodeo_origen_id), destId = String(m.rodeo_destino_id);
     if (!idsVaca.has(origId)) return; // el origen tiene que ser un rodeo de vacas con tacto para saber que ya era preñada confirmada
     const infoOrig = infoTactoBase[origId];
@@ -646,7 +673,7 @@ function vacasPendientesDeParir_(rodeoId) {
   (S.cache.movimientos || []).forEach(m => {
     if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return;
     if (fechaTacto && String(m.fecha) < String(fechaTacto)) return;
-    if (/\[abid:\d+\]/.test(String(m.observaciones||''))) return; // ya se cuenta en "Abortos" — no restar dos veces
+    if (trasladoNoRestaPrenadas_(m)) return; // vacía, ya contada en Abortos, o ya contada en Parieron
     const cant = Number(m.cantidad) || 0;
     if (cant <= 0) return;
     if (String(m.rodeo_origen_id) === String(rodeoId)) exportadas += cant;
