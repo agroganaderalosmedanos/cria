@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_136';
+const APP_VERSION = 'index_consolidado_4_6_155_137';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5184,13 +5184,14 @@ function buildDestetes() {  const _criaTabs = [
   // se resuelve por nombre+campo contra el catálogo para poder cruzar con
   // destetadosPorRodeo (que sí está indexado por rodeo_id real).
   const rodeosCatDestetes = (S.catalogs && S.catalogs.rodeos) || [];
-  const comparativo = filasRepro.map(f => {
+  const comparativo = filasRepro.filter(f => !f.sinStock).map(f => {
     const rodeoObj = rodeosCatDestetes.find(r => r.nombre === f.nombre && campoNombre(r.campo_id) === f.campo);
     const destetados = rodeoObj ? (destetadosPorRodeo[String(rodeoObj.rodeo_id)] || 0) : 0;
-    if (!f.prenadas && !f.yaParieron && !destetados) return null;
-    const pctParidoPerdido = f.prenadas > 0 ? (1 - f.yaParieron/f.prenadas) * 100 : null;
+    const prenadasAjust = f.prenadasAjustadas;
+    if (!prenadasAjust && !f.yaParieron && !destetados) return null;
+    const pctParidoPerdido = prenadasAjust > 0 ? (1 - f.yaParieron/prenadasAjust) * 100 : null;
     const pctDesteteVsParido = f.yaParieron > 0 ? (1 - destetados/f.yaParieron) * 100 : null;
-    return { nombre: f.nombre, campo: f.campo, prenadas: f.prenadas, paridas: f.yaParieron, destetados, pctParidoPerdido, pctDesteteVsParido };
+    return { nombre: f.nombre, campo: f.campo, prenadas: prenadasAjust, paridas: f.yaParieron, destetados, pctParidoPerdido, pctDesteteVsParido };
   }).filter(Boolean);
   h += `<div class="panel">
     <div class="panel-title">📊 Comparativo por rodeo — Preñadas → Paridas → Destetados</div>
