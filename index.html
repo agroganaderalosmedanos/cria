@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_137';
+const APP_VERSION = 'index_consolidado_4_6_155_138';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5173,53 +5173,61 @@ function buildDestetes() {  const _criaTabs = [
     <button class="btn btn-primary" id="de-save" style="margin-top:12px">Registrar destete</button>
   </div>`;
 
-  // ── Comparativo por rodeo: Preñadas → Paridas → Destetados ──
+  // ── Comparativo por rodeo: Preñadas → Terneros Nacidos Vivos → Destetados ──
   // Reusa calcularVacasReproductivas_ (misma cuenta que Estado de Vientres)
-  // para Preñadas/Paridas, y suma Destetes por rodeo madre (el destete se
-  // carga directo sobre el rodeo de vacas, no sobre el de terneros).
+  // para Preñadas/Nacidos vivos, y suma Destetes por rodeo madre (el destete
+  // se carga directo sobre el rodeo de vacas, no sobre el de terneros).
+  // OJO: se usan TERNEROS NACIDOS VIVOS, no "Paridas" — una vaca "parida"
+  // puede haber tenido la cría muerta, así que "Paridas" no dice cuántos
+  // terneros hay realmente; lo que importa acá es la cría, no el evento de
+  // parto de la madre.
   const { filas: filasRepro } = calcularVacasReproductivas_(null, today());
   const destetadosPorRodeo = {};
   items.forEach(d => { destetadosPorRodeo[String(d.rodeo_id)] = (destetadosPorRodeo[String(d.rodeo_id)]||0) + (Number(d.total)||0); });
-  // filasRepro no trae rodeoId directamente en cada fila (viene por nombre) —
-  // se resuelve por nombre+campo contra el catálogo para poder cruzar con
-  // destetadosPorRodeo (que sí está indexado por rodeo_id real).
   const rodeosCatDestetes = (S.catalogs && S.catalogs.rodeos) || [];
-  const comparativo = filasRepro.filter(f => !f.sinStock).map(f => {
+  // Los totales SIEMPRE se calculan sobre TODOS los rodeos (incluidos los que
+  // ya redistribuyeron todo y quedaron sin stock propio) — igual que hace
+  // Estado de Vientres — para que el total de acá coincida siempre con el de
+  // allá. Solo se OCULTAN de la lista visual las filas sin stock (no tiene
+  // sentido mostrar una fila en 0/0/0), pero sin restarlas del total.
+  const filasConDatos = filasRepro.map(f => {
     const rodeoObj = rodeosCatDestetes.find(r => r.nombre === f.nombre && campoNombre(r.campo_id) === f.campo);
     const destetados = rodeoObj ? (destetadosPorRodeo[String(rodeoObj.rodeo_id)] || 0) : 0;
     const prenadasAjust = f.prenadasAjustadas;
-    if (!prenadasAjust && !f.yaParieron && !destetados) return null;
-    const pctParidoPerdido = prenadasAjust > 0 ? (1 - f.yaParieron/prenadasAjust) * 100 : null;
-    const pctDesteteVsParido = f.yaParieron > 0 ? (1 - destetados/f.yaParieron) * 100 : null;
-    return { nombre: f.nombre, campo: f.campo, prenadas: prenadasAjust, paridas: f.yaParieron, destetados, pctParidoPerdido, pctDesteteVsParido };
-  }).filter(Boolean);
+    const pctNacidoPerdido = prenadasAjust > 0 ? (1 - f.nacidosVivos/prenadasAjust) * 100 : null;
+    const pctDesteteVsNacido = f.nacidosVivos > 0 ? (1 - destetados/f.nacidosVivos) * 100 : null;
+    return { nombre: f.nombre, campo: f.campo, stockActual: f.stockActual, prenadas: prenadasAjust, nacidosVivos: f.nacidosVivos, destetados, pctNacidoPerdido, pctDesteteVsNacido };
+  });
+  const comparativo = filasConDatos.filter(f => f.stockActual > 0 && (f.prenadas || f.nacidosVivos || f.destetados));
   h += `<div class="panel">
-    <div class="panel-title">📊 Comparativo por rodeo — Preñadas → Paridas → Destetados</div>
-    <p class="helper-text" style="margin-bottom:10px">"Preñadas" y "Paridas" son las mismas de <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:12px;padding:0 4px">🐮 Estado de Vientres</button>. Si la parición de la campaña todavía no terminó, la diferencia Preñadas→Paridas incluye vacas que TODAVÍA van a parir, no solo pérdidas reales — no lo tomes como "% de pérdida" hasta el final de la parición.</p>`;
+    <div class="panel-title">📊 Comparativo por rodeo — Preñadas → Terneros Nacidos Vivos → Destetados</div>
+    <p class="helper-text" style="margin-bottom:10px">"Preñadas" es la misma de <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:12px;padding:0 4px">🐮 Estado de Vientres</button>. Se compara contra TERNEROS NACIDOS VIVOS (no "vacas paridas" — una parida puede haber tenido la cría muerta o haber abortado, eso no suma acá). Si la parición de la campaña todavía no terminó, la diferencia Preñadas→Nacidos incluye vacas que TODAVÍA van a parir, no solo pérdidas reales — no lo tomes como "% de pérdida" hasta el final de la parición.</p>`;
   if (!comparativo.length) {
-    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin datos de preñadas/paridas/destetes todavía.</div></div>`;
+    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin datos de preñadas/nacimientos/destetes todavía.</div></div>`;
   } else {
     h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Rodeo</th><th>Campo</th><th class="tc">Preñadas</th><th class="tc">Paridas</th><th class="tc">% sin parir aún</th><th class="tc">Destetados</th><th class="tc">% de las paridas sin destetar</th>
+      <th>Rodeo</th><th>Campo</th><th class="tc">Preñadas</th><th class="tc">Terneros nacidos vivos</th><th class="tc">% sin nacer aún</th><th class="tc">Destetados</th><th class="tc">% de los nacidos sin destetar</th>
     </tr></thead><tbody>`;
     comparativo.forEach(f => {
       h += `<tr><td><strong>${f.nombre}</strong></td><td>${f.campo}</td>
         <td class="tc">${fn(f.prenadas)}</td>
-        <td class="tc" style="color:var(--green-text)">${fn(f.paridas)}</td>
-        <td class="tc">${f.pctParidoPerdido!==null?fn(f.pctParidoPerdido,1)+'%':'—'}</td>
+        <td class="tc" style="color:var(--green-text)">${fn(f.nacidosVivos)}</td>
+        <td class="tc">${f.pctNacidoPerdido!==null?fn(f.pctNacidoPerdido,1)+'%':'—'}</td>
         <td class="tc" style="color:var(--gold-text)">${fn(f.destetados)}</td>
-        <td class="tc">${f.pctDesteteVsParido!==null?fn(f.pctDesteteVsParido,1)+'%':'—'}</td></tr>`;
+        <td class="tc">${f.pctDesteteVsNacido!==null?fn(f.pctDesteteVsNacido,1)+'%':'—'}</td></tr>`;
     });
-    const totPrenadas = comparativo.reduce((s,f)=>s+f.prenadas,0);
-    const totParidas = comparativo.reduce((s,f)=>s+f.paridas,0);
-    const totDestetados = comparativo.reduce((s,f)=>s+f.destetados,0);
+    // Los totales de la fila TOTAL salen de TODOS los rodeos (filasConDatos,
+    // sin filtrar por stock), para coincidir siempre con Estado de Vientres.
+    const totPrenadas = filasConDatos.reduce((s,f)=>s+f.prenadas,0);
+    const totNacidos = filasConDatos.reduce((s,f)=>s+f.nacidosVivos,0);
+    const totDestetados = filasConDatos.reduce((s,f)=>s+f.destetados,0);
     h += `<tr style="background:var(--bg2);font-weight:800">
       <td colspan="2">TOTAL</td>
       <td class="tc">${fn(totPrenadas)}</td>
-      <td class="tc" style="color:var(--green-text)">${fn(totParidas)}</td>
-      <td class="tc">${totPrenadas>0?fn((1-totParidas/totPrenadas)*100,1)+'%':'—'}</td>
+      <td class="tc" style="color:var(--green-text)">${fn(totNacidos)}</td>
+      <td class="tc">${totPrenadas>0?fn((1-totNacidos/totPrenadas)*100,1)+'%':'—'}</td>
       <td class="tc" style="color:var(--gold-text)">${fn(totDestetados)}</td>
-      <td class="tc">${totParidas>0?fn((1-totDestetados/totParidas)*100,1)+'%':'—'}</td></tr>`;
+      <td class="tc">${totNacidos>0?fn((1-totDestetados/totNacidos)*100,1)+'%':'—'}</td></tr>`;
     h += '</tbody></table></div>';
   }
   h += '</div>';
