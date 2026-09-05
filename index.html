@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_134';
+const APP_VERSION = 'index_consolidado_4_6_155_135';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4854,6 +4854,13 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     if (!rOrig) return;
     const catOrig = (rOrig.categoria||'').toLowerCase();
     if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
+    // Si el DESTINO también es un rodeo de vacas/vaquillonas, es una
+    // redistribución interna (sigue en el sistema reproductivo, solo cambió
+    // de rodeo) — no es una pérdida, no cuenta acá. Solo cuenta si sale del
+    // pool de cría de verdad (venta, descarte, sanidad terminal).
+    const rDest = rodeosAll.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
+    const catDest = (rDest?.categoria||'').toLowerCase();
+    if (catDest==='vaca' || catDest==='vaquillona') return;
     if (trasladoNoRestaPrenadas_(m, idxAbortosCaravanaMA)) return;
     const cant = Number(m.cantidad)||0;
     if (cant<=0) return;
