@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_123';
+const APP_VERSION = 'index_consolidado_4_6_155_124';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1087,6 +1087,11 @@ async function goto(page) {
   // Tactos, Abortos y Pariciones necesitan la caché de Servicios para filtrar rodeos con servicio registrado
   if ((page === 'tactos' || page === 'abortos' || page === 'pariciones') && !S.cache.servicios) {
     try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
+  }
+  // Servicios necesita el catálogo de Campañas para mostrar a qué campaña
+  // corresponde cada registro (columna "Campaña").
+  if (page === 'servicios' && !S.cache.campanas) {
+    try { await loadEntity('campanas'); } catch (err) { /* silencioso */ }
   }
   // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
   // Pariciones también la necesita ahora, para el aviso de "cuántas vacas faltan parir".
@@ -3201,28 +3206,24 @@ function buildServicios() {  const _criaTabs = [
     <button class="btn btn-primary" id="sv-save" style="margin-top:10px">Registrar servicio</button>
   </div>`;
 
-  // Historial — agrupar filas IATF del mismo rodeo/fecha para mostrarlas juntas
-  const grupos = [];
-  const vistos = new Set();
-  items.forEach(item => {
-    if (item.tipo === 'IATF') {
-      const key = item.rodeo_id + '|' + item.fecha_inicio;
-      if (!vistos.has(key)) {
-        vistos.add(key);
-        const grupo = items.filter(i => i.tipo === 'IATF' && i.rodeo_id === item.rodeo_id && i.fecha_inicio === item.fecha_inicio);
-        grupos.push({ ...item, _toros: grupo.map(g => `${g.identificacion_toro || '—'}${g.cantidad ? ' ('+g.cantidad+' vacas)' : ''}`).join(' / ') });
-      }
-    } else {
-      grupos.push({ ...item, _toros: item.identificacion_toro || '—' });
-    }
+  // Antes se agrupaban las filas IATF del mismo rodeo/fecha en un solo
+  // renglón, concatenando "Toro (cantidad) / Toro (cantidad)" en un string —
+  // esto hacía indistinguible si eran dos toros de UNA sola carga o dos
+  // registros separados. Ahora cada fila se muestra tal cual está guardada,
+  // con Cantidad y Toro como columnas propias (así estaba en los datos desde
+  // siempre, el problema era solo de visualización).
+  const itemsConCampana = items.map(it => {
+    const c = campanaDeFecha_(it.fecha_inicio);
+    return { ...it, _campanaNombre: c ? c.nombre : '⚠ Sin campaña' };
   });
-
-  h += buildEntityTable(grupos, [
+  h += buildEntityTable(itemsConCampana, [
     { key: 'fecha_inicio', label: 'Inicio', render: v => fd(v) },
     { key: 'fecha_fin', label: 'Fin', render: v => v ? fd(v) : '—' },
     { key: 'tipo', label: 'Tipo', render: v => `<span class="pill ${v === 'IATF' ? 'pill-gold' : 'pill-green'}">${v}</span>` },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-    { key: '_toros', label: 'Toro / Cantidad', render: v => v || '—' },
+    { key: 'cantidad', label: 'Cantidad', render: v => v ? fn(v) : '—' },
+    { key: 'identificacion_toro', label: 'Toro', render: v => v || '—' },
+    { key: '_campanaNombre', label: 'Campaña', render: v => v === '⚠ Sin campaña' ? `<span style="color:var(--clay-text)">${v}</span>` : v },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'servicios', 'servicio_id');
 
