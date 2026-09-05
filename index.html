@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_140';
+const APP_VERSION = 'index_consolidado_4_6_155_141';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -874,11 +874,11 @@ function buildConciliacionCabezas_(titulo, t, efReal) {
 // mostrar el precio/total en los paneles de EI. Antes solo se miraba precio_cabeza,
 // lo que hacía aparecer "sin precio" en rodeos que en realidad estaban cargados
 // con precio_kg + peso_prom_kg (ej: terneros valorizados por kg a mano).
-function valorMovimientoEntrada_(m) {
+function valorMovimientoEntrada_(m, pesoOverride) {
   const cant = Number(m.cantidad) || 0;
   const precioCabeza = Number(m.precio_cabeza) || 0;
   const precioKg = Number(m.precio_kg) || 0;
-  const peso = Number(m.peso_prom_kg) || 0;
+  const peso = pesoOverride !== undefined ? (Number(pesoOverride) || 0) : (Number(m.peso_prom_kg) || 0);
   if (precioCabeza > 0) {
     return { total: cant * precioCabeza, precioLabel: '$ ' + fn(precioCabeza), metodo: 'por cabeza' };
   }
@@ -2330,9 +2330,14 @@ function buildDashboard() {
   const totalCesiones = cesiones.reduce((s,m) => {
     const cant     = Number(m.cantidad)||0;
     const peso     = Number(m.peso_prom_kg)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
     let importeARS;
-    if (precioKg && peso) {
+    if (precioCabeza > 0) {
+      // Precio por cabeza: NUNCA se multiplica por peso — es la misma
+      // regla que ya usamos en la pantalla de Cesiones.
+      importeARS = cant * precioCabeza;
+    } else if (precioKg && peso) {
       importeARS = cant * peso * precioKg;
     } else if (precioKg && !peso) {
       // Tiene precio pero no peso — buscar peso de última pesada del rodeo
@@ -2508,7 +2513,9 @@ function buildDashboard() {
   const totalVentasARS = ventasCria.reduce((s,v) => s + (Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0), 0);
   const totalCesionesARS = cesiones.reduce((s,m) => {
     const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    if (precioCabeza > 0) return s + cant*precioCabeza;
+    const precioKg = Number(m.precio_kg)||0;
     if (precioKg && peso) return s + cant*peso*precioKg;
     if (precioKg && !peso) {
       const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -2557,9 +2564,11 @@ function buildDashboard() {
   }, 0);
   const totalCesionesUSD = cesiones.reduce((s,m) => {
     const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     let importeARS;
-    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    if (precioCabeza > 0) importeARS = cant*precioCabeza;
+    else if (precioKg && peso) importeARS = cant*peso*precioKg;
     else if (precioKg && !peso) {
       const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
@@ -2844,15 +2853,18 @@ function buildDashboard() {
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
         <th class="tc">Cab.</th><th class="tc">Kg prom.</th>
-        <th class="tr">$/kg</th><th class="tr">Total</th>
+        <th class="tr">Precio</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totCes = 0;
     cesiones.forEach(m => {
       const cant = Number(m.cantidad)||0;
       const peso = Number(m.peso_prom_kg)||0;
-      const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-      let total = 0, pesoUsado = peso;
-      if (precioKg && peso) {
+      const precioCabeza = Number(m.precio_cabeza)||0;
+      const precioKg = Number(m.precio_kg)||0;
+      let total = 0, pesoUsado = peso, esPorCabeza = precioCabeza > 0;
+      if (precioCabeza > 0) {
+        total = cant * precioCabeza;
+      } else if (precioKg && peso) {
         total = cant * peso * precioKg;
       } else if (precioKg && !peso) {
         // Precio pero sin peso — busca peso de última pesada antes de la fecha
@@ -2868,14 +2880,15 @@ function buildDashboard() {
       totCes += convertirAMoneda_(total, m.fecha, _criaMoneda);
       const or = rodeosPorId[String(m.rodeo_origen_id)];
       const de = rodeosPorId[String(m.rodeo_destino_id)];
-      const sinPrecio = !precioKg;
+      const precioMostrar = precioCabeza || precioKg;
+      const sinPrecio = !precioMostrar;
       h += `<tr${sinPrecio?' style="background:rgba(200,150,40,0.06)"':''}>
         <td>${fd(m.fecha)}</td>
         <td><strong>${or?.nombre||'—'}</strong></td>
         <td>${de?.nombre||'—'}</td>
         <td class="tc">${fn(cant)}</td>
         <td class="tc">${pesoUsado?fn(pesoUsado)+' kg'+(peso?'':' <span style="font-size:10px;color:var(--text3)">(pesada)</span>'):'—'}</td>
-        <td class="tr">${precioKg?'$ '+fn(precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
+        <td class="tr">${precioMostrar?'$ '+fn(precioMostrar)+(esPorCabeza?'/cab.':'/kg'):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
         <td class="tr"><strong>${fnMoneda_(convertirAMoneda_(total, m.fecha, _criaMoneda),_criaMoneda)}</strong></td>
       </tr>`;
     });
@@ -6492,9 +6505,11 @@ function buildRecriaDashboard() {
     return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   }).forEach(m=>{
     const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
     let total=0, pesoUsado=peso;
-    if (precioKg&&peso) { total=cant*peso*precioKg; }
+    if (precioCabeza>0) { total=cant*precioCabeza; }
+    else if (precioKg&&peso) { total=cant*peso*precioKg; }
     else if (precioKg&&!peso) {
       const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
@@ -6574,7 +6589,9 @@ function buildRecriaDashboard() {
     return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   }).reduce((s,m)=>{
     const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    if (precioCabeza>0) return s + cant*precioCabeza;
     if (precioKg&&peso) return s + cant*peso*precioKg;
     if (precioKg&&!peso) {
       const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -6636,9 +6653,11 @@ function buildRecriaDashboard() {
     return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
   }).reduce((s,m)=>{
     const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
     let importeARS;
-    if (precioKg&&peso) importeARS = cant*peso*precioKg;
+    if (precioCabeza>0) importeARS = cant*precioCabeza;
+    else if (precioKg&&peso) importeARS = cant*peso*precioKg;
     else if (precioKg&&!peso) {
       const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       importeARS = cant*(pp[0]?Number(pp[0].peso_prom_kg)||0:0)*precioKg;
@@ -6852,14 +6871,16 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Cría — detalle</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
-        <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">$/kg</th><th class="tr">Total</th>
+        <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">Precio</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totCesRec=0;
     cesRecCria.forEach(m=>{
       const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-      const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-      let pesoUsado=peso, total=0;
-      if (precioKg&&peso) { total=cant*peso*precioKg; }
+      const precioCabeza=Number(m.precio_cabeza)||0;
+      const precioKg=Number(m.precio_kg)||0;
+      let pesoUsado=peso, total=0, esPorCabeza=precioCabeza>0;
+      if (precioCabeza>0) { total=cant*precioCabeza; }
+      else if (precioKg&&peso) { total=cant*peso*precioKg; }
       else if (precioKg&&!peso) {
         const pp=pesadasAll.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
         pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
@@ -6871,11 +6892,12 @@ function buildRecriaDashboard() {
         total=valorizarRodeo_(or||{},cant,pesoUsado);
       }
       totCesRec+=convertirAMoneda_(total, m.fecha, moneda);
-      h += `<tr${!precioKg?' style="background:rgba(200,150,40,0.06)"':''}>
+      const precioMostrar = precioCabeza || precioKg;
+      h += `<tr${!precioMostrar?' style="background:rgba(200,150,40,0.06)"':''}>
         <td>${fd(m.fecha)}</td><td><strong>${rodeoNombre(m.rodeo_origen_id)}</strong></td><td>${rodeoNombre(m.rodeo_destino_id)}</td>
         <td class="tc">${fn(cant)}</td>
         <td class="tc">${pesoUsado?fn(pesoUsado)+' kg'+(peso?'':' <span style="font-size:10px;color:var(--text3)">(pesada)</span>'):'—'}</td>
-        <td class="tr">${precioKg?'$ '+fn(precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
+        <td class="tr">${precioMostrar?'$ '+fn(precioMostrar)+(esPorCabeza?'/cab.':'/kg'):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
         <td class="tr"><strong>${fnMoneda_(convertirAMoneda_(total, m.fecha, moneda),moneda)}</strong></td></tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL cesiones recibidas</td>
@@ -7428,7 +7450,7 @@ function buildCesionesRecria() {
       const p = preciosValGet_(m.fecha);
       const cat = (or?.categoria||'novillo').toLowerCase();
       const mapaKg = {ternero:'ternero',ternera:'ternera',vaquillona:'vaquillona','vaquillona venta':'vaquillona_venta',novillito:'novillito',novillo:'novillo','vaca venta':'vaca_venta'};
-      const precioSugerido = Number(m.precio_kg)||Number(m.precio_cabeza)||p[mapaKg[cat]]||0;
+      const precioSugerido = Number(m.precio_kg)||p[mapaKg[cat]]||0;
       h += `<tr>
         <td>${fd(m.fecha)}</td>
         <td>${or?.nombre||'—'}</td>
@@ -8993,7 +9015,8 @@ function buildEngorde() {
           const pp=pesadasAll.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
           return pp[0]?Number(pp[0].peso_prom_kg)||0:0;
         })(),
-        precioKg: Number(m.precio_kg)||Number(m.precio_cabeza)||0,
+        precioKg: Number(m.precio_kg)||0,
+        precioCabeza: Number(m.precio_cabeza)||0,
       })),
       ...cesionesRecLegacy_.map(e=>({
         fecha: e.fecha,
@@ -9002,6 +9025,7 @@ function buildEngorde() {
         cant: Number(e.cant_animales)||0,
         peso: Number(e.peso_prom_kg)||0,
         precioKg: Number(e.precio_kg_cesion)||0,
+        precioCabeza: Number(e.precio_cabeza_cesion)||0,
       })),
     ].sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
 
@@ -9009,17 +9033,19 @@ function buildEngorde() {
       h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Recría — detalle</div>
         <div class="tw"><table class="dt"><thead><tr>
           <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
-          <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">$/kg</th><th class="tr">Total</th>
+          <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">Precio</th><th class="tr">Total</th>
         </tr></thead><tbody>`;
       let totCesRec=0;
       todasCesRec.forEach(c=>{
-        const total=c.cant*c.peso*c.precioKg;
+        const esPorCabeza = c.precioCabeza > 0;
+        const total = esPorCabeza ? c.cant*c.precioCabeza : c.cant*c.peso*c.precioKg;
+        const precioMostrar = esPorCabeza ? c.precioCabeza : c.precioKg;
         totCesRec+=total;
-        h += `<tr${!c.precioKg?' style="background:rgba(200,150,40,0.06)"':''}>
+        h += `<tr${!precioMostrar?' style="background:rgba(200,150,40,0.06)"':''}>
           <td>${fd(c.fecha)}</td><td><strong>${c.origen}</strong></td><td>${c.destino}</td>
           <td class="tc">${fn(c.cant)}</td>
           <td class="tc">${c.peso?fn(c.peso)+' kg':'—'}</td>
-          <td class="tr">${c.precioKg?'$ '+fn(c.precioKg):'<span style="color:var(--gold-text);font-size:11px">⚠ sin precio</span>'}</td>
+          <td class="tr">${precioMostrar?'$ '+fn(precioMostrar)+(esPorCabeza?'/cab.':'/kg'):'<span style="color:var(--gold-text);font-size:11px">⚠ sin precio</span>'}</td>
           <td class="tr"><strong>${total?fm(total):'—'}</strong></td>
         </tr>`;
       });
@@ -9248,10 +9274,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalCesionInterna = cesionesInternas.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     const peso = Number(m.peso_prom_kg)||0;
     let importeARS;
-    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    if (precioCabeza > 0) importeARS = cant*precioCabeza;
+    else if (precioKg && peso) importeARS = cant*peso*precioKg;
     else {
       const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
@@ -9262,8 +9290,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalCesionInternaARS = cesionesInternas.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     const peso = Number(m.peso_prom_kg)||0;
+    if (precioCabeza > 0) return s + cant*precioCabeza;
     if (precioKg && peso) return s + cant*peso*precioKg;
     const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
@@ -9278,15 +9308,19 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // por el formulario de Cesiones Recría→Terminación, y los traslados directos legacy)
   // — cotización DEL DÍA DE CADA CESIÓN, no la del corte.
   const totalCesiones = cesionesRec.reduce((s,e)=>{
-    const importeARS = (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+    const cantE = Number(e.cant_animales)||0;
+    const precioCabezaE = Number(e.precio_cabeza_cesion)||0;
+    const importeARS = precioCabezaE > 0 ? cantE*precioCabezaE : cantE*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
     return s + convertirAMoneda_(importeARS, e.fecha, moneda);
   },0) + cesionesRecTrasla.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     const peso = Number(m.peso_prom_kg)||0;
     let importeARS;
-    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    if (precioCabeza > 0) importeARS = cant*precioCabeza;
+    else if (precioKg && peso) importeARS = cant*peso*precioKg;
     else {
       const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
@@ -9296,12 +9330,16 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   },0);
 
   const totalCesionesARS = cesionesRec.reduce((s,e)=>{
-    return s + (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+    const cantE = Number(e.cant_animales)||0;
+    const precioCabezaE = Number(e.precio_cabeza_cesion)||0;
+    return s + (precioCabezaE > 0 ? cantE*precioCabezaE : cantE*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0));
   },0) + cesionesRecTrasla.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     const peso = Number(m.peso_prom_kg)||0;
+    if (precioCabeza > 0) return s + cant*precioCabeza;
     if (precioKg && peso) return s + cant*peso*precioKg;
     const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
@@ -9383,10 +9421,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalCesionInternaUSD = cesionesInternas.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     const peso = Number(m.peso_prom_kg)||0;
     let importeARS;
-    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    if (precioCabeza > 0) importeARS = cant*precioCabeza;
+    else if (precioKg && peso) importeARS = cant*peso*precioKg;
     else {
       const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       importeARS = valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesadasO[0]?Number(pesadasO[0].peso_prom_kg)||0:0);
@@ -9396,14 +9436,19 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalIngresosUSD = totalVentasUSD + stockValEngUSD + totalCesionInternaUSD;
   const totalSaldoIniUSD = saldosIni.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'),0);
   const totalCesionesUSD = cesionesRec.reduce((s,e)=>{
-    return s + convertirAMoneda_((Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0), e.fecha, 'USD');
+    const cantE = Number(e.cant_animales)||0;
+    const precioCabezaE = Number(e.precio_cabeza_cesion)||0;
+    const importeARS = precioCabezaE > 0 ? cantE*precioCabezaE : cantE*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+    return s + convertirAMoneda_(importeARS, e.fecha, 'USD');
   },0) + cesionesRecTrasla.reduce((s,m)=>{
     const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     const cant = Number(m.cantidad)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
     const peso = Number(m.peso_prom_kg)||0;
     let importeARS;
-    if (precioKg && peso) importeARS = cant*peso*precioKg;
+    if (precioCabeza > 0) importeARS = cant*precioCabeza;
+    else if (precioKg && peso) importeARS = cant*peso*precioKg;
     else {
       const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       importeARS = valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesadasO[0]?Number(pesadasO[0].peso_prom_kg)||0:0);
@@ -9943,15 +9988,20 @@ function buildEngordeCostos_(rodeoId, fm) {
     // Cotización DEL DÍA DE CADA CESIÓN, no la de hoy — mismo criterio que
     // egCostoCompra_/totalSaldoIni de arriba.
     const totalCesiones2 = cesionesRecLegacy2.reduce((s,e)=>{
-      const importeARS = (Number(e.cant_animales)||0)*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+      const cantE = Number(e.cant_animales)||0;
+      const precioCabezaE = Number(e.precio_cabeza_cesion)||0;
+      const importeARS = precioCabezaE > 0 ? cantE*precioCabezaE : cantE*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
       return s + convertirAMoneda_(importeARS, e.fecha, monedaTodos);
     },0) + cesiones2.reduce((s,m)=>{
       const rodeoO = rodeosTodosMap[String(m.rodeo_origen_id)];
       const cant = Number(m.cantidad)||0;
-      const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      const precioCabeza = Number(m.precio_cabeza)||0;
+      const precioKg = Number(m.precio_kg)||0;
       const peso = Number(m.peso_prom_kg)||0;
       let costoARS;
-      if (precioKg && peso) {
+      if (precioCabeza > 0) {
+        costoARS = cant*precioCabeza;
+      } else if (precioKg && peso) {
         costoARS = cant*peso*precioKg;
       } else {
         const pesO = (S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -12247,10 +12297,11 @@ function calcMargenCria_(campana, desde, hasta) {
       const pp=pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
       return Number(pp[0]?.peso_prom_kg)||0;
     })();
-    // Priorizar precio_kg, luego precio_cabeza (como $/kg), luego valorización del mes
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-    let total = 0;
-    if (precioKg) { total = cant * peso * precioKg; ingCesiones += total; }
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
+    let total = 0, esPorCabeza = precioCabeza > 0;
+    if (precioCabeza > 0) { total = cant * precioCabeza; ingCesiones += total; }
+    else if (precioKg) { total = cant * peso * precioKg; ingCesiones += total; }
     else {
       const p = preciosValGet_(m.fecha);
       const cat = (rodeosPorId[String(m.rodeo_origen_id)]?.categoria||'ternero').toLowerCase();
@@ -12258,7 +12309,7 @@ function calcMargenCria_(campana, desde, hasta) {
       total = cant * peso * (p[mapaKg[cat]]||0);
       ingCesiones += total;
     }
-    filesCes.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: precioKg || (total/cant/peso||0), total });
+    filesCes.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: esPorCabeza ? precioCabeza : (precioKg || (total/cant/peso||0)), esPorCabeza, total });
   });
 
   // EF — stock valorizado actual
@@ -12367,7 +12418,9 @@ function calcMargenRecria_(campana, desde, hasta) {
   }).forEach(m => {
     const cant = Number(m.cantidad)||0;
     const peso = Number(m.peso_prom_kg)||0;
-    const precioKg = Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
+    if (precioCabeza > 0) { ingCesEng += cant * precioCabeza; return; }
     // Si tiene precio explícito, usarlo; si no, valorizar con precio del mes
     if (precioKg && peso) { ingCesEng += cant * peso * precioKg; return; }
     const p = preciosValGet_(m.fecha);
@@ -12418,9 +12471,11 @@ function calcMargenRecria_(campana, desde, hasta) {
   }).forEach(m=>{
     const cant=Number(m.cantidad)||0;
     const peso=Number(m.peso_prom_kg)||0;
-    const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-    let total=0;
-    if (precioKg && peso) { total=cant*peso*precioKg; egCesionCria+=total; }
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    let total=0, esPorCabeza=precioCabeza>0;
+    if (precioCabeza>0) { total=cant*precioCabeza; egCesionCria+=total; }
+    else if (precioKg && peso) { total=cant*peso*precioKg; egCesionCria+=total; }
     else {
       const or=rodeosPorId[String(m.rodeo_origen_id)];
       const p=preciosValGet_(m.fecha);
@@ -12431,7 +12486,7 @@ function calcMargenRecria_(campana, desde, hasta) {
       total=cant*pesoFinal*(p[mapaKg[cat]]||0);
       egCesionCria+=total;
     }
-    filasCesRec_R.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: total/cant/(peso||1)||0, total });
+    filasCesRec_R.push({ fecha: m.fecha, rodeo: rodeosPorId[String(m.rodeo_origen_id)]?.nombre||'—', destino: rodeosPorId[String(m.rodeo_destino_id)]?.nombre||'—', cant, peso, precioKg: esPorCabeza ? precioCabeza : (total/cant/(peso||1)||0), esPorCabeza, total });
   });
 
   let egCompraExt=0;
@@ -13631,9 +13686,11 @@ async function exportarAuditoriaCriaExcel_() {
     });
     const resCesiones = cesionesCriaAudit.reduce((s,m)=>{
       const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-      const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+      const precioCabeza=Number(m.precio_cabeza)||0;
+      const precioKg=Number(m.precio_kg)||0;
       let importeARS;
-      if (precioKg&&peso) importeARS = cant*peso*precioKg;
+      if (precioCabeza>0) importeARS = cant*precioCabeza;
+      else if (precioKg&&peso) importeARS = cant*peso*precioKg;
       else if (precioKg&&!peso) {
         const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
         importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
@@ -13715,9 +13772,11 @@ async function exportarAuditoriaCriaExcel_() {
       },0);
       const cesionesR = cesionesCriaAudit.filter(m=>String(m.rodeo_origen_id)===String(rid)).reduce((s,m)=>{
         const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-        const precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
+        const precioCabeza=Number(m.precio_cabeza)||0;
+        const precioKg=Number(m.precio_kg)||0;
         let importeARS;
-        if (precioKg&&peso) importeARS = cant*peso*precioKg;
+        if (precioCabeza>0) importeARS = cant*precioCabeza;
+        else if (precioKg&&peso) importeARS = cant*peso*precioKg;
         else if (precioKg&&!peso) {
           const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
           importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
@@ -14132,7 +14191,8 @@ async function exportarAuditoriaRecriaExcel_() {
       const de=rodeosPorIdR[String(m.rodeo_destino_id)];
       return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&rodeosRecriaIds.has(String(m.rodeo_destino_id));
     });
-    const valCesion_ = (cant, peso, precioKg, fechaRef, rodeoOrigenId) => {
+    const valCesion_ = (cant, peso, precioKg, fechaRef, rodeoOrigenId, precioCabeza) => {
+      if (precioCabeza) return cant*precioCabeza;
       if (precioKg&&peso) return cant*peso*precioKg;
       if (precioKg&&!peso) {
         const pr = pesadasR.filter(p=>String(p.rodeo_id)===String(rodeoOrigenId)&&String(p.fecha)<=String(fechaRef)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
@@ -14143,13 +14203,13 @@ async function exportarAuditoriaRecriaExcel_() {
       return valorizarRodeo_(or||{}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
     };
     const resCesRec = cesRecCriaAudit.reduce((s,m)=>{
-      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-      return s + convertirAMoneda_(valCesion_(cant,peso,precioKg,m.fecha,m.rodeo_origen_id), m.fecha, monedaRec);
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_kg)||0, precioCabeza=Number(m.precio_cabeza)||0;
+      return s + convertirAMoneda_(valCesion_(cant,peso,precioKg,m.fecha,m.rodeo_origen_id,precioCabeza), m.fecha, monedaRec);
     },0);
     const cesEnvEngAudit = egresosTodos.filter(e=>e.destino==='Engorde');
     const resCesEnv = cesEnvEngAudit.reduce((s,e)=>{
-      const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
-      return s + convertirAMoneda_(cant*peso*precioKg, e.fecha, monedaRec);
+      const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0, precioCabeza=Number(e.precio_cabeza_cesion)||0;
+      return s + convertirAMoneda_(precioCabeza>0 ? cant*precioCabeza : cant*peso*precioKg, e.fecha, monedaRec);
     },0);
     const resVentasRec = ventasTodas.reduce((s,v)=>{
       const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
@@ -14214,8 +14274,8 @@ async function exportarAuditoriaRecriaExcel_() {
       const stockIni = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&String(m.rodeo_destino_id)===String(rid))
         .reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaRec),0);
       const cesRec = cesRecCriaAudit.filter(m=>String(m.rodeo_destino_id)===String(rid)).reduce((s,m)=>{
-        const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_kg)||Number(m.precio_cabeza)||0;
-        return s + convertirAMoneda_(valCesion_(cant,peso,precioKg,m.fecha,m.rodeo_origen_id), m.fecha, monedaRec);
+        const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioKg=Number(m.precio_kg)||0, precioCabeza=Number(m.precio_cabeza)||0;
+        return s + convertirAMoneda_(valCesion_(cant,peso,precioKg,m.fecha,m.rodeo_origen_id,precioCabeza), m.fecha, monedaRec);
       },0);
       const compraExt = compraExtAudit.filter(m=>String(m.rodeo_destino_id)===String(rid))
         .reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, monedaRec),0);
@@ -14224,8 +14284,8 @@ async function exportarAuditoriaRecriaExcel_() {
         return s + convertirAMoneda_(importeARS, c.fecha, monedaRec);
       },0);
       const cesEnv = cesEnvEngAudit.filter(e=>String(e.rodeo_id)===String(rid)).reduce((s,e)=>{
-        const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
-        return s + convertirAMoneda_(cant*peso*precioKg, e.fecha, monedaRec);
+        const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0, precioCabeza=Number(e.precio_cabeza_cesion)||0;
+        return s + convertirAMoneda_(precioCabeza>0 ? cant*precioCabeza : cant*peso*precioKg, e.fecha, monedaRec);
       },0);
       const iv = ventasTodas.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>{
         const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
