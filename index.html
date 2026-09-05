@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_125';
+const APP_VERSION = 'index_consolidado_4_6_155_126';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3403,6 +3403,7 @@ function buildTactos() {  const _criaTabs = [
     { key: 'total_tacteadas', label: 'Tacteadas', render: v => fn(v) },
     { key: 'prenadas', label: 'Preñadas', render: v => fn(v) },
     { key: 'vacias', label: 'Vacías', render: v => fn(v) },
+    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'tactos', 'tacto_id');
 
   return h;
@@ -17654,7 +17655,7 @@ function openEditModal(entity, idCol, id) {
     tipo: 'Tipo', caravana: 'Caravana', fecha: 'Fecha', fecha_salida: 'Fecha salida',
     campo_origen_id: 'Campo origen', campo_destino_id: 'Campo destino',
     rodeo_origen_id: 'Rodeo origen', rodeo_destino_id: 'Rodeo destino',
-    cantidad: 'Cantidad', observaciones: 'Observación', precio_cabeza: '💲 Precio por cabeza ($)',
+    cantidad: 'Cantidad', observaciones: 'Observación', observacion: 'Observación', precio_cabeza: '💲 Precio por cabeza ($)',
     precio_kg: '💲 Precio por kg ($)', peso_prom_kg: '⚖️ Peso prom. de ingreso (kg)',
     cant_animales: 'Cantidad animales', comprador: 'Comprador', peso_campo_kg: 'Kg campo',
     precio_pactado: '$/kg pactado', campana: 'Campaña', campana_id: 'Campaña', estado: 'Estado',
