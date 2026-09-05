@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_130';
+const APP_VERSION = 'index_consolidado_4_6_155_131';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3900,11 +3900,24 @@ window.paBuscarHuerfanos_ = async function() {
       if (m.tipo !== 'Saldo inicial') return;
       if (!/nacimiento/i.test(String(m.observaciones||''))) return;
       if (/\[pid:\d+\]/.test(String(m.observaciones||''))) return;
+      // Rodeo madre: el nombre del rodeo de Terneros es siempre "Terneros (Nombre
+      // Madre)" — de ahí se puede inferir a qué rodeo de vacas hay que cargarle
+      // la Parición faltante, sin pedírselo a mano.
+      const nombreTerneroDestino = rodeoNombre(m.rodeo_destino_id);
+      const matchMadre = /^Terneros \((.+)\)$/.exec(nombreTerneroDestino);
+      const rodeoMadre = matchMadre ? (S.catalogs?.rodeos||[]).find(r => r.nombre === matchMadre[1] && String(r.campo_id) === String(m.campo_destino_id)) : null;
       filas.push({
         tipoLabel:'Movimiento de Nacimiento SIN Parición vinculada (posible Parición faltante)', entity:'movimientos', id:m.movimiento_id,
         fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_destino_id), cantidad:m.cantidad,
-        origen:`"${m.observaciones}" — no tiene [pid:...]. Cargá la Parición que falta y vinculala a mano con este movimiento (ver instructivo).`,
-        soloRevision:true,
+        origen: rodeoMadre
+          ? `"${m.observaciones}" — no tiene [pid:...]. Se puede crear la Parición faltante en "${rodeoMadre.nombre}" (${m.cantidad} nacidos vivos, ${fd(m.fecha)}) y vincularla automáticamente.`
+          : `"${m.observaciones}" — no tiene [pid:...], y no pude identificar el rodeo madre a partir de "${nombreTerneroDestino}". Cargá la Parición a mano y vinculala con el tag [pid:...] en la observación de este movimiento.`,
+        crearParicionFaltante: !!rodeoMadre,
+        movIdParaVincular: m.movimiento_id,
+        rodeoMadreId: rodeoMadre ? rodeoMadre.rodeo_id : null,
+        fechaParicion: m.fecha,
+        cantidadParicion: m.cantidad,
+        soloRevision: !rodeoMadre,
       });
     });
     // Posibles Pariciones duplicadas: dos o más registros con el MISMO rodeo,
@@ -4036,6 +4049,8 @@ window.paRenderHuerfanosTabla_ = function() {
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizadoParicion_('${f.paricionIdSync}')">Corregir</button>`
         : f.candidatoAbortoId
         ? `<button class="btn btn-primary btn-sm" onclick="window.paVincularAborto_('${f.entity}','${f.id}','${f.candidatoAbortoId}')">Vincular</button>`
+        : f.crearParicionFaltante
+        ? `<button class="btn btn-primary btn-sm" onclick="window.paCrearParicionYVincular_('${f.movIdParaVincular}','${f.rodeoMadreId}','${f.fechaParicion}','${f.cantidadParicion}')">Crear Parición y vincular</button>`
           : f.soloRevision
             ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
             : f.entity && f.id
@@ -4101,6 +4116,29 @@ window.paVincularAborto_ = async function(entity, movId, abortoId) {
     invalidateCache('movimientos');
     await loadEntity('movimientos', true);
     toast('Vinculado', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
+};
+window.paCrearParicionYVincular_ = async function(movId, rodeoMadreId, fecha, cantidad) {
+  const mov = (S.cache.movimientos||[]).find(m => String(m.movimiento_id)===String(movId));
+  if (!mov) { toast('No se encontró el movimiento — recargá la página e intentá de nuevo.', 'err'); return; }
+  const rodeoMadreNombre = rodeoNombre(rodeoMadreId);
+  if (!confirm(`¿Crear la Parición faltante en "${rodeoMadreNombre}" (${cantidad} nacidos vivos, ${fd(fecha)}) y vincularla a este movimiento? NO se crea ningún movimiento nuevo — solo se agrega el tag [pid:...] al que ya existe, para no duplicar el stock.`)) return;
+  try {
+    const parResult = await apiCall('create', { body: { entity: 'pariciones', data: {
+      fecha, rodeo_id: rodeoMadreId, nacidos_vivos: Number(cantidad), nacidos_muertos: 0,
+      observacion: 'Carga retroactiva — vinculada a movimiento de Saldo inicial ya existente (auditoría de huérfanos)',
+    }}});
+    const nuevoParicionId = parResult && parResult.id;
+    if (!nuevoParicionId) throw new Error('No se pudo obtener el ID de la Parición creada.');
+    const obsActual = String(mov.observaciones||'');
+    const obsNueva = /\[pid:\d+\]/.test(obsActual) ? obsActual : `[pid:${nuevoParicionId}] ${obsActual}`;
+    await apiCall('update', { body: { entity: 'movimientos', id: movId, data: { observaciones: obsNueva } } });
+    invalidateCache('pariciones');
+    invalidateCache('movimientos');
+    await Promise.all([loadEntity('pariciones', true), loadEntity('movimientos', true)]);
+    S.dashboard = null; S._resultCria = null;
+    toast('Parición creada y vinculada — el stock no cambió, solo ahora tiene su Parición detrás', 'ok');
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
