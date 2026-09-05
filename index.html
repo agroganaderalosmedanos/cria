@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_120';
+const APP_VERSION = 'index_consolidado_4_6_155_121';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -372,7 +372,7 @@ function esMortandadPorParicion_(m) {
   return /\[pid:\d+\]/.test(obs) && /^Nacido muerto/i.test(obs);
 }
 // Detecta si un Traslado de salida de un rodeo de vacas/vaquillonas NO debe
-// restar de "preñadas pendientes de parir". Tres casos confirmados por el
+// restar de "preñadas pendientes de parir". Cuatro casos confirmados por el
 // usuario:
 // 1. Ya está vinculado a un Aborto formal ([abid:...]) — se cuenta en
 //    "Abortos", contarlo también acá lo restaría dos veces.
@@ -383,16 +383,36 @@ function esMortandadPorParicion_(m) {
 //    tag, cargado a mano antes de que existiera el tag automático) — mismo
 //    criterio que el caso 1/2 pero detectado por texto en vez de tag, igual
 //    que ya se hace con abortos sueltos (abortosCompletos_).
+// 4. El Traslado tiene la MISMA caravana que un Aborto formal de ese mismo
+//    rodeo, registrado en una fecha igual o anterior — sin tag y sin texto
+//    ("Vacas Plantel", caravana H564: abortó el 14/06, se trasladó a Venta
+//    el 16/06, observación vacía). Se cruza por caravana+rodeo porque es lo
+//    único que los liga.
 // Compartida entre vacasPendientesDeParir_ y calcularVacasReproductivas_
 // para que las dos SIEMPRE den el mismo número — antes cada una tenía su
 // propia lógica y se desincronizaban.
-function trasladoNoRestaPrenadas_(m) {
+function indiceAbortosPorCaravana_() {
+  const idx = {}; // "rodeo_id|CARAVANA" -> fecha de aborto más reciente
+  (S.cache.abortos || []).forEach(a => {
+    const car = String(a.caravana_vaca || '').trim().toUpperCase();
+    if (!car) return;
+    const key = String(a.rodeo_id) + '|' + car;
+    if (!idx[key] || String(a.fecha) > idx[key]) idx[key] = a.fecha;
+  });
+  return idx;
+}
+function trasladoNoRestaPrenadas_(m, idxAbortosCaravana) {
   if (!m) return false;
   const obs = String(m.observaciones || '');
   if (/\[abid:\d+\]/.test(obs)) return true;
   if (/\[pid:\d+\]/.test(obs)) return true;
   if (/vac[ií]a/i.test(obs)) return true;
   if (/ternero\s*muert[oa]/i.test(obs)) return true;
+  if (idxAbortosCaravana && m.caravana) {
+    const key = String(m.rodeo_origen_id) + '|' + String(m.caravana).trim().toUpperCase();
+    const fechaAborto = idxAbortosCaravana[key];
+    if (fechaAborto && String(m.fecha) >= String(fechaAborto)) return true;
+  }
   return false;
 }
 // Último peso promedio registrado de un rodeo, respetando la fecha de corte
@@ -531,9 +551,10 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   const exportadasPorRodeo = {}; // rodeo_id -> total preñadas exportadas
   const exportadasDetallePorRodeo = {}; // rodeo_id -> [{cantidad, aNombre, fecha, fechaTacto}]
   const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre, fecha}]
+  const idxAbortosCaravana = indiceAbortosPorCaravana_();
   (S.cache.movimientos||[]).filter(m=>(m.fecha||'')<=corte).forEach(m => {
     if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
-    if (trasladoNoRestaPrenadas_(m)) return; // vacía, ya contada en Abortos, o ya contada en Parieron
+    if (trasladoNoRestaPrenadas_(m, idxAbortosCaravana)) return; // vacía, ya contada en Abortos, o ya contada en Parieron
     const origId = String(m.rodeo_origen_id), destId = String(m.rodeo_destino_id);
     if (!idsVaca.has(origId)) return; // el origen tiene que ser un rodeo de vacas con tacto para saber que ya era preñada confirmada
     const infoOrig = infoTactoBase[origId];
@@ -599,10 +620,33 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
     // (que ya daría 0 de todos modos, pero así queda explícito y visible).
     const sinStock = !res.sinTactoFinal && stockActual === 0;
+    // Cruce de verificación de "Parieron": del lado de la MADRE, "Parieron"
+    // sale de sumar nacidos_vivos+nacidos_muertos de Pariciones (res.yaParieron).
+    // Del lado del TERNERO, se puede reconstruir el mismo número sumando lo
+    // que hoy se puede verificar en el rodeo de Terneros — Terneros al pie
+    // (stock actual) + Terneros muertos (post-parto, en SU propio rodeo) +
+    // Vendidos + Cedidos — más los Nacidos muertos (que nunca tuvieron
+    // rodeo de terneros propio, quedan solo en la Parición). Si las dos
+    // cuentas no dan igual, hay algo mal cargado en algún punto de la cadena
+    // (ej: Vaquillonas 2024 tenía una Parición faltante — ver conversación).
+    const nombreTernerosVerif = 'Terneros (' + r.nombre + ')';
+    const rodeoTernerosVerif = (S.catalogs?.rodeos||[]).find(rt => rt.nombre === nombreTernerosVerif && String(rt.campo_id)===String(r.campo_id));
+    let ternerosAlPie = null, ternerosMuertosPostParto = null, ternerosVendidos = null, ternerosCedidos = null, verifTotal = null, verifDiff = null;
+    if (rodeoTernerosVerif) {
+      const ternId = String(rodeoTernerosVerif.rodeo_id);
+      ternerosAlPie = Math.max(0, stockACorte[ternId]||0);
+      ternerosMuertosPostParto = (S.cache.mortandad||[]).filter(m=>String(m.rodeo_id)===ternId && (m.fecha||'')<=corte).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+      ternerosVendidos = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===ternId && (v.fecha_salida||'')<=corte).reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+      ternerosCedidos = (S.cache.movimientos||[]).filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===ternId && (m.fecha||'')<=corte).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      verifTotal = ternerosAlPie + ternerosMuertosPostParto + ternerosVendidos + ternerosCedidos + res.nacidosMuertos;
+      verifDiff = res.yaParieron - verifTotal;
+    }
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
       prenadasAjustadas, pendientesAjustado,
+      rodeoTernerosNombre: rodeoTernerosVerif ? rodeoTernerosVerif.nombre : null,
+      ternerosAlPie, ternerosMuertosPostParto, ternerosVendidos, ternerosCedidos, verifTotal, verifDiff,
     });
     // Los nacidos vivos ya ocurrieron, independientemente de si el rodeo
     // madre después se vació por traslado — se suman siempre.
@@ -670,10 +714,11 @@ function vacasPendientesDeParir_(rodeoId) {
     (S.catalogs?.rodeos || []).filter(r => r.categoria === 'vaca' || r.categoria === 'vaquillona').map(r => String(r.rodeo_id))
   );
   let importadas = 0, exportadas = 0;
+  const idxAbortosCaravanaAviso = indiceAbortosPorCaravana_();
   (S.cache.movimientos || []).forEach(m => {
     if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return;
     if (fechaTacto && String(m.fecha) < String(fechaTacto)) return;
-    if (trasladoNoRestaPrenadas_(m)) return; // vacía, ya contada en Abortos, o ya contada en Parieron
+    if (trasladoNoRestaPrenadas_(m, idxAbortosCaravanaAviso)) return; // vacía, ya contada en Abortos, o ya contada en Parieron
     const cant = Number(m.cantidad) || 0;
     if (cant <= 0) return;
     if (String(m.rodeo_origen_id) === String(rodeoId)) exportadas += cant;
@@ -3041,7 +3086,25 @@ function buildEstadoVientres() {
       // repetida dos veces en pantalla — no se restaba dos veces en la
       // cuenta, pero daba esa impresión.
       h += `
-        <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Parieron</span><span>−${fn(f.yaParieron)}</span></div>`;
+      // Verificación de "Parieron": del lado del ternero (stock al pie +
+      // muertos post-parto + vendidos + cedidos, más los nacidos muertos que
+      // nunca tuvieron rodeo propio) tiene que dar el mismo número. Si no
+      // cierra, hay algo mal cargado en algún punto de la cadena (parición
+      // faltante, mortandad de más, etc. — ver conversación con Crist).
+      if (f.rodeoTernerosNombre) {
+        const cierra = f.verifDiff === 0;
+        h += `<div style="margin:2px 0 4px 10px;padding:6px 8px;border-left:2px solid ${cierra?'var(--green)':'var(--red)'};font-size:11px;color:var(--text3)">
+          <div style="font-weight:600;color:${cierra?'var(--green-text)':'var(--red)'}">${cierra?'✓':'⚠'} Verificación desde ${f.rodeoTernerosNombre}</div>
+          <div>Terneros al pie: ${fn(f.ternerosAlPie)}</div>
+          ${f.ternerosMuertosPostParto>0?`<div>+ Terneros muertos (post-parto): ${fn(f.ternerosMuertosPostParto)}</div>`:''}
+          ${f.ternerosVendidos>0?`<div>+ Terneros vendidos: ${fn(f.ternerosVendidos)}</div>`:''}
+          ${f.ternerosCedidos>0?`<div>+ Terneros cedidos: ${fn(f.ternerosCedidos)}</div>`:''}
+          ${f.nacidosMuertos>0?`<div>+ Nacidos muertos (sin rodeo propio): ${fn(f.nacidosMuertos)}</div>`:''}
+          <div style="font-weight:600">= ${fn(f.verifTotal)}${cierra?'':` (Parieron dice ${fn(f.yaParieron)} — diferencia de ${fn(Math.abs(f.verifDiff))})`}</div>
+        </div>`;
+      }
+      h += `
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
         <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
