@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_128';
+const APP_VERSION = 'index_consolidado_4_6_155_129';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3528,6 +3528,13 @@ function buildAbortos() {  const _criaTabs = [
         <select id="ab-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ab-obs" placeholder="Opcional"></div>
+      <div class="fg" style="min-width:260px">
+        <label>¿Se traslada a Vacas Venta?</label>
+        <div class="radio-group" id="ab-traslada-group">
+          <div class="radio-pill selected" data-traslada="si">Sí, va a Venta</div>
+          <div class="radio-pill" data-traslada="no">No, queda en el rodeo</div>
+        </div>
+      </div>
     </div>
     <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
       <label style="font-weight:600;font-size:13px;margin-bottom:8px;display:block">🐄 Carga masiva — caravanas abortadas</label>
@@ -3537,16 +3544,12 @@ function buildAbortos() {  const _criaTabs = [
     </div>
     <button class="btn btn-primary" id="ab-save" style="margin-top:10px">Registrar aborto(s)</button>
   </div>`;
-  // Historial con filtros de campo y rodeo
-  const rodeosTodosAb = (S.catalogs?.rodeos||[]);
-  const rodeosAptosHist = rodeosConServicioPorCampo(campos[0]?.campo_id);
+  // Historial con filtros de campo y rodeo — usa rodeosConServicio/PorCampo
+  // (mismo criterio que el formulario de arriba) en vez de TODOS los rodeos
+  // del catálogo, que traía Toros/Novillos/etc. sin sentido para Abortos.
   h += `<div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por campo</label>
-      <select id="ab-hist-campo" onchange="
-        const rid=document.getElementById('ab-hist-rodeo');
-        const rods=(S.catalogs.rodeos||[]).filter(r=>!this.value||String(r.campo_id)===this.value);
-        rid.innerHTML='<option value=\'\'>Todos los rodeos</option>'+rodeoOptionsHtml(rods);
-        abFiltrarHistorial_()">
+      <select id="ab-hist-campo" onchange="abCampoHistorialCambio_(this.value)">
         <option value="">Todos los campos</option>
         ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
       </select>
@@ -3554,7 +3557,7 @@ function buildAbortos() {  const _criaTabs = [
     <div class="fg"><label>Filtrar por rodeo</label>
       <select id="ab-hist-rodeo" onchange="abFiltrarHistorial_()">
         <option value="">Todos los rodeos</option>
-        ${rodeosTodosAb.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+        ${rodeosConServicio().map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
   </div>
@@ -3575,6 +3578,15 @@ const ABORTOS_COLS_ = [
   { key: 'observacion', label: 'Obs.', render: v => v || '—' },
 ];
 function attachAbortosEvents() {
+  document.querySelectorAll('#ab-traslada-group .radio-pill').forEach(p => p.onclick = () => {
+    document.querySelectorAll('#ab-traslada-group .radio-pill').forEach(x => x.classList.remove('selected'));
+    p.classList.add('selected');
+  });
+  window.abCampoHistorialCambio_ = function(campoId) {
+    const rid = document.getElementById('ab-hist-rodeo');
+    if (rid) rid.innerHTML = '<option value="">Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConServicioPorCampo(campoId));
+    abFiltrarHistorial_();
+  };
   window.abFiltrarHistorial_ = function() {
     const campoId = document.getElementById('ab-hist-campo')?.value || '';
     const rodeoId = document.getElementById('ab-hist-rodeo')?.value || '';
@@ -3595,6 +3607,7 @@ function attachAbortosEvents() {
     const fecha = document.getElementById('ab-fecha').value;
     const rodeoId = document.getElementById('ab-rodeo').value;
     const obs = document.getElementById('ab-obs').value.trim();
+    const trasladaAVenta = document.querySelector('#ab-traslada-group .selected')?.dataset.traslada !== 'no';
     if (!fecha || !rodeoId) { toast('Completá fecha y rodeo.', 'err'); return; }
 
     // Parsear caravanas del textarea (una por línea o separadas por coma)
@@ -3613,6 +3626,7 @@ function attachAbortosEvents() {
           const abResult = await apiCall('create', { body: { entity: 'abortos', data } });
           const abortoId = abResult && abResult.id;
           ok++;
+          if (!trasladaAVenta) continue; // se eligió "queda en el rodeo" — no crear ningún traslado
           // Traslado automático a Vacas Venta
           const rodeoOrigen = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoId));
           const campoId = rodeoOrigen?.campo_id;
@@ -3649,7 +3663,7 @@ function attachAbortosEvents() {
       S.stock = null;
       await Promise.all([loadEntity('abortos', true), loadEntity('movimientos', true), loadStock()]);
       S.dashboard = null; S._resultCria = null;
-      const msg = ok === 1 ? 'Aborto registrado' : ok + ' abortos registrados';
+      const msg = (ok === 1 ? 'Aborto registrado' : ok + ' abortos registrados') + (trasladaAVenta ? ' — trasladada(s) a Vacas Venta' : ' — quedan en el rodeo');
       toast(msg + (errores ? ` (${errores} con error)` : ''), ok > 0 ? 'ok' : 'err');
       if (document.getElementById('ab-caravanas-bulk')) document.getElementById('ab-caravanas-bulk').value = '';
       render();
