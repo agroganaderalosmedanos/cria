@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_132';
+const APP_VERSION = 'index_consolidado_4_6_155_133';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4661,17 +4661,24 @@ function buildMortandadAnalisis() {
     ${(desde||hasta||campFiltro||rodeoFiltro||campanaFiltro) ? `<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="S._maCampo='';S._maRodeo='';S._maDesde='';S._maHasta='';S._maCampana='';render()">✕ Limpiar filtros</button>` : ''}
   </div>`;
 
-  const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
+  const { filas, otros, totalNacidosMuertos, totalTernerosMuertos, totalAbortos, totalTrasladas, totalNacidosVivosScope,
           detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos } = calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, incluirOtros);
 
   // ── KPIs ──
+  // "Paridas" acá = nacidos vivos + nacidos muertos, en el mismo alcance de
+  // filtros — es el denominador para "% de las paridas que se perdieron",
+  // pedido explícitamente para que el número frío tenga contexto.
+  const totalParidasScope = totalNacidosVivosScope + totalNacidosMuertos;
+  const pctParidas = (n) => totalParidasScope > 0 ? fn(n/totalParidasScope*100, 1) + '%' : '—';
   const totalPerdidos = totalNacidosMuertos + totalTernerosMuertos;
   h += `<div class="kpi-grid" style="margin-bottom:16px">
-    <div class="kpi-card"><div class="kpi-label">Nacidos muertos</div><div class="kpi-value" style="color:var(--clay-text)">${fn(totalNacidosMuertos)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Terneros muertos post-nac.</div><div class="kpi-value" style="color:#8c1d17">${fn(totalTernerosMuertos)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Nacidos muertos</div><div class="kpi-value" style="color:var(--clay-text)">${fn(totalNacidosMuertos)} <span style="font-size:14px;font-weight:600;color:var(--text3)">(${pctParidas(totalNacidosMuertos)})</span></div></div>
+    <div class="kpi-card"><div class="kpi-label">Terneros muertos post-nac.</div><div class="kpi-value" style="color:#8c1d17">${fn(totalTernerosMuertos)} <span style="font-size:14px;font-weight:600;color:var(--text3)">(${pctParidas(totalTernerosMuertos)})</span></div></div>
     <div class="kpi-card"><div class="kpi-label">Abortos</div><div class="kpi-value" style="color:var(--bordeaux)">${fn(totalAbortos)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Total terneros perdidos</div><div class="kpi-value">${fn(totalPerdidos)}</div></div>
-  </div>`;
+    <div class="kpi-card"><div class="kpi-label">No van a nacer (trasladada/vendida)</div><div class="kpi-value" style="color:var(--text2)">${fn(totalTrasladas)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Total terneros perdidos</div><div class="kpi-value">${fn(totalPerdidos)} <span style="font-size:14px;font-weight:600;color:var(--text3)">(${pctParidas(totalPerdidos)})</span></div></div>
+  </div>
+  <div style="font-size:11px;color:var(--text3);margin:-8px 0 16px">% sobre el total de paridas en este mismo filtro (${fn(totalParidasScope)} = ${fn(totalNacidosVivosScope)} nacidos vivos + ${fn(totalNacidosMuertos)} nacidos muertos). Abortos y "No van a nacer" no tienen % porque esas vacas nunca llegaron a parir — no forman parte del total de paridas.</div>`;
 
   // ── Tabla por rodeo de vientre ──
   h += `<div class="panel"><div class="panel-title">Por rodeo de vientre</div>`;
@@ -4679,13 +4686,14 @@ function buildMortandadAnalisis() {
     h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin nacidos muertos, mortandad de terneros ni abortos para este filtro.</div></div>`;
   } else {
     h += `<div class="tw"><table class="dt"><thead><tr>
-      <th>Rodeo (madre)</th><th>Campo</th><th class="tc">Nacidos muertos</th><th class="tc">Terneros muertos post-nac.</th><th class="tc">Abortos</th><th class="tc">Total pérdidas</th>
+      <th>Rodeo (madre)</th><th>Campo</th><th class="tc">Nacidos muertos</th><th class="tc">Terneros muertos post-nac.</th><th class="tc">Abortos</th><th class="tc">No van a nacer</th><th class="tc">Total pérdidas</th>
     </tr></thead><tbody>`;
     filas.forEach(f => {
       h += `<tr><td><strong>${f.nombre}</strong></td><td>${f.campo}</td>
         <td class="tc" style="color:var(--clay-text)">${f.nacidosMuertos||'—'}</td>
         <td class="tc" style="color:#8c1d17">${f.ternerosMuertos||'—'}</td>
         <td class="tc" style="color:var(--bordeaux)">${f.abortos||'—'}</td>
+        <td class="tc" style="color:var(--text2)">${f.trasladas||'—'}</td>
         <td class="tc" style="font-weight:700">${fn(f.nacidosMuertos+f.ternerosMuertos+f.abortos)}</td></tr>`;
     });
     if (otros.ternerosMuertos > 0) {
@@ -4693,8 +4701,9 @@ function buildMortandadAnalisis() {
         <td class="tc">—</td>
         <td class="tc" style="color:#8c1d17">${otros.ternerosMuertos}</td>
         <td class="tc">—</td>
+        <td class="tc">—</td>
         <td class="tc" style="font-weight:700">${fn(otros.ternerosMuertos)}</td></tr>`;
-      h += `<tr><td colspan="6"><span class="helper-text">"Otros rodeos de terneros" = mortandad en rodeos de terneros que no se pudieron vincular a un rodeo de vientre por nombre (ej. rodeos pooled como "Terneros/as", "Terneros 2026") — pueden ser stock de otra campaña, por eso ${incluirOtros?'están incluidos en el total porque tildaste el check de arriba':'NO se suman al total salvo que tildes el check de arriba'}. Ver detalle más abajo.</span></td></tr>`;
+      h += `<tr><td colspan="7"><span class="helper-text">"Otros rodeos de terneros" = mortandad en rodeos de terneros que no se pudieron vincular a un rodeo de vientre por nombre (ej. rodeos pooled como "Terneros/as", "Terneros 2026") — pueden ser stock de otra campaña, por eso ${incluirOtros?'están incluidos en el total porque tildaste el check de arriba':'NO se suman al total salvo que tildes el check de arriba'}. Ver detalle más abajo.</span></td></tr>`;
     }
     const totFilas = filas.reduce((s,f)=>s+f.nacidosMuertos+f.ternerosMuertos+f.abortos,0) + (incluirOtros ? otros.ternerosMuertos : 0);
     h += `<tr style="background:var(--bg2);font-weight:800">
@@ -4702,6 +4711,7 @@ function buildMortandadAnalisis() {
       <td class="tc" style="color:var(--clay-text)">${fn(totalNacidosMuertos)}</td>
       <td class="tc" style="color:#8c1d17">${fn(totalTernerosMuertos)}</td>
       <td class="tc" style="color:var(--bordeaux)">${fn(totalAbortos)}</td>
+      <td class="tc" style="color:var(--text2)">${fn(totalTrasladas)}</td>
       <td class="tc">${fn(totFilas)}</td></tr>`;
     h += '</tbody></table></div>';
   }
@@ -4817,6 +4827,43 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
   const detalleAbortos = abortos.filter(a => rodeoMatch_(a.rodeo_id) && fechaMatch_(a.fecha))
     .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
 
+  // Nacidos vivos totales en el mismo alcance (campo/rodeo/fecha) — sirve de
+  // denominador para los porcentajes: "% de las paridas que se perdieron".
+  const totalNacidosVivosScope = pariciones.filter(p => rodeoMatch_(p.rodeo_id) && fechaMatch_(p.fecha))
+    .reduce((s,p)=>s+(Number(p.nacidos_vivos)||0),0);
+
+  // "No van a nacer" — preñadas que salieron del rodeo (traslado o venta) en el
+  // rango de fechas, SIN contar las que ya están explicadas por otra columna
+  // (vacía, ya vinculada a un Aborto, o ya vinculada a una Parición — mismo
+  // criterio que Estado de Vientres, vía trasladoNoRestaPrenadas_). El aborto
+  // en sí ya se cuenta aparte en "Abortos"; esta columna es la vaca que se fue
+  // por sanidad/descarte sin haber parido ni abortado formalmente.
+  const idxAbortosCaravanaMA = indiceAbortosPorCaravana_();
+  const trasladasPorMadre = {};
+  (S.cache.movimientos||[]).forEach(m => {
+    if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
+    if (!fechaMatch_(m.fecha)) return;
+    if (!rodeoMatch_(m.rodeo_origen_id)) return;
+    const rOrig = rodeosAll.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+    if (!rOrig) return;
+    const catOrig = (rOrig.categoria||'').toLowerCase();
+    if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
+    if (trasladoNoRestaPrenadas_(m, idxAbortosCaravanaMA)) return;
+    const cant = Number(m.cantidad)||0;
+    if (cant<=0) return;
+    trasladasPorMadre[String(m.rodeo_origen_id)] = (trasladasPorMadre[String(m.rodeo_origen_id)]||0) + cant;
+  });
+  (S.cache.ventas||[]).forEach(v => {
+    if (!fechaMatch_(v.fecha_salida)) return;
+    if (!rodeoMatch_(v.rodeo_id)) return;
+    const rOrig = rodeosAll.find(r=>String(r.rodeo_id)===String(v.rodeo_id));
+    if (!rOrig) return;
+    const catOrig = (rOrig.categoria||'').toLowerCase();
+    if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
+    trasladasPorMadre[String(v.rodeo_id)] = (trasladasPorMadre[String(v.rodeo_id)]||0) + (Number(v.cant_animales)||0);
+  });
+  const totalTrasladas = Object.values(trasladasPorMadre).reduce((s,n)=>s+n,0);
+
   // Terneros muertos post-nacimiento: mortandad en rodeos ternero/ternera,
   // excluyendo los nacido-muerto (esos ya están en Pariciones, no acá).
   const rodeosTerneroCat = rodeosAll.filter(r => { const c=(r.categoria||'').toLowerCase(); return c==='ternero'||c==='ternera'; });
@@ -4851,9 +4898,10 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     const nacidosMuertos = detalleNacidosMuertos.filter(p => String(p.rodeo_id)===String(madre.rodeo_id)).reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
     const abortosCant = detalleAbortos.filter(a => String(a.rodeo_id)===String(madre.rodeo_id)).length;
     const ternerosMuertos = (ternerosPorMadre[String(madre.rodeo_id)]||[]).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
-    return { nombre: madre.nombre, campo: campoNombre(madre.campo_id), nacidosMuertos, ternerosMuertos, abortos: abortosCant };
-  }).filter(f => f.nacidosMuertos + f.ternerosMuertos + f.abortos > 0)
-    .sort((a,b)=>(b.nacidosMuertos+b.ternerosMuertos+b.abortos)-(a.nacidosMuertos+a.ternerosMuertos+a.abortos));
+    const trasladas = trasladasPorMadre[String(madre.rodeo_id)] || 0;
+    return { nombre: madre.nombre, campo: campoNombre(madre.campo_id), nacidosMuertos, ternerosMuertos, abortos: abortosCant, trasladas };
+  }).filter(f => f.nacidosMuertos + f.ternerosMuertos + f.abortos + f.trasladas > 0)
+    .sort((a,b)=>(b.nacidosMuertos+b.ternerosMuertos+b.abortos+b.trasladas)-(a.nacidosMuertos+a.ternerosMuertos+a.abortos+a.trasladas));
 
   const totalNacidosMuertos = detalleNacidosMuertos.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0);
   const totalAbortos = detalleAbortos.length;
@@ -4885,7 +4933,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
 
   return {
     filas, otros: { ternerosMuertos: otrosCant },
-    totalNacidosMuertos, totalTernerosMuertos, totalAbortos,
+    totalNacidosMuertos, totalTernerosMuertos, totalAbortos, totalTrasladas, totalNacidosVivosScope,
     detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos,
   };
 }
