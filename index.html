@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_115';
+const APP_VERSION = 'index_consolidado_4_6_155_116';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3504,7 +3504,7 @@ function buildPariciones() {  const _criaTabs = [
   </div>`;
   h += `<div class="panel">
     <div class="panel-title">🔍 Auditoría de Pariciones/Abortos y Movimientos vinculados</div>
-    <p class="helper-text" style="margin-bottom:10px">Busca cinco cosas: (1) Movimientos/Mortandad "huérfanos", de una Parición o Aborto que ya no existe; (2) Movimientos desincronizados, de un Aborto que se editó después; (3) Pariciones con nacidos vivos que NUNCA tuvieron su Movimiento de Saldo inicial creado — la causa real de que el Libro de Movimientos no coincida con Stock/Stock de Hacienda; (4) Movimientos/Mortandad desincronizados de una Parición que se editó después (de antes de que existiera esta cascada); (5) Pariciones posiblemente duplicadas (mismo rodeo, fecha, nacidos vivos y muertos que otra). Este botón las busca todas.</p>
+    <p class="helper-text" style="margin-bottom:10px">Busca seis cosas: (1) Movimientos/Mortandad "huérfanos", de una Parición o Aborto que ya no existe; (2) Movimientos desincronizados, de un Aborto que se editó después; (3) Pariciones con nacidos vivos que NUNCA tuvieron su Movimiento de Saldo inicial creado — la causa real de que el Libro de Movimientos no coincida con Stock/Stock de Hacienda; (4) Movimientos/Mortandad desincronizados de una Parición que se editó después (de antes de que existiera esta cascada); (5) Pariciones posiblemente duplicadas (mismo rodeo, fecha, nacidos vivos y muertos que otra); (6) Movimientos de Nacimiento sin ninguna Parición vinculada (cargados a mano imitando el texto automático). Este botón las busca todas.</p>
     <button class="btn btn-secondary btn-sm" onclick="window.paBuscarHuerfanos_()">🔍 Buscar huérfanos</button>
     <div id="pa-huerfanos-resultado" style="margin-top:12px"></div>
   </div>`;
@@ -3678,6 +3678,25 @@ window.paBuscarHuerfanos_ = async function() {
           : `"${m.observaciones}" — revisar a mano si corresponde a un Aborto real o es un duplicado`,
         soloRevision: !candidato,
         candidatoAbortoId: candidato ? candidato.aborto_id : null,
+      });
+    });
+    // Movimientos de "Nacimiento" SIN el tag [pid:...] — el mismo patrón
+    // encontrado a mano en Vaquillonas 2024: alguien escribió el texto del
+    // movimiento imitando el formato automático ("Nacimiento — parición...")
+    // pero sin pasar por el formulario de Pariciones, así que no hay ninguna
+    // fila de Parición real detrás. Eso infla el stock de Terneros (aparece
+    // como "ya nació" del lado del ternero) sin que la vaca madre se
+    // descuente como "ya parió" del lado de Preñadas — la causa de que
+    // "Diferencia" en el Excel de auditoría reproductiva no dé 0.
+    (S.cache.movimientos||[]).forEach(m => {
+      if (m.tipo !== 'Saldo inicial') return;
+      if (!/nacimiento/i.test(String(m.observaciones||''))) return;
+      if (/\[pid:\d+\]/.test(String(m.observaciones||''))) return;
+      filas.push({
+        tipoLabel:'Movimiento de Nacimiento SIN Parición vinculada (posible Parición faltante)', entity:'movimientos', id:m.movimiento_id,
+        fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_destino_id), cantidad:m.cantidad,
+        origen:`"${m.observaciones}" — no tiene [pid:...]. Cargá la Parición que falta y vinculala a mano con este movimiento (ver instructivo).`,
+        soloRevision:true,
       });
     });
     // Posibles Pariciones duplicadas: dos o más registros con el MISMO rodeo,
