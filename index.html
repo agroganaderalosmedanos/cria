@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_135';
+const APP_VERSION = 'index_consolidado_4_6_155_136';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5172,7 +5172,79 @@ function buildDestetes() {  const _criaTabs = [
     </div>
     <button class="btn btn-primary" id="de-save" style="margin-top:12px">Registrar destete</button>
   </div>`;
-  h += buildEntityTable(items, [
+
+  // ── Comparativo por rodeo: Preñadas → Paridas → Destetados ──
+  // Reusa calcularVacasReproductivas_ (misma cuenta que Estado de Vientres)
+  // para Preñadas/Paridas, y suma Destetes por rodeo madre (el destete se
+  // carga directo sobre el rodeo de vacas, no sobre el de terneros).
+  const { filas: filasRepro } = calcularVacasReproductivas_(null, today());
+  const destetadosPorRodeo = {};
+  items.forEach(d => { destetadosPorRodeo[String(d.rodeo_id)] = (destetadosPorRodeo[String(d.rodeo_id)]||0) + (Number(d.total)||0); });
+  // filasRepro no trae rodeoId directamente en cada fila (viene por nombre) —
+  // se resuelve por nombre+campo contra el catálogo para poder cruzar con
+  // destetadosPorRodeo (que sí está indexado por rodeo_id real).
+  const rodeosCatDestetes = (S.catalogs && S.catalogs.rodeos) || [];
+  const comparativo = filasRepro.map(f => {
+    const rodeoObj = rodeosCatDestetes.find(r => r.nombre === f.nombre && campoNombre(r.campo_id) === f.campo);
+    const destetados = rodeoObj ? (destetadosPorRodeo[String(rodeoObj.rodeo_id)] || 0) : 0;
+    if (!f.prenadas && !f.yaParieron && !destetados) return null;
+    const pctParidoPerdido = f.prenadas > 0 ? (1 - f.yaParieron/f.prenadas) * 100 : null;
+    const pctDesteteVsParido = f.yaParieron > 0 ? (1 - destetados/f.yaParieron) * 100 : null;
+    return { nombre: f.nombre, campo: f.campo, prenadas: f.prenadas, paridas: f.yaParieron, destetados, pctParidoPerdido, pctDesteteVsParido };
+  }).filter(Boolean);
+  h += `<div class="panel">
+    <div class="panel-title">📊 Comparativo por rodeo — Preñadas → Paridas → Destetados</div>
+    <p class="helper-text" style="margin-bottom:10px">"Preñadas" y "Paridas" son las mismas de <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:12px;padding:0 4px">🐮 Estado de Vientres</button>. Si la parición de la campaña todavía no terminó, la diferencia Preñadas→Paridas incluye vacas que TODAVÍA van a parir, no solo pérdidas reales — no lo tomes como "% de pérdida" hasta el final de la parición.</p>`;
+  if (!comparativo.length) {
+    h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">Sin datos de preñadas/paridas/destetes todavía.</div></div>`;
+  } else {
+    h += `<div class="tw"><table class="dt"><thead><tr>
+      <th>Rodeo</th><th>Campo</th><th class="tc">Preñadas</th><th class="tc">Paridas</th><th class="tc">% sin parir aún</th><th class="tc">Destetados</th><th class="tc">% de las paridas sin destetar</th>
+    </tr></thead><tbody>`;
+    comparativo.forEach(f => {
+      h += `<tr><td><strong>${f.nombre}</strong></td><td>${f.campo}</td>
+        <td class="tc">${fn(f.prenadas)}</td>
+        <td class="tc" style="color:var(--green-text)">${fn(f.paridas)}</td>
+        <td class="tc">${f.pctParidoPerdido!==null?fn(f.pctParidoPerdido,1)+'%':'—'}</td>
+        <td class="tc" style="color:var(--gold-text)">${fn(f.destetados)}</td>
+        <td class="tc">${f.pctDesteteVsParido!==null?fn(f.pctDesteteVsParido,1)+'%':'—'}</td></tr>`;
+    });
+    const totPrenadas = comparativo.reduce((s,f)=>s+f.prenadas,0);
+    const totParidas = comparativo.reduce((s,f)=>s+f.paridas,0);
+    const totDestetados = comparativo.reduce((s,f)=>s+f.destetados,0);
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="2">TOTAL</td>
+      <td class="tc">${fn(totPrenadas)}</td>
+      <td class="tc" style="color:var(--green-text)">${fn(totParidas)}</td>
+      <td class="tc">${totPrenadas>0?fn((1-totParidas/totPrenadas)*100,1)+'%':'—'}</td>
+      <td class="tc" style="color:var(--gold-text)">${fn(totDestetados)}</td>
+      <td class="tc">${totParidas>0?fn((1-totDestetados/totParidas)*100,1)+'%':'—'}</td></tr>`;
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  // ── Historial con filtros de campo y rodeo ──
+  h += `<div class="fgrid" style="margin-bottom:10px">
+    <div class="fg"><label>Filtrar por campo</label>
+      <select id="de-hist-campo" onchange="deCampoHistorialCambio_(this.value)">
+        <option value="">Todos los campos</option>
+        ${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Filtrar por rodeo</label>
+      <select id="de-hist-rodeo" onchange="deFiltrarHistorial_()">
+        <option value="">Todos los rodeos</option>
+        ${rodeosConPrenadas().map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div id="de-hist-tabla">` + buildDestetesTabla_(items) + `</div>`;
+  return h;
+}
+// Columnas + armado de la tabla de historial de Destetes — separado para
+// reusarlo en el render inicial y en el refiltrado por campo/rodeo.
+function buildDestetesTabla_(items) {
+  return buildEntityTable(items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))), [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
     { key: 'machos', label: 'Machos', render: v => fn(v) },
@@ -5180,7 +5252,6 @@ function buildDestetes() {  const _criaTabs = [
     { key: 'total', label: 'Total', render: v => `<strong>${fn(v)}</strong>` },
     { key: 'peso_prom_kg', label: 'Peso prom.', render: v => v ? fn(v) + ' kg' : '—' },
   ], 'destetes', 'destete_id');
-  return h;
 }
 window.deActualizarAvisoNacimientos_ = function() {
   const aviso = document.getElementById('de-aviso-nacimientos');
@@ -5211,6 +5282,25 @@ window.deActualizarAvisoNacimientos_ = function() {
 };
 
 function attachDestetesEvents() {
+  window.deCampoHistorialCambio_ = function(campoId) {
+    const rid = document.getElementById('de-hist-rodeo');
+    if (rid) rid.innerHTML = '<option value="">Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConPrenadasPorCampo(campoId));
+    deFiltrarHistorial_();
+  };
+  window.deFiltrarHistorial_ = function() {
+    const campoId = document.getElementById('de-hist-campo')?.value || '';
+    const rodeoId = document.getElementById('de-hist-rodeo')?.value || '';
+    const items = (S.cache.destetes || []).filter(d => {
+      if (rodeoId && String(d.rodeo_id) !== rodeoId) return false;
+      if (campoId && !rodeoId) {
+        const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(d.rodeo_id));
+        if (!r || String(r.campo_id) !== campoId) return false;
+      }
+      return true;
+    });
+    const el = document.getElementById('de-hist-tabla');
+    if (el) { el.innerHTML = buildDestetesTabla_(items); attachTableDeleteEvents('destetes', 'destete_id'); }
+  };
   deActualizarAvisoNacimientos_();
   const save = document.getElementById('de-save');
   if (save) save.onclick = async () => {
