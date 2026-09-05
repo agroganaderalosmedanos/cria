@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_141';
+const APP_VERSION = 'index_consolidado_4_6_155_142';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1088,9 +1088,12 @@ async function goto(page) {
   if ((page === 'tactos' || page === 'abortos' || page === 'pariciones') && !S.cache.servicios) {
     try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
   }
-  // Servicios necesita el catálogo de Campañas para mostrar a qué campaña
-  // corresponde cada registro (columna "Campaña").
-  if (page === 'servicios' && !S.cache.campanas) {
+  // Estas pantallas necesitan el catálogo de Campañas para el selector de
+  // "Campaña" en sus formularios de carga (propuesta por fecha, editable).
+  // Normalmente ya está cargado por el paquete inicial (initBundle), esto es
+  // solo una red de seguridad para el caso de entrar a la página antes de que
+  // ese paquete termine.
+  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard') && !S.cache.campanas) {
     try { await loadEntity('campanas'); } catch (err) { /* silencioso */ }
   }
   // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
@@ -1784,12 +1787,11 @@ function buildComprasHacienda() {
     <div class="fgrid">
       <div class="fg">
         <label>Fecha</label>
-        <input type="date" id="ch-fecha" value="${editando ? (editando.fecha||today()) : today()}">
+        <input type="date" id="ch-fecha" value="${editando ? (editando.fecha||today()) : today()}" onchange="document.getElementById('ch-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)">
       </div>
       <div class="fg">
-        <label>Campaña</label>
-        <input type="text" id="ch-campana" placeholder="Ej: 2025/2026" list="ch-campana-list" value="${editando ? (editando.campana||'') : ultimaCampanaCompras_()}">
-        <datalist id="ch-campana-list">${campanas.map(c=>`<option value="${c}">`).join('')}</datalist>
+        <label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="ch-campana-id">${svCampanaOptionsHtml_(editando ? editando.fecha : today(), editando ? editando.campana_id : null)}</select>
       </div>
       <div class="fg">
         <label>Campo</label>
@@ -2008,7 +2010,9 @@ function attachComprasHaciendaEvents() {
 
   window.compraHacGuardar_ = async function() {
     const fecha     = document.getElementById('ch-fecha')?.value || '';
-    const campana   = document.getElementById('ch-campana')?.value.trim() || '';
+    const campanaId = document.getElementById('ch-campana-id')?.value || '';
+    const campanaObj = (S.cache.campanas||[]).find(c => String(c.campana_id) === String(campanaId));
+    const campana   = campanaObj ? campanaObj.nombre : '';
     const campo_id  = document.getElementById('ch-campo')?.value || '';
     const categoria = (document.getElementById('ch-categoria')?.value || '').trim();
     const cantidad  = Number(document.getElementById('ch-cantidad')?.value) || 0;
@@ -2021,7 +2025,7 @@ function attachComprasHaciendaEvents() {
     const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent = S._compraEditando ? '✏️ Guardar cambios' : '💾 Registrar compra'; } };
 
     if (!fecha)     { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la fecha.'; return; }
-    if (!campana)   { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la campaña.'; return; }
+    if (!campanaId) { resetBtn(); if(msg) msg.textContent='⚠ Elegí la campaña.'; return; }
     if (!categoria) { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la categoría.'; return; }
     if (!cantidad)  { resetBtn(); if(msg) msg.textContent='⚠ Ingresá la cantidad.'; return; }
     if (!precio)    { resetBtn(); if(msg) msg.textContent='⚠ Ingresá el precio por cabeza.'; return; }
@@ -2044,7 +2048,7 @@ function attachComprasHaciendaEvents() {
     }
 
     const data = {
-      fecha, campana, campo_id, categoria, rodeo_id,
+      fecha, campana, campana_id: campanaId, campo_id, categoria, rodeo_id,
       cantidad, precio_cabeza: precio,
       importe_total: cantidad * precio,
       vendedor, observacion: obs, fecha_carga: today(),
@@ -2184,7 +2188,7 @@ function buildHome() {
 
 function buildDashboard() {
   // Mostrar loader mientras cargan los datos
-  if (!S.cache.movimientos || !S.cache.ventas) {
+  if (!S.cache.movimientos || !S.cache.ventas || !S.cache.campanas) {
     return '<div class="loader"><div class="spinner"></div>Cargando datos del dashboard…</div>';
   }
   const campos   = (S.catalogs && S.catalogs.campos) || [];
@@ -2194,33 +2198,45 @@ function buildDashboard() {
   // el resultado del período que estás analizando) queda afuera del cálculo hasta
   // que muevas la fecha.
   const corteCria = S._corteCria || today();
-  const movs     = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteCria);
-  const ventas   = (S.cache.ventas || []).filter(v => (v.fecha_salida||'') <= corteCria);
-  const consumos = (S.cache.consumos_insumos || []).filter(c => (c.fecha||'') <= corteCria);
-  const pesadas  = (S.cache.pesadas || []).filter(p => (p.fecha||'') <= corteCria);
   const productos= S.cache.productos || [];
-  const comprasH = comprasHacGetAll_().filter(c => (c.fecha||'') <= corteCria);
   const sueldos  = sueldosGetAll_();
+  const pesadas  = (S.cache.pesadas || []).filter(p => (p.fecha||'') <= corteCria);
   const mortandadCria = (S.cache.mortandad || []).filter(m => (m.fecha||'') <= corteCria);
 
-  // Campañas disponibles
+  // Campañas disponibles — vienen del catálogo real de Campañas (mismo que ya
+  // usan Servicios/Tactos/Ventas/Cesiones/Consumos/Compras al cargar cada
+  // registro), no de un texto libre. Por default se abre en la campaña
+  // marcada como "activa"; si no hay ninguna marcada, la más reciente.
+  const campanasCat = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  const campanaActivaCria = campanasCat.find(c => c.activa===true || String(c.activa).toUpperCase()==='TRUE');
+  const campSelec = S._dashCampana || (campanaActivaCria ? campanaActivaCria.campana_id : (campanasCat[0]?.campana_id || ''));
+  const campSelecObj = campanasCat.find(c => String(c.campana_id) === String(campSelec));
   const _criaMoneda = S.criaMoneda || 'ARS';
   const fmCria_ = p => fmonACorte_(p, _criaMoneda, corteCria);
 
-  // OJO: la lista de campañas se arma con los datos SIN filtrar por fecha de corte
-  // (a propósito). Si se armara con `ventas`/`comprasH`/`consumos` ya filtrados,
-  // una campaña que todavía no tiene ningún movimiento antes de la fecha de corte
-  // desaparecería del combo, y el sistema pasaría a seleccionar otra campaña por
-  // default sin avisar — mostrando el margen de una campaña distinta a la que
-  // pensás que estás mirando. El corte sigue aplicando sobre los TOTALES de la
-  // campaña elegida, pero no debe cambiar CUÁL campaña está disponible/seleccionada.
-  const campanas = [...new Set([
-    ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
-    ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
-    ...(S.cache.consumos_insumos||[]).map(c=>c.campana).filter(Boolean),
-  ].filter(esCampanaValida_))].sort((a,b)=>b.localeCompare(a));
+  // Todo lo que antes se cortaba solo "hasta la fecha de corte" (acumulado
+  // desde siempre) ahora ADEMÁS tiene que pertenecer a la campaña elegida
+  // (campana_id guardado en cada registro) — así Ventas/Cesiones/Consumos
+  // quedan acotados exactamente igual que Compras, en vez de mezclar todas
+  // las campañas juntas. El corte de fecha se mantiene como límite superior
+  // DENTRO de la campaña (para poder ver "cómo viene" a mitad de camino).
+  //
+  // OJO — registros viejos (cargados antes de que existiera este selector)
+  // no tienen campana_id guardado todavía. Si se los excluyera directo,
+  // desaparecerían del Dashboard de un día para el otro. Por eso, cuando
+  // falta el campana_id, se usa la campaña que corresponde por FECHA como
+  // respaldo — mismo criterio de "default por fecha, editable" que ya rige
+  // en todos los formularios nuevos.
+  const campanaEfectiva_ = (fecha, campanaIdGuardado) => {
+    if (campanaIdGuardado) return String(campanaIdGuardado);
+    const c = campanaDeFecha_(fecha);
+    return c ? String(c.campana_id) : '';
+  };
+  const movs     = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteCria && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
+  const ventas   = (S.cache.ventas || []).filter(v => (v.fecha_salida||'') <= corteCria && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campSelec));
+  const consumos = (S.cache.consumos_insumos || []).filter(c => (c.fecha||'') <= corteCria && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
+  const comprasH = comprasHacGetAll_().filter(c => (c.fecha||'') <= corteCria && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
 
-  const campSelec = S._dashCampana || campanas[0] || '';
   const campSelecField = S._dashCampo || '';
 
   // Rodeos de Cría
@@ -2252,12 +2268,12 @@ function buildDashboard() {
   h += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
     <div style="display:flex;align-items:center;gap:8px">
       <label style="font-size:13px;font-weight:600;white-space:nowrap">Campaña:</label>
-      ${campanas.length
+      ${campanasCat.length
         ? `<select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:140px"
             onchange="S._dashCampana=this.value;render()">
-            ${campanas.map(c=>`<option value="${c}" ${c===campSelec?'selected':''}>${c}</option>`).join('')}
+            ${campanasCat.map(c=>`<option value="${c.campana_id}" ${String(c.campana_id)===String(campSelec)?'selected':''}>${c.nombre}${!c.fecha_fin?' (en curso)':''}</option>`).join('')}
           </select>`
-        : '<span style="font-size:13px;color:var(--text3)">Sin campañas — asigná campaña en ventas y compras</span>'
+        : '<span style="font-size:13px;color:var(--text3)">Sin campañas cargadas — creá una en el catálogo de Campañas</span>'
       }
     </div>
     <div style="display:flex;align-items:center;gap:8px">
@@ -2278,7 +2294,7 @@ function buildDashboard() {
   </div>`;
 
   if (!campSelec) {
-    h += `<div class="empty-state"><span class="ico">📊</span><div class="msg">Cargá campañas en ventas y compras para ver el dashboard.</div></div>`;
+    h += `<div class="empty-state"><span class="ico">📊</span><div class="msg">Cargá al menos una Campaña en el catálogo de Campañas para ver el dashboard.</div></div>`;
     return h;
   }
 
@@ -2432,7 +2448,7 @@ function buildDashboard() {
   }, 0);
 
   // 2. Compras hacienda de la campaña (rodeos Cría)
-  const comprasCria = comprasH.filter(c => c.campana===campSelec && (!campSelecField || String(c.campo_id)===String(campSelecField)));
+  const comprasCria = comprasH.filter(c => (!campSelecField || String(c.campo_id)===String(campSelecField)));
   const totalCompras = comprasCria.reduce((s,c) => s + convertirAMoneda_(Number(c.importe_total)||0, c.fecha, _criaMoneda), 0);
 
   // 3. Insumos consumidos campaña (alimentación y veterinaria) en rodeos Cría
@@ -2639,7 +2655,7 @@ function buildDashboard() {
       .filter(r => normAct_(r.categoria).includes('ternero'))
       .reduce((s,r) => s + Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0), 0);
     h += `<div class="panel">
-      <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
+      <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelecObj?.nombre || campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       ${preñadasMayorQueEntoradas ? `<div style="background:rgba(220,50,50,0.08);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--red);font-weight:600">⚠ Preñadas (${fn(totVacaDash.prenadas)}) es mayor que Entoradas (${fn(totVacaDash.entoradas)}) — matemáticamente imposible. Revisá en algún rodeo si el campo "Preñadas" del Tacto final quedó cargado más alto que "Total tacteadas".</div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
         <div class="kpi"><div class="kpi-label">Vacas entoradas</div><div class="kpi-val">${fn(totVacaDash.entoradas)}</div></div>
@@ -2680,7 +2696,7 @@ function buildDashboard() {
 
     <!-- INGRESOS -->
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos — Campaña ${campSelecObj?.nombre || campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -2712,7 +2728,7 @@ function buildDashboard() {
 
     <!-- EGRESOS -->
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — Campaña ${campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
+      <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — Campaña ${campSelecObj?.nombre || campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -2724,14 +2740,14 @@ function buildDashboard() {
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">🛒 Compras de hacienda</div>
-            <div style="font-size:11px;color:var(--text3)">${comprasCria.length} compras campaña ${campSelec}</div>
+            <div style="font-size:11px;color:var(--text3)">${comprasCria.length} compras campaña ${campSelecObj?.nombre || campSelec}</div>
           </div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalCompras,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-weight:600">🌿 Alimentación e insumos</div>
-            <div style="font-size:11px;color:var(--text3)">${cantAlimCria} consumos campaña ${campSelec} · <a href="javascript:void(0)" onclick="goto('insumos')">ver detalle en Insumos y Veterinaria</a></div>
+            <div style="font-size:11px;color:var(--text3)">${cantAlimCria} consumos campaña ${campSelecObj?.nombre || campSelec} · <a href="javascript:void(0)" onclick="goto('insumos')">ver detalle en Insumos y Veterinaria</a></div>
           </div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalAlim>0?fnMoneda_(totalAlim,_criaMoneda):'—'}</div>
         </div>
@@ -2759,7 +2775,7 @@ function buildDashboard() {
   const margenBg    = margen >= 0 ? 'var(--green-bg)' : 'rgba(220,50,50,0.08)';
   h += `<div style="background:${margenBg};border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
     <div>
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Cría ${campSelec}</div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${margenColor}">Margen Bruto — Cría ${campSelecObj?.nombre || campSelec}</div>
       <div style="font-size:11px;color:var(--text2);margin-top:3px">Ingresos − Egresos (excluye insumos por configurar)</div>
     </div>
     <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fnMoneda_(Math.abs(margen),_criaMoneda)}</div>
@@ -5582,7 +5598,10 @@ function buildMovimientos() {
           <div class="radio-pill" data-tipo="Traslado individual">Traslado individual</div>
         </div>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="mv-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="mv-fecha" value="${today()}" onchange="document.getElementById('mv-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="mv-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
     </div>
     <div class="fgrid">
       <div class="fg" id="mv-campo-origen-wrap" style="display:none"><label>Campo origen</label>
@@ -6329,6 +6348,7 @@ function attachMovimientosEvents() {
       precio_cabeza: modoPrecio === 'cabeza' ? (Number(document.getElementById('mv-precio-cabeza').value) || 0) : 0,
       precio_kg: modoPrecio === 'kg' ? (Number(document.getElementById('mv-precio-kg').value) || 0) : 0,
       observaciones: document.getElementById('mv-obs').value.trim(),
+      campana_id: document.getElementById('mv-campana-id')?.value || '',
     };
     if (!data.fecha || !data.rodeo_destino_id) { toast('Completá fecha y rodeo destino.', 'err'); return; }
     if (esIndividual && !data.caravana) { toast('Ingresá la caravana del animal.', 'err'); return; }
@@ -7047,7 +7067,10 @@ function buildCesionesCria() {
   h += `<div class="panel">
     <div class="panel-title">➕ Nueva cesión</div>
     <div class="fgrid">
-      <div class="fg"><label>Fecha</label><input type="date" id="ces-c-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="ces-c-fecha" value="${today()}" onchange="document.getElementById('ces-c-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="ces-c-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
       <div class="fg"><label>Rodeo origen (Cría)</label>
         <select id="ces-c-origen">
           <option value="">— Seleccioná —</option>
@@ -7310,6 +7333,8 @@ function attachCesionesCriaEvents() {
     if (!fecha||!origen||!destino||!cant) { toast('Completá fecha, rodeos y cantidad.', 'err'); return; }
     if (!precio) { toast('Ingresá el precio de cesión.', 'err'); return; }
     if (tipoPrecio === 'kg' && !peso) { toast('Con precio por kg, también necesito el peso promedio.', 'err'); return; }
+    const campanaIdCesC = document.getElementById('ces-c-campana-id')?.value || '';
+    if (!campanaIdCesC) { toast('Elegí la campaña de la cesión.', 'err'); return; }
     btn.disabled = true; btn.textContent = '⏳ Guardando...';
     try {
       await apiCall('create', { body: { entity: 'movimientos', data: {
@@ -7324,6 +7349,7 @@ function attachCesionesCriaEvents() {
         precio_kg: tipoPrecio === 'kg' ? precio : 0,
         precio_cabeza: tipoPrecio === 'cabeza' ? precio : 0,
         observaciones: obs || 'Cesión Cría → Recría',
+        campana_id: campanaIdCesC,
       }}});
       invalidateCache('movimientos');
       await loadEntity('movimientos', true);
@@ -7389,7 +7415,10 @@ function buildCesionesRecria() {
   h += `<div class="panel">
     <div class="panel-title">➕ Nueva cesión</div>
     <div class="fgrid">
-      <div class="fg"><label>Fecha</label><input type="date" id="ces-r-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="ces-r-fecha" value="${today()}" onchange="document.getElementById('ces-r-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="ces-r-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
       <div class="fg"><label>Rodeo origen (Recría)</label>
         <select id="ces-r-origen">
           <option value="">— Seleccioná —</option>
@@ -7645,6 +7674,8 @@ function attachCesionesRecriaEvents() {
     if (!fecha||!origen||!cant) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
     if (!destino) { toast('Elegí el rodeo destino de Terminación — sin esto el animal no se mueve de stock.', 'err'); return; }
     if (!precio) { toast('Ingresá el precio de cesión ($/kg).', 'err'); return; }
+    const campanaIdCesR = document.getElementById('ces-r-campana-id')?.value || '';
+    if (!campanaIdCesR) { toast('Elegí la campaña de la cesión.', 'err'); return; }
 
     // Validación de stock: no permitir ceder más animales de los que realmente hay
     // en el rodeo de Recría origen a esa fecha (mismo criterio que en Movimientos/Ventas).
@@ -7670,6 +7701,7 @@ function attachCesionesRecriaEvents() {
         peso_prom_kg: peso,
         precio_kg: precio,
         observaciones: obs || 'Cesión Recría → Terminación',
+        campana_id: campanaIdCesR,
       }}});
       invalidateCache('movimientos');
       await loadEntity('movimientos', true);
@@ -7685,6 +7717,7 @@ function attachCesionesRecriaEvents() {
         peso_prom_kg: peso,
         precio_kg_cesion: precio,
         observaciones: obs||'Cesión Recría → Terminación',
+        campana_id: campanaIdCesR,
       }}}); 
       invalidateCache('egresos_recria');
       await loadEntity('egresos_recria', true);
@@ -11332,7 +11365,7 @@ function buildVentas() {
       <div class="fg"><label>Rodeo</label>
         <select id="ve-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="ve-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="ve-fecha" value="${today()}" onchange="document.getElementById('ve-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
       <div class="fg"><label>Comprador</label>
         <input type="text" id="ve-comprador" placeholder="Nombre del comprador" list="ve-compradores-list">
         <datalist id="ve-compradores-list">${compradores.map(c => `<option value="${c.nombre}">`).join('')}</datalist>
@@ -11341,10 +11374,8 @@ function buildVentas() {
       <div class="fg"><label>Peso total en campo (kg) <span class="opt">(opcional)</span></label><input type="number" id="ve-peso" placeholder="Ej: 12650" min="0" oninput="actualizarImporteVenta_()"></div>
       <div class="fg"><label>Precio pactado $/kg <span class="opt">(opcional)</span></label><input type="number" id="ve-precio" placeholder="Ej: 2850" min="0" oninput="actualizarImporteVenta_()"></div>
       <div class="fg" id="ve-importe-preview" style="display:none"><label>Importe estimado</label><div id="ve-importe-val" style="font-size:17px;font-weight:700;padding:8px 0;color:var(--green-text)"></div></div>
-      <div class="fg"><label>Campaña</label>
-        <input type="text" id="ve-campana" placeholder="Ej: 2025/2026" list="ve-campana-list" value="${ultimaCampanaVentas_()}">
-        <datalist id="ve-campana-list">${[...new Set((S.cache.ventas||[]).map(v=>v.campana).filter(Boolean).filter(esCampanaValida_))].map(c=>`<option value="${c}">`).join('')}</datalist>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">Precargada con la última campaña usada — cambiala solo si esta venta corresponde a otro ciclo.</div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="ve-campana-id">${svCampanaOptionsHtml_(today())}</select>
       </div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="ve-obs" placeholder="Opcional"></div>
     </div>
@@ -11479,6 +11510,8 @@ function attachVentasEvents() {
     // El campo SIEMPRE se deriva del rodeo seleccionado (catálogo), nunca del select de campo —
     // así se evita guardar una venta con campo_id desincronizado del rodeo real.
     const rodeoObj = rodeosTodos().find(r => String(r.rodeo_id) === String(rodeoIdSel));
+    const campanaIdSel = document.getElementById('ve-campana-id')?.value || '';
+    const campanaObjSel = (S.cache.campanas||[]).find(c => String(c.campana_id) === String(campanaIdSel));
     const data = {
       fecha_salida: document.getElementById('ve-fecha').value,
       rodeo_id: rodeoIdSel,
@@ -11489,10 +11522,11 @@ function attachVentasEvents() {
       peso_campo_kg: peso,
       precio_pactado: precio,
       observaciones: document.getElementById('ve-obs').value.trim(),
-      campana: document.getElementById('ve-campana')?.value.trim() || '',
+      campana_id: campanaIdSel,
+      campana: campanaObjSel ? campanaObjSel.nombre : '', // texto histórico, derivado automáticamente — ya no se tipea a mano
     };
     if (!data.fecha_salida || !data.rodeo_id || !data.cant_animales) { toast('Completá fecha, rodeo y cantidad.', 'err'); return; }
-    if (!data.campana) { toast('Completá la campaña antes de registrar.', 'err'); return; }
+    if (!data.campana_id) { toast('Elegí la campaña antes de registrar.', 'err'); return; }
     save.disabled = true;
     try {
       await apiCall('create', { body: { entity: 'ventas', data } });
@@ -11530,7 +11564,7 @@ function buildInsumos() {
           <div class="radio-pill selected" data-tipo="Consumo">Consumo (sale stock)</div>
         </div>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="in-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="in-fecha" value="${today()}" onchange="const c=document.getElementById('in-campana-id'); if(c) c.innerHTML = svCampanaOptionsHtml_(this.value)"></div>
     </div>
     <div class="fgrid">
       <div class="fg" style="min-width:240px"><label>Producto <a href="javascript:void(0)" onclick="toggleNuevoProducto()" style="font-size:11px;margin-left:8px;font-weight:600">+ nuevo producto</a></label>
@@ -11552,9 +11586,8 @@ function buildInsumos() {
       <div class="fg" id="in-rodeo-wrap" style="display:none"><label>Rodeo</label>
         <select id="in-rodeo">${rodeoOptionsHtml(rodeosConStockPorCampo_(campos[0]?.campo_id))}</select>
       </div>
-      <div class="fg" id="in-campana-wrap" style="display:none;min-width:220px"><label>Campaña <span class="opt">(opcional — gasto para un servicio futuro)</span></label>
-        <input type="text" id="in-campana" placeholder="Ej: Servicio 2026/2027" list="in-campana-list">
-        <datalist id="in-campana-list">${[...new Set((S.cache.consumos_insumos || []).map(c => c.campana).filter(Boolean).filter(esCampanaValida_))].map(c => `<option value="${c}">`).join('')}</datalist>
+      <div class="fg" id="in-campana-wrap" style="display:none;min-width:220px"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="in-campana-id">${svCampanaOptionsHtml_(today())}</select>
       </div>
       <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
     </div>
@@ -12125,11 +12158,15 @@ function attachInsumosEvents() {
           save.disabled = false;
           return;
         }
+        const campanaIdSelC = document.getElementById('in-campana-id')?.value || '';
+        if (!campanaIdSelC) { toast('Elegí la campaña del consumo.', 'err'); save.disabled = false; return; }
+        const campanaObjSelC = (S.cache.campanas||[]).find(c => String(c.campana_id) === String(campanaIdSelC));
         const data = {
           fecha, producto_id: productoId,
           campo_id: document.getElementById('in-campo').value, rodeo_id: rodeoId,
           cantidad, observaciones: document.getElementById('in-obs').value.trim(),
-          campana: document.getElementById('in-campana').value.trim(),
+          campana_id: campanaIdSelC,
+          campana: campanaObjSelC ? campanaObjSelC.nombre : '',
         };
         await apiCall('create', { body: { entity: 'consumos_insumos', data } });
         invalidateCache('consumos_insumos');
@@ -17085,11 +17122,11 @@ function campanaDeFecha_(fecha) {
 // pero queda seleccionable/editable por si el usuario necesita asignarla a
 // otra (ej: un caso límite, o mientras se termina de cargar la campaña
 // siguiente en el catálogo).
-function svCampanaOptionsHtml_(fecha) {
+function svCampanaOptionsHtml_(fecha, campanaIdForzada) {
   const campanas = (S.cache.campanas || []).slice().sort((a,b) => String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
   if (!campanas.length) return '<option value="">— No hay campañas cargadas —</option>';
-  const propuesta = campanaDeFecha_(fecha);
-  return campanas.map(c => `<option value="${c.campana_id}" ${propuesta && String(propuesta.campana_id)===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
+  const idSeleccionado = campanaIdForzada ? String(campanaIdForzada) : (() => { const p = campanaDeFecha_(fecha); return p ? String(p.campana_id) : null; })();
+  return campanas.map(c => `<option value="${c.campana_id}" ${idSeleccionado===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
 }
 
 // Diagnóstico de cobertura: cuántos registros de Pariciones/Mortandad/Abortos
