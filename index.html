@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_112';
+const APP_VERSION = 'index_consolidado_4_6_155_113';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -610,11 +610,33 @@ function vacasPendientesDeParir_(rodeoId) {
   const nacidosMuertos = pariciones.reduce((s, p) => s + (Number(p.nacidos_muertos) || 0), 0);
   const yaParieron = nacidosVivos + nacidosMuertos;
 
+  const fechaTacto = ultimoTactoFinal ? ultimoTactoFinal.fecha : null;
+
+  // Preñadas importadas/exportadas por Traslado DESPUÉS del tacto final usado
+  // arriba — mismo criterio que getPrenadasDisponibles_ en el backend: se
+  // toma el 100% de la cantidad movida (no una tasa), y solo entre rodeos de
+  // categoría vaca/vaquillona (para no contar como preñada una reposición de
+  // vientres sin tactar que entra desde Recría). Sin esto, un rodeo que
+  // recibió preñadas de otro por traslado (ej: rodeo 2022 → rodeo 3) seguía
+  // mostrando acá el número de ANTES del traslado.
+  const idsVacaVaqAviso = new Set(
+    (S.catalogs?.rodeos || []).filter(r => r.categoria === 'vaca' || r.categoria === 'vaquillona').map(r => String(r.rodeo_id))
+  );
+  let importadas = 0, exportadas = 0;
+  (S.cache.movimientos || []).forEach(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return;
+    if (!idsVacaVaqAviso.has(String(m.rodeo_origen_id)) || !idsVacaVaqAviso.has(String(m.rodeo_destino_id))) return;
+    if (fechaTacto && String(m.fecha) < String(fechaTacto)) return;
+    const cant = Number(m.cantidad) || 0;
+    if (String(m.rodeo_destino_id) === String(rodeoId)) importadas += cant;
+    if (String(m.rodeo_origen_id) === String(rodeoId)) exportadas += cant;
+  });
+  const prenadasAjustadas = prenadas + importadas - exportadas;
+
   // Vacas abortadas: no van a parir, hay que descontarlas del total de
   // preñadas igual que las que ya parieron. Solo se cuentan las que abortaron
   // DESPUÉS de la fecha del tacto final (las de antes ya no deberían estar
   // contadas como "preñadas" en ese tacto, si el tacto se hizo correctamente).
-  const fechaTacto = ultimoTactoFinal ? ultimoTactoFinal.fecha : null;
   const abortos = (S.cache.abortos || []).filter(a =>
     String(a.rodeo_id) === String(rodeoId) && (!fechaTacto || String(a.fecha) >= String(fechaTacto))
   ).length;
@@ -630,8 +652,8 @@ function vacasPendientesDeParir_(rodeoId) {
     String(m.rodeo_id) === String(rodeoId) && (!fechaTacto || String(m.fecha) >= String(fechaTacto)) && !esMortandadPorParicion_(m)
   ).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
-  const pendientes = Math.max(0, prenadas - abortos - muertas - yaParieron);
-  return { prenadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
+  const pendientes = Math.max(0, prenadasAjustadas - abortos - muertas - yaParieron);
+  return { prenadas: prenadasAjustadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
 }
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
