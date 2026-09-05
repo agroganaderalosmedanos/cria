@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_110';
+const APP_VERSION = 'index_consolidado_4_6_155_111';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3639,11 +3639,23 @@ window.paBuscarHuerfanos_ = async function() {
       !/\[abid:\d+\]/.test(String(m.observaciones||''))
     );
     trasladosAbortoSinTag.forEach(m => {
+      // Auto-sugerencia: si hay EXACTAMENTE un Aborto formal con el mismo
+      // rodeo y la misma fecha que este traslado, es casi seguro que sea el
+      // mismo evento (así lo confirmamos a mano, caso por caso, con el
+      // usuario) — se ofrece vincularlo directo con un botón. Si hay 0 o más
+      // de 1 candidato, se deja para revisión manual como antes.
+      const candidatos = (S.cache.abortos||[]).filter(a =>
+        String(a.rodeo_id) === String(m.rodeo_origen_id) && String(a.fecha) === String(m.fecha)
+      );
+      const candidato = candidatos.length === 1 ? candidatos[0] : null;
       filas.push({
         tipoLabel:'Traslado con "aborto" en el texto, SIN vincular a ningún Aborto', entity:'movimientos', id:m.movimiento_id,
         fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_origen_id), cantidad:m.cantidad,
-        origen:`"${m.observaciones}" — revisar a mano si corresponde a un Aborto real o es un duplicado`,
-        soloRevision:true,
+        origen: candidato
+          ? `"${m.observaciones}" — coincide con el Aborto de este rodeo y fecha (caravana ${candidato.caravana_vaca||'—'}) — vincular para que deje de contar dos veces en Análisis de Mortandad`
+          : `"${m.observaciones}" — revisar a mano si corresponde a un Aborto real o es un duplicado`,
+        soloRevision: !candidato,
+        candidatoAbortoId: candidato ? candidato.aborto_id : null,
       });
     });
     // Posibles duplicados: dos o más traslados a un rodeo de categoría "venta"
@@ -3754,6 +3766,8 @@ window.paRenderHuerfanosTabla_ = function() {
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizado_('${f.entity}','${f.id}','${f.abortoId}')">Corregir</button>`
         : f.desincronizadoParicion
         ? `<button class="btn btn-secondary btn-sm" onclick="window.paCorregirDesincronizadoParicion_('${f.paricionIdSync}')">Corregir</button>`
+        : f.candidatoAbortoId
+        ? `<button class="btn btn-primary btn-sm" onclick="window.paVincularAborto_('${f.entity}','${f.id}','${f.candidatoAbortoId}')">Vincular</button>`
           : f.soloRevision
             ? `<button class="btn btn-secondary btn-sm" onclick="window.paBorrarHuerfano_('${f.entity}','${f.id}')">Borrar (si corresponde)</button>`
             : f.entity && f.id
@@ -3804,6 +3818,21 @@ window.paCorregirDesincronizadoParicion_ = async function(paricionId) {
     await loadEntity('movimientos', true); await loadEntity('mortandad', true);
     S.stock = null; await loadStock();
     toast('Sincronizado', 'ok');
+    window.paBuscarHuerfanos_();
+  } catch (err) { toast(err.message, 'err'); }
+};
+window.paVincularAborto_ = async function(entity, movId, abortoId) {
+  const mov = (S.cache.movimientos||[]).find(m => String(m.movimiento_id)===String(movId));
+  if (!mov) { toast('No se encontró el traslado — recargá la página e intentá de nuevo.', 'err'); return; }
+  if (!confirm(`¿Vincular este traslado con el Aborto id ${abortoId}? Se le agrega el tag [abid:${abortoId}] adelante del texto que ya tiene, sin borrar nada — y deja de contarse dos veces en Análisis de Mortandad.`)) return;
+  try {
+    const obsActual = String(mov.observaciones||'');
+    // Evita agregar el tag dos veces si por algún motivo ya lo tuviera.
+    const obsNueva = /\[abid:\d+\]/.test(obsActual) ? obsActual : `[abid:${abortoId}] ${obsActual}`;
+    await apiCall('update', { body: { entity, id: movId, data: { observaciones: obsNueva } } });
+    invalidateCache('movimientos');
+    await loadEntity('movimientos', true);
+    toast('Vinculado', 'ok');
     window.paBuscarHuerfanos_();
   } catch (err) { toast(err.message, 'err'); }
 };
