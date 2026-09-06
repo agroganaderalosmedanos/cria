@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_166';
+const APP_VERSION = 'index_consolidado_4_6_155_168';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2289,9 +2289,9 @@ function campanaAnteriorA_(campanaId) {
   const idx = campanasOrdenadas.findIndex(c => String(c.campana_id) === String(campanaId));
   return idx > 0 ? campanasOrdenadas[idx-1] : null;
 }
-// Valoriza (a precios de HOY, mismo criterio que "Stock valorizado actual")
-// un mapa {rodeo_id: stock} para un conjunto de rodeos — reusado tanto para
-// valorizar el EI heredado como el EF de cualquier campaña.
+// Valoriza (a precios de HOY, mismo criterio ya establecido para "Stock
+// valorizado actual" — un ítem de BALANCE que se revisa a precio corriente)
+// un mapa {rodeo_id: stock} para un conjunto de rodeos.
 function valorizarStockPorRodeoHoy_(stockPorRodeo, rodeosFiltro, pesadasArr) {
   let total = 0;
   rodeosFiltro.forEach(r => {
@@ -2302,6 +2302,63 @@ function valorizarStockPorRodeoHoy_(stockPorRodeo, rodeosFiltro, pesadasArr) {
     total += valorizarRodeo_(r, stock, pesoP);
   });
   return total;
+}
+// Mismo cálculo que valorizarRodeo_, pero con precio y pesada VIGENTES A UNA
+// FECHA dada en vez de "hoy" — no modifica valorizarRodeo_ (usada en muchos
+// otros lados con la convención de precio corriente) para no arriesgar nada
+// ahí; esta es una función aparte, aislada, solo para este uso puntual.
+function valorizarRodeoAFecha_(rodeo, stock, fecha) {
+  const cant = Number(stock) || 0;
+  if (!cant) return 0;
+  const p = preciosValGet_(fecha);
+  const cat = (rodeo.categoria || '').toLowerCase().trim();
+  if (CATS_POR_CABEZA_.includes(cat)) {
+    const precio = cat === 'toro' ? (p.toro||0) : cat === 'torito' ? (p.torito||0) : (p.vaca||0);
+    return cant * precio;
+  }
+  const pesoP = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
+  const precioPorKg = cat === 'ternero' ? (p.ternero||0) : cat === 'ternera' ? (p.ternera||0)
+    : cat === 'vaquillona' ? (p.vaquillona||0) : cat === 'vaquillona venta' ? (p.vaquillona_venta||0)
+    : cat === 'novillito' ? (p.novillito||0) : cat === 'novillo' ? (p.novillo||0)
+    : cat === 'vaca venta' ? (p.vaca_venta||0) : 0;
+  if (pesoP && precioPorKg) return cant * pesoP * precioPorKg;
+  const precioCab = cat === 'ternero' ? (p.ternero_cab||0) : cat === 'ternera' ? (p.ternera_cab||0)
+    : cat === 'vaquillona' ? (p.vaquillona_cab||0) : cat === 'vaquillona venta' ? (p.vaquillona_venta_cab||0)
+    : cat === 'novillito' ? (p.novillito_cab||0) : cat === 'novillo' ? (p.novillo_cab||0)
+    : cat === 'vaca venta' ? (p.vaca_venta_cab||0) : 0;
+  return cant * precioCab;
+}
+// EI heredada: se valoriza al precio VIGENTE AL CIERRE de la campaña
+// anterior (fecha fija), no al de hoy — mismo espíritu que un Saldo Inicial
+// genuino, que se fija una vez con el precio de su propia fecha y no se
+// revaloriza cada vez que se lo mira. Distinto, a propósito, del criterio de
+// "Stock valorizado actual" (EF), que sí es a precio corriente porque
+// representa lo que valen HOY los animales que quedan en stock.
+function valorizarStockPorRodeoAFecha_(stockPorRodeo, rodeosFiltro, fecha) {
+  let total = 0;
+  rodeosFiltro.forEach(r => {
+    const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
+    if (!stock) return;
+    total += valorizarRodeoAFecha_(r, stock, fecha);
+  });
+  return total;
+}
+// Mismo criterio que metodoValorizacion_, pero mirando el precio vigente A
+// UNA FECHA dada (no siempre "hoy") — para que la etiqueta ("por kg"/"por
+// cabeza") que se muestra coincida con el precio que realmente se usó en el
+// cálculo cuando ese cálculo es a fecha fija (EF de una campaña cerrada, EI
+// heredada), no con el precio de hoy.
+function metodoValorizacionAFecha_(rodeo, fecha) {
+  const p = preciosValGet_(fecha);
+  const cat = (rodeo.categoria || '').toLowerCase().trim();
+  if (CATS_POR_CABEZA_.includes(cat)) return 'por cabeza';
+  const kg = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
+  const precioPorKg = cat === 'ternero' ? p.ternero : cat === 'ternera' ? p.ternera
+    : cat === 'vaquillona' ? p.vaquillona : cat === 'vaquillona venta' ? p.vaquillona_venta
+    : cat === 'novillito' ? p.novillito : cat === 'novillo' ? p.novillo
+    : cat === 'vaca venta' ? p.vaca_venta : 0;
+  if (kg && precioPorKg) return 'por kg';
+  return 'por cabeza (sin pesada)';
 }
 
 function buildDashboard() {
@@ -2542,22 +2599,25 @@ function buildDashboard() {
     stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
   });
 
+  // Fecha de valorización de esta campaña: si ya cerró (tiene fecha_fin), se
+  // valoriza SIEMPRE a esa fecha fija (no cambia según cuándo la consultes).
+  // Si es la campaña en curso (sin fecha_fin), se valoriza a la fecha de
+  // consulta (corte) — el precio vigente hoy o el último cargado antes.
+  const fechaValoracionCampSelec = campSelecObj && campSelecObj.fecha_fin ? campSelecObj.fecha_fin : corteCria;
   let stockValCriaARS = 0;
   const stockDetalleRows = [];
   rodeosCriaFilt.forEach(r => {
     const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
     if (!stock) return;
-    const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-    const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
-    const val = valorizarRodeo_(r, stock, pesoP);
+    const pesoP = ultimaPesadaACorte_(r.rodeo_id, fechaValoracionCampSelec);
+    const val = valorizarRodeoAFecha_(r, stock, fechaValoracionCampSelec);
     stockValCriaARS += val;
     if (val > 0 || stock > 0) stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
   });
-  // "Stock valorizado" es un ítem de BALANCE (lo que valen los animales que
-  // quedan HOY/al corte) — se convierte una sola vez a la cotización del
-  // corte, a diferencia de los ítems de FLUJO (ventas, cesiones, compras,
-  // consumos) que se convierten cada uno a la cotización de SU PROPIA fecha.
-  const stockValCria = convertirAMoneda_(stockValCriaARS, corteCria, _criaMoneda);
+  // "Stock valorizado" es un ítem de BALANCE — se convierte una sola vez, a
+  // la cotización de la MISMA fecha de valorización (fija si la campaña ya
+  // cerró, de corte si está en curso) — no siempre "hoy".
+  const stockValCria = convertirAMoneda_(stockValCriaARS, fechaValoracionCampSelec, _criaMoneda);
 
   const totalIngresos = totalVentas + totalCesiones + stockValCria;
 
@@ -2584,8 +2644,8 @@ function buildDashboard() {
   // ningún Movimiento artificial.
   const campAnteriorObj = campanaAnteriorA_(campSelec);
   const eiHeredadoStockPorRodeo = campAnteriorObj ? efCriaCampanaStockPorRodeo_(campAnteriorObj.campana_id) : {};
-  const eiHeredadoARS = valorizarStockPorRodeoHoy_(eiHeredadoStockPorRodeo, rodeosCriaFilt, pesadas);
-  const totalSaldoInicial = convertirAMoneda_(eiHeredadoARS, corteCria, _criaMoneda) + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, _criaMoneda), 0);
+  const eiHeredadoARS = campAnteriorObj ? valorizarStockPorRodeoAFecha_(eiHeredadoStockPorRodeo, rodeosCriaFilt, campAnteriorObj.fecha_fin) : 0;
+  const totalSaldoInicial = convertirAMoneda_(eiHeredadoARS, campAnteriorObj ? campAnteriorObj.fecha_fin : corteCria, _criaMoneda) + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, _criaMoneda), 0);
 
   // Altas por Parición (nacimientos) del período — mismo universo de rodeos/campo
   // que saldosIniciales, pero solo los que tienen el tag [pid:...].
@@ -2760,7 +2820,7 @@ function buildDashboard() {
   // cotización del corte (igual que en el Dashboard), no por transacción.
   const stockValCriaUSD = convertirAMoneda_(stockValCriaARS, corteCria, 'USD');
   const totalIngresosUSD = totalVentasUSD + totalCesionesUSD + stockValCriaUSD;
-  const totalSaldoInicialUSD = convertirAMoneda_(eiHeredadoARS, corteCria, 'USD') + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
+  const totalSaldoInicialUSD = convertirAMoneda_(eiHeredadoARS, campAnteriorObj ? campAnteriorObj.fecha_fin : corteCria, 'USD') + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
   const totalComprasUSD = comprasCria.reduce((s,c) => s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, 'USD'), 0);
   let totalAlimUSD = 0, totalVeterUSD = 0;
   consumosCria.forEach(c => {
@@ -2981,7 +3041,7 @@ function buildDashboard() {
         <th class="tr">Método</th><th class="tr">Valor total</th>
       </tr></thead><tbody>`;
     stockDetalleRows.forEach(row => {
-      const metodo = metodoValorizacion_(row.rodeo, row.pesoP);
+      const metodo = metodoValorizacionAFecha_(row.rodeo, fechaValoracionCampSelec);
       h += `<tr>
         <td><strong>${row.rodeo.nombre}</strong></td>
         <td>${campoNombre(row.rodeo.campo_id)}</td>
@@ -3015,16 +3075,17 @@ function buildDashboard() {
     if (rodeosConEIHeredada.length) {
       // Heredado del cierre de la campaña anterior — CALCULADO en el momento
       // (ver eiCriaCampana_/efCriaCampanaStockPorRodeo_), no un Movimiento
-      // cargado en Sheets. Valorizado a precio de HOY, mismo criterio que
-      // "Stock valorizado actual".
-      h += `<p class="helper-text">Heredado del cierre de la campaña anterior (calculado, no es un Movimiento cargado):</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Valor (precio de hoy)</th></tr></thead><tbody>`;
+      // cargado en Sheets. Valorizado al precio VIGENTE AL CIERRE de la
+      // campaña anterior (fecha fija) — mismo criterio que un Saldo Inicial
+      // genuino, que se fija una vez y no se revaloriza cada vez que se lo
+      // mira. Distinto, a propósito, de "Stock valorizado actual" (EF), que
+      // sí es a precio de hoy.
+      h += `<p class="helper-text">Heredado del cierre de la campaña anterior (calculado, no es un Movimiento cargado) — valorizado al precio vigente al ${fd(campAnteriorObj.fecha_fin)}:</p>
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Valor (al cierre anterior)</th></tr></thead><tbody>`;
       rodeosConEIHeredada.forEach(r => {
         const cant = eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0;
-        const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-        const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
-        const val = valorizarRodeo_(r, cant, pesoP);
-        const valConv = convertirAMoneda_(val, corteCria, _criaMoneda);
+        const val = valorizarRodeoAFecha_(r, cant, campAnteriorObj.fecha_fin);
+        const valConv = convertirAMoneda_(val, campAnteriorObj.fecha_fin, _criaMoneda);
         totEICab += cant; totEIVal += valConv;
         h += `<tr><td><strong>${r.nombre}</strong></td><td class="tc">${fn(cant)}</td><td class="tr">${fnMoneda_(valConv,_criaMoneda)}</td></tr>`;
       });
