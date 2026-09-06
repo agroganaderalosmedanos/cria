@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_146';
+const APP_VERSION = 'index_consolidado_4_6_155_147';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2201,7 +2201,6 @@ function buildDashboard() {
   const productos= S.cache.productos || [];
   const sueldos  = sueldosGetAll_();
   const pesadas  = (S.cache.pesadas || []).filter(p => (p.fecha||'') <= corteCria);
-  const mortandadCria = (S.cache.mortandad || []).filter(m => (m.fecha||'') <= corteCria);
 
   // Campañas disponibles — vienen del catálogo real de Campañas (mismo que ya
   // usan Servicios/Tactos/Ventas/Cesiones/Consumos/Compras al cargar cada
@@ -2236,6 +2235,12 @@ function buildDashboard() {
   const ventas   = (S.cache.ventas || []).filter(v => (v.fecha_salida||'') <= corteCria && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campSelec));
   const consumos = (S.cache.consumos_insumos || []).filter(c => (c.fecha||'') <= corteCria && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
   const comprasH = comprasHacGetAll_().filter(c => (c.fecha||'') <= corteCria && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
+  // v15: Mortandad ya tiene campana_id propio (antes no tenía forma de acotarse
+  // a una campaña — solo se cortaba por fecha, mezclando muertes de campañas
+  // distintas al mirar una campaña ya cerrada). Mismo criterio que el resto:
+  // si el registro no tiene campana_id cargado (viejo, de antes de v15), se
+  // usa la campaña que corresponde por fecha como respaldo.
+  const mortandadCria = (S.cache.mortandad || []).filter(m => (m.fecha||'') <= corteCria && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
 
   const campSelecField = S._dashCampo || '';
 
@@ -4275,7 +4280,10 @@ function buildMortandad() {
       <div class="fg"><label>Campo</label>
         <select id="mo-campo" onchange="document.getElementById('mo-rodeo').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="mo-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="mo-fecha" value="${today()}" onchange="document.getElementById('mo-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="mo-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
       <div class="fg"><label>Rodeo</label>
         <select id="mo-rodeo">${rodeoOptionsHtml(rodeosTodosL)}</select>
       </div>
@@ -4306,12 +4314,28 @@ function buildMortandad() {
     </div>
   </div>
   <div id="mo-hist-tabla">`;
-  h += buildEntityTable(items, MORTANDAD_COLS_, 'mortandad', 'mortandad_id');
+  h += buildEntityTable(items.map(conCampanaNombreMortandad_), MORTANDAD_COLS_, 'mortandad', 'mortandad_id');
   h += `</div>`;
   return h;
 }
+// Nombre de campaña para mostrar en la tabla — deriva de campana_id (fuente
+// de verdad); si falta (registro viejo, cargado antes de v15), se propone
+// por fecha, marcada "(sin confirmar)" para diferenciarla de una campaña
+// realmente confirmada. Mismo criterio que conCampanaNombre_ usa en Ventas.
+function conCampanaNombreMortandad_(it) {
+  let nombre;
+  if (it.campana_id) {
+    const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(it.campana_id));
+    nombre = c ? c.nombre : '⚠ Campaña inválida';
+  } else {
+    const c = campanaDeFecha_(it.fecha);
+    nombre = c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
+  }
+  return { ...it, _campanaNombre: nombre };
+}
 const MORTANDAD_COLS_ = [
   { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+  { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : (v.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${v}</span>` : v) },
   { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
   { key: 'caravana_ternero', label: 'Caravana', render: v => v || '—' },
   { key: 'cantidad', label: 'Cant.', render: v => fn(v) },
@@ -4330,12 +4354,13 @@ function attachMortandadEvents() {
       return true;
     });
     const el = document.getElementById('mo-hist-tabla');
-    if (el) { el.innerHTML = buildEntityTable(items, MORTANDAD_COLS_, 'mortandad', 'mortandad_id'); attachTableDeleteEvents('mortandad', 'mortandad_id'); }
+    if (el) { el.innerHTML = buildEntityTable(items.map(conCampanaNombreMortandad_), MORTANDAD_COLS_, 'mortandad', 'mortandad_id'); attachTableDeleteEvents('mortandad', 'mortandad_id'); }
   };
   const save = document.getElementById('mo-save');
   if (save) save.onclick = async () => {
     const data = {
       fecha: document.getElementById('mo-fecha').value,
+      campana_id: document.getElementById('mo-campana-id').value,
       rodeo_id: document.getElementById('mo-rodeo').value,
       caravana_ternero: document.getElementById('mo-caravana').value.trim(),
       cantidad: Number(document.getElementById('mo-cantidad').value) || 1,
@@ -18111,11 +18136,14 @@ function openEditModal(entity, idCol, id) {
     if (!('precio_kg' in item)) item.precio_kg = 0;
     if (!('peso_prom_kg' in item)) item.peso_prom_kg = 0;
   }
-  // Las 5 entidades que ahora imputan a una Campaña — si el objeto en caché
+  // Las 6 entidades que ahora imputan a una Campaña — si el objeto en caché
   // no trae la clave (registro cargado antes de agregar la columna, o caché
   // vieja del navegador sin refrescar), el campo directamente no aparecía en
   // el modal — no es que faltara el selector, faltaba el campo entero.
-  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity)) {
+  // Mortandad (agregada en v15) nunca tuvo un campo de texto libre 'campana'
+  // como las otras cinco, así que solo necesita este default — no entra en
+  // ocultarCampanaTexto porque no hay nada viejo que ocultarle.
+  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad'].includes(entity)) {
     if (!('campana_id' in item)) item.campana_id = '';
   }
   const ocultarCampanaTexto = ['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity);
