@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_144';
+const APP_VERSION = 'index_consolidado_4_6_155_146';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -11370,6 +11370,23 @@ function buildVentas() {
   // Separar por estado
   const pendientes = items.filter(v => !v.importe_liq && !v.estado?.includes('liquidado'));
   const liquidadas = items.filter(v => v.importe_liq || v.estado?.includes('liquidado'));
+  // Nombre de campaña real para mostrar en la tabla — SIEMPRE deriva del
+  // campana_id guardado (fuente de verdad), no del texto viejo. Si falta
+  // (registro viejo sin campana_id todavía), cae al texto viejo, y si
+  // tampoco hay texto, se propone por fecha (mismo criterio que el resto).
+  const conCampanaNombre_ = v => {
+    let nombre = null;
+    if (v.campana_id) {
+      const c = (S.cache.campanas||[]).find(x => String(x.campana_id) === String(v.campana_id));
+      nombre = c ? c.nombre : null;
+    }
+    if (!nombre && v.campana) nombre = v.campana + ' (sin confirmar)';
+    if (!nombre) {
+      const c = campanaDeFecha_(v.fecha_salida);
+      nombre = c ? c.nombre + ' (sin confirmar)' : null;
+    }
+    return { ...v, _campanaNombre: nombre };
+  };
 
   let h = `<div class="page-header"><div class="page-title">Ventas</div>
     <div class="page-sub">Cría, Recría y Engorde — registrá la salida y completá la liquidación cuando llegue del frigorífico</div></div>`;
@@ -11403,9 +11420,9 @@ function buildVentas() {
   // Pendientes de liquidación
   if (pendientes.length) {
     h += `<div class="section-label" style="color:var(--clay-text)">⏳ Pendientes de liquidación</div>`;
-    h += buildEntityTable(pendientes, [
+    h += buildEntityTable(pendientes.map(conCampanaNombre_), [
       { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
-      { key: 'campana', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
+      { key: '_campanaNombre', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
       { key: 'rodeo_id', label: 'Rodeo', render: v => `${rodeoNombre(v)} <span class="pill pill-gold" style="font-size:10px">${actividadDeRodeo_(v)}</span>` },
       { key: 'comprador', label: 'Comprador', render: v => v || '—' },
       { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
@@ -11417,9 +11434,9 @@ function buildVentas() {
 
   // Historial liquidadas
   h += `<div class="section-label">Historial de ventas</div>`;
-  h += buildEntityTable(liquidadas, [
+  h += buildEntityTable(liquidadas.map(conCampanaNombre_), [
     { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
-    { key: 'campana', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
+    { key: '_campanaNombre', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
     { key: 'rodeo_id', label: 'Rodeo', render: v => `${rodeoNombre(v)} <span class="pill pill-gold" style="font-size:10px">${actividadDeRodeo_(v)}</span>` },
     { key: 'comprador', label: 'Comprador', render: v => v || '—' },
     { key: 'cant_animales', label: 'Cant.', render: v => fn(v) },
@@ -18101,7 +18118,8 @@ function openEditModal(entity, idCol, id) {
   if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity)) {
     if (!('campana_id' in item)) item.campana_id = '';
   }
-  const keys = Object.keys(item).filter(k => k !== idCol);
+  const ocultarCampanaTexto = ['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity);
+  const keys = Object.keys(item).filter(k => k !== idCol && !(ocultarCampanaTexto && k === 'campana'));
   const rodeosL = rodeosTodos();
   const camposL = (S.catalogs && S.catalogs.campos) || [];
   const productosL = (S.catalogs && S.catalogs.productos) || [];
