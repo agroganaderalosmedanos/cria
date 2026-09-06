@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_168';
+const APP_VERSION = 'index_consolidado_4_6_155_169';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2599,11 +2599,19 @@ function buildDashboard() {
     stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1);
   });
 
-  // Fecha de valorización de esta campaña: si ya cerró (tiene fecha_fin), se
-  // valoriza SIEMPRE a esa fecha fija (no cambia según cuándo la consultes).
-  // Si es la campaña en curso (sin fecha_fin), se valoriza a la fecha de
-  // consulta (corte) — el precio vigente hoy o el último cargado antes.
-  const fechaValoracionCampSelec = campSelecObj && campSelecObj.fecha_fin ? campSelecObj.fecha_fin : corteCria;
+  // Fecha de valorización de esta campaña: si NO es la campaña activa (ya
+  // cerró), se valoriza SIEMPRE a su fecha_fin (fija, no cambia según cuándo
+  // la consultes). Si SÍ es la activa, se valoriza a la fecha de consulta
+  // (corte) — el precio vigente hoy o el último cargado antes.
+  // OJO — bug real encontrado y corregido: antes se usaba "¿tiene fecha_fin
+  // cargada?" para decidir esto, pero las campañas se cargan con las DOS
+  // fechas desde el arranque (son períodos de calendario conocidos de
+  // antemano, ej. 01/05/2026 a 30/04/2027) — así que la campaña activa
+  // TAMBIÉN tiene fecha_fin cargada, y con ese criterio se la valorizaba
+  // igual que si ya hubiese cerrado (a una fecha futura, ni siquiera
+  // llegada). La señal correcta de "¿está cerrada?" es el flag "activa" del
+  // catálogo de Campañas (esCampanaActivaCria), no la presencia de fecha_fin.
+  const fechaValoracionCampSelec = !esCampanaActivaCria && campSelecObj && campSelecObj.fecha_fin ? campSelecObj.fecha_fin : corteCria;
   let stockValCriaARS = 0;
   const stockDetalleRows = [];
   rodeosCriaFilt.forEach(r => {
