@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_170';
+const APP_VERSION = 'index_consolidado_4_6_155_171';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1112,7 +1112,7 @@ async function goto(page) {
   // Normalmente ya está cargado por el paquete inicial (initBundle), esto es
   // solo una red de seguridad para el caso de entrar a la página antes de que
   // ese paquete termine.
-  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard') && !S.cache.campanas) {
+  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'recria_dashboard') && !S.cache.campanas) {
     try { await loadEntity('campanas'); } catch (err) { /* silencioso */ }
   }
   // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
@@ -2359,6 +2359,76 @@ function metodoValorizacionAFecha_(rodeo, fecha) {
     : cat === 'vaca venta' ? p.vaca_venta : 0;
   if (kg && precioPorKg) return 'por kg';
   return 'por cabeza (sin pesada)';
+}
+
+// ── EXISTENCIA INICIAL RECURSIVA (Recría) ────────────────────────────────
+// Mismo mecanismo que en Cría (ver eiCriaCampana_/efCriaCampanaStockPorRodeo_
+// más arriba): la Existencia Inicial de una campaña para Recría NUNCA se
+// guarda — se calcula siempre como la Existencia Final de la campaña
+// anterior, recursivamente, hasta el primer Saldo Inicial real cargado.
+// A diferencia de Cría, acá NO hace falta el caso especial de "alta por
+// parición": ningún Movimiento tageado [pid:...] apunta jamás a un rodeo de
+// actividad Recría (esos van siempre al rodeo "Terneros (Madre)", que es de
+// Cría) — así que cualquier Movimiento tipo 'Saldo inicial' que apunte a un
+// rodeo de Recría es sin ambigüedad un alta real (arranque del sistema, o
+// incorporación de un rodeo nuevo) y va derecho a la Existencia Inicial.
+// No se filtra por rodeo "activo": un rodeo que hoy está inactivo pudo tener
+// stock en una campaña vieja, y no tiene que desaparecer de su propia
+// historia — mismo criterio que ya usa el backend (getStockTodos_) y que
+// usan eiCriaCampana_/efCriaCampanaStockPorRodeo_ para Cría.
+function rodeosRecriaIds_() {
+  const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+  return new Set(rodeos.filter(r => normAct_(r.actividad) === 'recria').map(r => String(r.rodeo_id)));
+}
+let _memoEiRecriaCampana_ = {};
+function eiRecriaCampana_(campanaId) {
+  if (!campanaId) return { stockPorRodeo: {}, propios: [] };
+  if (_memoEiRecriaCampana_[campanaId]) return _memoEiRecriaCampana_[campanaId];
+  const anterior = campanaAnteriorA_(campanaId);
+  const base = anterior ? efRecriaCampanaStockPorRodeo_(anterior.campana_id) : {};
+
+  const rodeosRecIds = rodeosRecriaIds_();
+  const propios = (S.cache.movimientos || []).filter(m =>
+    m.tipo === 'Saldo inicial' && rodeosRecIds.has(String(m.rodeo_destino_id)) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)
+  );
+  const stockPorRodeo = Object.assign({}, base);
+  propios.forEach(m => {
+    stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + (Number(m.cantidad)||0);
+  });
+
+  const resultado = { stockPorRodeo, propios };
+  _memoEiRecriaCampana_[campanaId] = resultado;
+  return resultado;
+}
+// efRecriaCampanaStockPorRodeo_(campanaId): EI de esa campaña + todo lo que
+// pasó DENTRO de ella para rodeos de Recría — entradas por destete (Traslado
+// en bloque, tag [deid:...]), traslados internos entre rodeos de Recría,
+// salidas a Terminación (Traslado en bloque de la Cesión, ver
+// buildCesionesRecria), Ventas directas, y Mortandad. Los Egresos Recría NO
+// se usan acá a propósito: son el registro CONTABLE de la cesión a
+// Terminación (precio, para el margen), pero el movimiento de STOCK real ya
+// lo captura el Movimiento vinculado que se crea junto con cada cesión —
+// usar los dos sumaría la salida dos veces.
+function efRecriaCampanaStockPorRodeo_(campanaId) {
+  const ei = eiRecriaCampana_(campanaId);
+  const stockPorRodeo = Object.assign({}, ei.stockPorRodeo);
+  const rodeosRecIds = rodeosRecriaIds_();
+
+  const movsC = (S.cache.movimientos || []).filter(m =>
+    m.tipo !== 'Saldo inicial' && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId) &&
+    (rodeosRecIds.has(String(m.rodeo_destino_id)) || rodeosRecIds.has(String(m.rodeo_origen_id)))
+  );
+  movsC.forEach(m => {
+    const cant = Number(m.cantidad) || 0;
+    if (rodeosRecIds.has(String(m.rodeo_destino_id))) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    if (rodeosRecIds.has(String(m.rodeo_origen_id))) stockPorRodeo[String(m.rodeo_origen_id)] = (stockPorRodeo[String(m.rodeo_origen_id)]||0) - cant;
+  });
+  const ventasC = (S.cache.ventas || []).filter(v => rodeosRecIds.has(String(v.rodeo_id)) && campanaEfectiva_(v.fecha_salida, v.campana_id) === String(campanaId));
+  ventasC.forEach(v => { stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
+  const mortandadC = (S.cache.mortandad || []).filter(m => rodeosRecIds.has(String(m.rodeo_id)) && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId));
+  mortandadC.forEach(m => { stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
+  return stockPorRodeo;
 }
 
 function buildDashboard() {
@@ -6864,6 +6934,78 @@ function buildRecriaDashboard() {
     <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaRecriaExcel_()" title="Descarga un Excel con cabezas y $ por rodeo, más el detalle crudo de movimientos, para revisar todo sin pasar de pantalla en pantalla">📊 Exportar auditoría a Excel</button>
   </div>`;
 
+  // ── CAMPAÑA (Existencia recursiva) ───────────────────────────────────────
+  // Selector de Campaña propio de esta sección — independiente del filtro de
+  // "Campo" de arriba. Mismo criterio que Cría: si la campaña elegida es la
+  // activa, respeta la fecha de corte de arriba; si ya cerró, se muestra
+  // completa siempre (no tiene sentido "cortarla" a mitad de camino).
+  // _memoEiRecriaCampana_ se resetea acá (una vez por render) para no
+  // arrastrar resultados calculados con datos de un render anterior.
+  _memoEiRecriaCampana_ = {};
+  const campanasCatRec = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  const campanaActivaRec = campanasCatRec.find(c => c.activa===true || String(c.activa).toUpperCase()==='TRUE');
+  const campSelecCampanaRec = S.rcDashCampana || (campanaActivaRec ? campanaActivaRec.campana_id : (campanasCatRec[0]?.campana_id || ''));
+  const campSelecCampanaObjRec = campanasCatRec.find(c => String(c.campana_id) === String(campSelecCampanaRec));
+  const esCampanaActivaRecria = !!(campSelecCampanaObjRec && (campSelecCampanaObjRec.activa===true || String(campSelecCampanaObjRec.activa).toUpperCase()==='TRUE'));
+
+  h += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;margin-top:-8px">
+    <label style="font-size:13px;font-weight:600">Campaña (Existencia):</label>
+    <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
+      onchange="S.rcDashCampana=this.value;render()">
+      ${campanasCatRec.map(c=>`<option value="${c.campana_id}" ${String(campSelecCampanaRec)===String(c.campana_id)?'selected':''}>${c.nombre}${(c.activa===true||String(c.activa).toUpperCase()==='TRUE')?' (activa)':''}</option>`).join('')}
+    </select>
+  </div>`;
+
+  // Rodeos de Recría para esta sección — TODOS, incluyendo inactivos (un
+  // rodeo pudo tener stock en una campaña vieja y no debe desaparecer de su
+  // propia historia), filtrados por Campo si el filtro de arriba está puesto.
+  const rodeosRecCampanaSet = new Set(
+    rodeosAll.filter(r => normAct_(r.actividad)==='recria' && (!campSelec || String(r.campo_id)===String(campSelec)))
+      .map(r=>String(r.rodeo_id))
+  );
+
+  const movsCampanaRec = (S.cache.movimientos||[]).filter(m =>
+    (!esCampanaActivaRecria || (m.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campSelecCampanaRec) &&
+    (rodeosRecCampanaSet.has(String(m.rodeo_destino_id)) || rodeosRecCampanaSet.has(String(m.rodeo_origen_id)))
+  );
+  const ventasCampanaRec = (S.cache.ventas||[]).filter(v =>
+    (!esCampanaActivaRecria || (v.fecha_salida||'') <= corteRecria) &&
+    campanaEfectiva_(v.fecha_salida, v.campana_id) === String(campSelecCampanaRec) &&
+    rodeosRecCampanaSet.has(String(v.rodeo_id))
+  );
+  const mortandadCampanaRec = (S.cache.mortandad||[]).filter(m =>
+    (!esCampanaActivaRecria || (m.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campSelecCampanaRec) &&
+    rodeosRecCampanaSet.has(String(m.rodeo_id))
+  );
+
+  // EI heredado (recursivo) — mismo mecanismo que eiCriaCampana_.
+  const eiStockPorRodeoRec = eiRecriaCampana_(campSelecCampanaRec).stockPorRodeo;
+
+  // EF "real" — EI + lo que pasó DENTRO de la campaña, rodeo por rodeo — con
+  // los mismos datos ya scopeados por campaña de arriba. Se calcula acá (en
+  // vez de llamar directo a efRecriaCampanaStockPorRodeo_) para que sirva de
+  // segunda vía de cálculo independiente y cruce contra los términos
+  // clasificados (compras/cesiones/ventas/mortandad) de abajo — si ambos
+  // caminos no coinciden, algo está mal clasificado. Mismo criterio que ya
+  // usa Cría con stockDetalleRows / efCabCria.
+  const stockPorRodeoCampanaRec = Object.assign({}, eiStockPorRodeoRec);
+  movsCampanaRec.forEach(m => {
+    if (m.tipo === 'Saldo inicial') return; // ya contado en el EI de arriba
+    const cant = Number(m.cantidad)||0;
+    if (rodeosRecCampanaSet.has(String(m.rodeo_destino_id))) stockPorRodeoCampanaRec[String(m.rodeo_destino_id)] = (stockPorRodeoCampanaRec[String(m.rodeo_destino_id)]||0) + cant;
+    if (rodeosRecCampanaSet.has(String(m.rodeo_origen_id))) stockPorRodeoCampanaRec[String(m.rodeo_origen_id)] = (stockPorRodeoCampanaRec[String(m.rodeo_origen_id)]||0) - cant;
+  });
+  ventasCampanaRec.forEach(v => { stockPorRodeoCampanaRec[String(v.rodeo_id)] = (stockPorRodeoCampanaRec[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
+  mortandadCampanaRec.forEach(m => { stockPorRodeoCampanaRec[String(m.rodeo_id)] = (stockPorRodeoCampanaRec[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
+
+  const eiCabRecriaCampana = Array.from(rodeosRecCampanaSet).reduce((s,rid) => s + (eiStockPorRodeoRec[rid]||0), 0);
+  const efCabRecriaCampanaReal = Array.from(rodeosRecCampanaSet).reduce((s,rid) => s + Math.max(0, stockPorRodeoCampanaRec[rid]||0), 0);
+  const clasRecCampana = clasificarTrasladosActividad_(rodeosRecCampanaSet, movsCampanaRec);
+  const ventasCabRecriaCampana = ventasCampanaRec.reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+  const mortCabRecriaCampana = mortandadCampanaRec.reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+
   // ── CALCULAR INGRESOS Y EGRESOS ───────────────────────────────────────
   // Todos los rodeos de Recría (incluyendo inactivos/sin stock) para no perder histórico
   const todosRodeosRecria = rodeosAll.filter(r=>normAct_(r.actividad)==='recria'&&
@@ -7275,8 +7417,38 @@ function buildRecriaDashboard() {
     h += `</tbody></table></div></div>`;
   }
 
-  // ── Conciliación de Existencia (cabezas) — control cruzado EI/EF ────────
-  h += buildConciliacionCabezas_('Recría', {
+  // ── Conciliación de Existencia POR CAMPAÑA — Recría (cabezas) ────────────
+  // NUEVO — Existencia Inicial recursiva (EI = EF de la campaña anterior),
+  // mismo mecanismo que ya tiene Cría. Convive por ahora con el panel de más
+  // abajo (acumulado histórico a la fecha de corte, sin campaña) — ese no se
+  // toca en esta pasada; una vez que este cierre bien en todas las campañas
+  // se evalúa si lo reemplaza.
+  h += `<div class="section-label">📅 Existencia por campaña — ${campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : '—'}${esCampanaActivaRecria ? ' (activa)' : ' (cerrada)'}</div>`;
+  h += buildConciliacionCabezas_('Recría — ' + (campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : 'campaña'), {
+    ei: eiCabRecriaCampana, compras: clasRecCampana.compras, cesionesRecibidas: clasRecCampana.cesionesRecibidas,
+    nacimientos: 0, cesionesEnviadas: clasRecCampana.cesionesEnviadas,
+    ventas: ventasCabRecriaCampana, mortandad: mortCabRecriaCampana,
+  }, efCabRecriaCampanaReal);
+
+  const rodeosConEICampanaRec = Array.from(rodeosRecCampanaSet).filter(rid => (eiStockPorRodeoRec[rid]||0) > 0);
+  if (rodeosConEICampanaRec.length) {
+    h += `<div class="panel">
+      <div class="panel-title">📋 Existencia Inicial (EI) — por rodeo, campaña ${campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : ''}</div>
+      <p class="helper-text">Heredada del cierre de la campaña anterior (calculada, no es un Movimiento cargado en Sheets) + Saldos Iniciales reales cargados directamente en esta campaña, si los hay.</p>
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas (EI)</th></tr></thead><tbody>`;
+    let totEICampRec = 0;
+    rodeosConEICampanaRec.forEach(rid => {
+      const cant = eiStockPorRodeoRec[rid]||0;
+      totEICampRec += cant;
+      h += `<tr><td><strong>${rodeoNombre(rid)}</strong></td><td class="tc">${fn(cant)}</td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EI</td><td class="tc">${fn(totEICampRec)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
+  // ── Conciliación de Existencia HISTÓRICA (cabezas) — acumulado a la fecha
+  // de corte, sin distinguir campaña. Se deja sin tocar por ahora.
+  h += buildConciliacionCabezas_('Recría (histórico acumulado)', {
     ei: eiCabRecria, compras: clasRec.compras, cesionesRecibidas: clasRec.cesionesRecibidas,
     nacimientos: 0, cesionesEnviadas: clasRec.cesionesEnviadas,
     ventas: ventasCabRecria, mortandad: mortCabRecria,
