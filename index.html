@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_143';
+const APP_VERSION = 'index_consolidado_4_6_155_144';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -18093,6 +18093,13 @@ function openEditModal(entity, idCol, id) {
     if (!('precio_cabeza' in item)) item.precio_cabeza = 0;
     if (!('precio_kg' in item)) item.precio_kg = 0;
     if (!('peso_prom_kg' in item)) item.peso_prom_kg = 0;
+  }
+  // Las 5 entidades que ahora imputan a una Campaña — si el objeto en caché
+  // no trae la clave (registro cargado antes de agregar la columna, o caché
+  // vieja del navegador sin refrescar), el campo directamente no aparecía en
+  // el modal — no es que faltara el selector, faltaba el campo entero.
+  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity)) {
+    if (!('campana_id' in item)) item.campana_id = '';
   }
   const keys = Object.keys(item).filter(k => k !== idCol);
   const rodeosL = rodeosTodos();
