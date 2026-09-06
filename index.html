@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_164';
+const APP_VERSION = 'index_consolidado_4_6_155_165';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -606,7 +606,15 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
       exportadasDetallePorRodeo[rid].push({ cantidad: cantVendida, aNombre: 'Venta directa', fecha: fechaTacto, fechaTacto });
     }
     if (cantVendida>0 || cantTrasladoNoVaca>0) {
-      salidasExternasPorRodeo[rid] = { ventas: cantVendida, trasladoNoVaca: cantTrasladoNoVaca, total: 0, cabezas: cantVendida+cantTrasladoNoVaca };
+      // OJO — bug real encontrado y corregido: "total" quedaba hardcodeado en
+      // 0 (un resabio de una versión anterior), así que pendientesAjustado
+      // (que resta salidasExternas.total) nunca restaba las descartadas de
+      // verdad — esas cabezas quedaban "de más" adentro de Pendientes, y
+      // ADEMÁS se sumaban aparte en el balde de Descartadas. Resultado: la
+      // suma de verificación (Paridas+Pendientes+Abortadas+Muertas+
+      // Descartadas) daba más que el total de Preñadas, contando esas
+      // cabezas dos veces.
+      salidasExternasPorRodeo[rid] = { ventas: cantVendida, trasladoNoVaca: cantTrasladoNoVaca, total: cantVendida+cantTrasladoNoVaca, cabezas: cantVendida+cantTrasladoNoVaca };
     }
   });
 
