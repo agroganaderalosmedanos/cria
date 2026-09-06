@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_148';
+const APP_VERSION = 'index_consolidado_4_6_155_149';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3762,7 +3762,10 @@ function buildPariciones() {  const _criaTabs = [
       <div class="fg"><label>Campo</label>
         <select id="pa-campo" onchange="document.getElementById('pa-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="pa-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="pa-fecha" value="${today()}" onchange="document.getElementById('pa-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="pa-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
       <div class="fg"><label>Rodeo</label>
         <select id="pa-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
@@ -3794,16 +3797,32 @@ function buildPariciones() {  const _criaTabs = [
     </div>
   </div>
   <div id="pa-hist-tabla">`;
-  h += buildEntityTable(items, [
-    { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-    { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-    { key: 'nacidos_vivos', label: 'Vivos', render: v => fn(v) },
-    { key: 'nacidos_muertos', label: 'Muertos', render: v => fn(v) },
-    { key: 'observacion', label: 'Obs.', render: v => v || '—' },
-  ], 'pariciones', 'paricion_id');
+  h += buildEntityTable(items.map(conCampanaNombreParicion_), PARICIONES_COLS_, 'pariciones', 'paricion_id');
   h += `</div>`;
   return h;
 }
+// Nombre de campaña para mostrar en la tabla — deriva de campana_id (fuente
+// de verdad); si falta (registro viejo, cargado antes de v16), se propone
+// por fecha, marcada "(sin confirmar)". Mismo criterio que Mortandad/Ventas.
+function conCampanaNombreParicion_(it) {
+  let nombre;
+  if (it.campana_id) {
+    const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(it.campana_id));
+    nombre = c ? c.nombre : '⚠ Campaña inválida';
+  } else {
+    const c = campanaDeFecha_(it.fecha);
+    nombre = c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
+  }
+  return { ...it, _campanaNombre: nombre };
+}
+const PARICIONES_COLS_ = [
+  { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+  { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : (v.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${v}</span>` : v) },
+  { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
+  { key: 'nacidos_vivos', label: 'Vivos', render: v => fn(v) },
+  { key: 'nacidos_muertos', label: 'Muertos', render: v => fn(v) },
+  { key: 'observacion', label: 'Obs.', render: v => v || '—' },
+];
 window.paCampoHistorialCambio_ = function(campoId) {
   const rid = document.getElementById('pa-hist-rodeo');
   if (rid) rid.innerHTML = '<option value="">Todos los rodeos</option>' + rodeoOptionsHtml(rodeosConServicioPorCampo(campoId));
@@ -3822,13 +3841,7 @@ window.paFiltrarHistorial_ = function() {
   });
   const el = document.getElementById('pa-hist-tabla');
   if (el) {
-    el.innerHTML = buildEntityTable(items, [
-      { key: 'fecha', label: 'Fecha', render: v => fd(v) },
-      { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
-      { key: 'nacidos_vivos', label: 'Vivos', render: v => fn(v) },
-      { key: 'nacidos_muertos', label: 'Muertos', render: v => fn(v) },
-      { key: 'observacion', label: 'Obs.', render: v => v || '—' },
-    ], 'pariciones', 'paricion_id');
+    el.innerHTML = buildEntityTable(items.map(conCampanaNombreParicion_), PARICIONES_COLS_, 'pariciones', 'paricion_id');
     attachTableDeleteEvents('pariciones', 'paricion_id');
   }
 };
@@ -4239,6 +4252,7 @@ function attachParicionesEvents() {
   if (save) save.onclick = async () => {
     const data = {
       fecha: document.getElementById('pa-fecha').value,
+      campana_id: document.getElementById('pa-campana-id').value,
       rodeo_id: document.getElementById('pa-rodeo').value,
       nacidos_vivos: Number(document.getElementById('pa-vivos').value) || 0,
       nacidos_muertos: Number(document.getElementById('pa-muertos').value) || 0,
@@ -18151,10 +18165,10 @@ function openEditModal(entity, idCol, id) {
   // no trae la clave (registro cargado antes de agregar la columna, o caché
   // vieja del navegador sin refrescar), el campo directamente no aparecía en
   // el modal — no es que faltara el selector, faltaba el campo entero.
-  // Mortandad (agregada en v15) nunca tuvo un campo de texto libre 'campana'
-  // como las otras cinco, así que solo necesita este default — no entra en
-  // ocultarCampanaTexto porque no hay nada viejo que ocultarle.
-  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad'].includes(entity)) {
+  // Mortandad (v15) y Pariciones (v16) nunca tuvieron un campo de texto libre
+  // 'campana' como las otras cinco, así que solo necesitan este default — no
+  // entran en ocultarCampanaTexto porque no hay nada viejo que ocultarles.
+  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad','pariciones'].includes(entity)) {
     if (!('campana_id' in item)) item.campana_id = '';
   }
   const ocultarCampanaTexto = ['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity);
