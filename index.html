@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_162';
+const APP_VERSION = 'index_consolidado_4_6_155_163';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2494,15 +2494,18 @@ function buildDashboard() {
   // Arranca con la Existencia Inicial HEREDADA (recursiva, ver
   // eiCriaCampana_/efCriaCampanaStockPorRodeo_ más arriba) en vez de {} —
   // así una campaña que no sea la primera del sistema ya no arranca de cero.
-  // Lo que pasa DENTRO de esta campaña se sigue calculando con movs/ventas/
-  // mortandadCria (las variables locales de acá arriba, que sí respetan el
-  // corte de fecha cuando esta es la campaña activa) — sin tocar esa parte.
+  // OJO — bug real encontrado y corregido: eiCriaCampana_(campSelec) YA
+  // incluye los "Saldo inicial" genuinos tageados directo a esta misma
+  // campaña (ver su propio filtro "propios" más arriba). Este loop de acá
+  // abajo NO tiene que volver a sumarlos — si no, un rodeo con Saldo Inicial
+  // real en esta campaña (típicamente solo pasa en la primera campaña del
+  // sistema) quedaba contado DOS veces. Por eso el 'Saldo inicial' queda
+  // explícitamente afuera de este forEach; solo se procesan acá los
+  // Traslados, que eiCriaCampana_ no toca.
   const stockPorRodeo = Object.assign({}, eiCriaCampana_(campSelec).stockPorRodeo);
   movs.forEach(m => {
     const cant = Number(m.cantidad)||0;
-    if (m.tipo==='Saldo inicial') {
-      stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
-    } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
+    if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
       if (m.rodeo_origen_id)  stockPorRodeo[String(m.rodeo_origen_id)]  = (stockPorRodeo[String(m.rodeo_origen_id)] ||0) - cant;
       if (m.rodeo_destino_id) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
     }
