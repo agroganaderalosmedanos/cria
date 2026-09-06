@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_165';
+const APP_VERSION = 'index_consolidado_4_6_155_166';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3007,39 +3007,65 @@ function buildDashboard() {
     nacimientos: nacCabCria, cesionesEnviadas: clasCria.cesionesEnviadas,
     ventas: ventasCabCria, mortandad: mortCabCria,
   }, efCabCria);
-  if (saldosIniciales.length) {
+  const rodeosConEIHeredada = rodeosCriaFilt.filter(r => (eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0) > 0);
+  if (rodeosConEIHeredada.length || saldosIniciales.length) {
     h += `<div class="panel">
-      <div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
+      <div class="panel-title">📋 Existencia Inicial (EI) — por rodeo</div>`;
+    let totEICab = 0, totEIVal = 0;
+    if (rodeosConEIHeredada.length) {
+      // Heredado del cierre de la campaña anterior — CALCULADO en el momento
+      // (ver eiCriaCampana_/efCriaCampanaStockPorRodeo_), no un Movimiento
+      // cargado en Sheets. Valorizado a precio de HOY, mismo criterio que
+      // "Stock valorizado actual".
+      h += `<p class="helper-text">Heredado del cierre de la campaña anterior (calculado, no es un Movimiento cargado):</p>
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Valor (precio de hoy)</th></tr></thead><tbody>`;
+      rodeosConEIHeredada.forEach(r => {
+        const cant = eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0;
+        const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+        const val = valorizarRodeo_(r, cant, pesoP);
+        const valConv = convertirAMoneda_(val, corteCria, _criaMoneda);
+        totEICab += cant; totEIVal += valConv;
+        h += `<tr><td><strong>${r.nombre}</strong></td><td class="tc">${fn(cant)}</td><td class="tr">${fnMoneda_(valConv,_criaMoneda)}</td></tr>`;
+      });
+      h += `</tbody></table></div>`;
+    }
+    if (saldosIniciales.length) {
+      h += `<p class="helper-text" style="margin-top:${rodeosConEIHeredada.length?'14px':'0'}">Saldos Iniciales cargados directamente en esta campaña:</p>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th>
         <th class="tr">Precio</th>${_criaMoneda==='USD'?'<th class="tr">Cotización</th>':''}<th class="tr">Total</th>
       </tr></thead><tbody>`;
-    let totEI = 0;
-    saldosIniciales.forEach(m => {
-      const cant = Number(m.cantidad)||0;
-      const { total, precioLabel } = valorMovimientoEntrada_(m);
-      // Cotización DEL DÍA DE ESTE MOVIMIENTO, no la del corte — antes esta tabla
-      // usaba fmCria_() (conversión única a la cotización de HOY) mientras que el
-      // resumen de "Stock inicial" de arriba ya convertía cada Saldo inicial a la
-      // cotización de su propia fecha — por eso no coincidían entre sí.
-      const totalConv = convertirAMoneda_(total, m.fecha, _criaMoneda);
-      totEI += totalConv;
-      const rodeo = rodeosPorId[String(m.rodeo_destino_id)];
-      const tcMov = _criaMoneda==='USD' ? tipoCambioVigente_(m.fecha) : null;
-      h += `<tr>
-        <td>${fd(m.fecha)}</td>
-        <td><strong>${rodeo?.nombre||'—'}</strong></td>
-        <td class="tc">${fn(cant)}</td>
-        <td class="tr">${precioLabel || '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
-        ${_criaMoneda==='USD'?`<td class="tr" style="font-size:11px;color:var(--text3)">${tcMov?'$ '+fn(Number(tcMov.valor||tcMov),2):'—'}</td>`:''}
-        <td class="tr"><strong>${total ? fnMoneda_(totalConv,_criaMoneda) : '—'}</strong></td>
-      </tr>`;
-    });
-    h += `<tr style="background:var(--bg2);font-weight:800">
-      <td colspan="${_criaMoneda==='USD'?5:4}" class="tr">TOTAL EI</td>
-      <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(totEI,_criaMoneda)}</td>
-    </tr>`;
-    h += '</tbody></table></div></div>';
+      saldosIniciales.forEach(m => {
+        const cant = Number(m.cantidad)||0;
+        const { total, precioLabel } = valorMovimientoEntrada_(m);
+        // Cotización DEL DÍA DE ESTE MOVIMIENTO, no la del corte — antes esta tabla
+        // usaba fmCria_() (conversión única a la cotización de HOY) mientras que el
+        // resumen de "Stock inicial" de arriba ya convertía cada Saldo inicial a la
+        // cotización de su propia fecha — por eso no coincidían entre sí.
+        const totalConv = convertirAMoneda_(total, m.fecha, _criaMoneda);
+        totEICab += cant; totEIVal += totalConv;
+        const rodeo = rodeosPorId[String(m.rodeo_destino_id)];
+        const tcMov = _criaMoneda==='USD' ? tipoCambioVigente_(m.fecha) : null;
+        h += `<tr>
+          <td>${fd(m.fecha)}</td>
+          <td><strong>${rodeo?.nombre||'—'}</strong></td>
+          <td class="tc">${fn(cant)}</td>
+          <td class="tr">${precioLabel || '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
+          ${_criaMoneda==='USD'?`<td class="tr" style="font-size:11px;color:var(--text3)">${tcMov?'$ '+fn(Number(tcMov.valor||tcMov),2):'—'}</td>`:''}
+          <td class="tr"><strong>${total ? fnMoneda_(totalConv,_criaMoneda) : '—'}</strong></td>
+        </tr>`;
+      });
+      h += `</tbody></table></div>`;
+    }
+    // Total combinado — heredado + propios de esta campaña, con cabezas Y $
+    // (antes esta tabla solo mostraba el total en $, sin cabezas).
+    h += `<div class="tw"><table class="dt"><tbody><tr style="background:var(--bg2);font-weight:800">
+      <td class="tr">TOTAL EI</td>
+      <td class="tc">${fn(totEICab)} cab.</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(totEIVal,_criaMoneda)}</td>
+    </tr></tbody></table></div>`;
+    h += '</div>';
   }
 
   // ── Detalle Cesiones enviadas a Recría ─────────────────────────────────────────
