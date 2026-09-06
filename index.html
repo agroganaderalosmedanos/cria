@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_147';
+const APP_VERSION = 'index_consolidado_4_6_155_148';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2210,6 +2210,15 @@ function buildDashboard() {
   const campanaActivaCria = campanasCat.find(c => c.activa===true || String(c.activa).toUpperCase()==='TRUE');
   const campSelec = S._dashCampana || (campanaActivaCria ? campanaActivaCria.campana_id : (campanasCat[0]?.campana_id || ''));
   const campSelecObj = campanasCat.find(c => String(c.campana_id) === String(campSelec));
+  // Si la campaña elegida NO es la activa, ya está cerrada — no tiene sentido
+  // "cortarla" a mitad de camino con una fecha, tiene que mostrar SIEMPRE el
+  // total completo de esa campaña, sin importar dónde esté puesto el selector
+  // de fecha de corte. El corte de fecha solo tiene sentido en la campaña EN
+  // CURSO (para ver "cómo venimos hasta tal día"). Se calcula acá arriba (no
+  // solo donde se usa para el panel de Estado reproductivo más abajo) porque
+  // también hace falta para decidir si Ventas/Movimientos/Consumos/Compras/
+  // Mortandad respetan el corte o no.
+  const esCampanaActivaCria = !!(campSelecObj && (campSelecObj.activa===true || String(campSelecObj.activa).toUpperCase()==='TRUE'));
   const _criaMoneda = S.criaMoneda || 'ARS';
   const fmCria_ = p => fmonACorte_(p, _criaMoneda, corteCria);
 
@@ -2231,16 +2240,17 @@ function buildDashboard() {
     const c = campanaDeFecha_(fecha);
     return c ? String(c.campana_id) : '';
   };
-  const movs     = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteCria && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
-  const ventas   = (S.cache.ventas || []).filter(v => (v.fecha_salida||'') <= corteCria && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campSelec));
-  const consumos = (S.cache.consumos_insumos || []).filter(c => (c.fecha||'') <= corteCria && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
-  const comprasH = comprasHacGetAll_().filter(c => (c.fecha||'') <= corteCria && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
+  const movs     = (S.cache.movimientos || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
+  const ventas   = (S.cache.ventas || []).filter(v => (!esCampanaActivaCria || (v.fecha_salida||'') <= corteCria) && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campSelec));
+  const consumos = (S.cache.consumos_insumos || []).filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
+  const comprasH = comprasHacGetAll_().filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
   // v15: Mortandad ya tiene campana_id propio (antes no tenía forma de acotarse
   // a una campaña — solo se cortaba por fecha, mezclando muertes de campañas
   // distintas al mirar una campaña ya cerrada). Mismo criterio que el resto:
   // si el registro no tiene campana_id cargado (viejo, de antes de v15), se
-  // usa la campaña que corresponde por fecha como respaldo.
-  const mortandadCria = (S.cache.mortandad || []).filter(m => (m.fecha||'') <= corteCria && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
+  // usa la campaña que corresponde por fecha como respaldo. Y, como el resto,
+  // el corte de fecha solo aplica si esta es la campaña activa.
+  const mortandadCria = (S.cache.mortandad || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
 
   const campSelecField = S._dashCampo || '';
 
@@ -2659,7 +2669,8 @@ function buildDashboard() {
   // consulta el estado reproductivo de ESA campaña directamente en Estado de
   // Vientres/Tactos/Pariciones (que van a tener su propio selector de
   // Campaña — pendiente).
-  const esCampanaActivaCria = !!(campSelecObj && (campSelecObj.activa===true || String(campSelecObj.activa).toUpperCase()==='TRUE'));
+  // esCampanaActivaCria ya se calculó más arriba (hace falta también para
+  // Ventas/Movimientos/Consumos/Compras/Mortandad, no solo para este panel).
   if (!esCampanaActivaCria) {
     h += `<div class="panel">
       <div class="panel-title">🐮 Estado reproductivo</div>
