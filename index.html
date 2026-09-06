@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_149';
+const APP_VERSION = 'index_consolidado_4_6_155_150';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3586,7 +3586,10 @@ function buildAbortos() {  const _criaTabs = [
       <div class="fg"><label>Campo</label>
         <select id="ab-campo" onchange="document.getElementById('ab-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="ab-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="ab-fecha" value="${today()}" onchange="document.getElementById('ab-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="ab-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
       <div class="fg"><label>Rodeo</label>
         <select id="ab-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
@@ -3626,16 +3629,31 @@ function buildAbortos() {  const _criaTabs = [
   </div>
   <div id="ab-hist-tabla">`;
   const itemsFilt = items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-  h += buildEntityTable(itemsFilt, ABORTOS_COLS_, 'abortos', 'aborto_id');
+  h += buildEntityTable(itemsFilt.map(conCampanaNombreAborto_), ABORTOS_COLS_, 'abortos', 'aborto_id');
   h += `</div>`;
   return h;
 }
 
+// Nombre de campaña para mostrar en la tabla — deriva de campana_id (fuente
+// de verdad); si falta (registro viejo, cargado antes de v17), se propone
+// por fecha, marcada "(sin confirmar)". Mismo criterio que Mortandad/Pariciones.
+function conCampanaNombreAborto_(it) {
+  let nombre;
+  if (it.campana_id) {
+    const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(it.campana_id));
+    nombre = c ? c.nombre : '⚠ Campaña inválida';
+  } else {
+    const c = campanaDeFecha_(it.fecha);
+    nombre = c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
+  }
+  return { ...it, _campanaNombre: nombre };
+}
 // Columnas del historial de Abortos — se usan tanto en el render inicial como
 // en el refiltrado por campo/rodeo, para que ambos pasen por buildEntityTable
 // (con orden por columna clickeable) en vez de una tabla armada a mano sin sort.
 const ABORTOS_COLS_ = [
   { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+  { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : (v.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${v}</span>` : v) },
   { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
   { key: 'caravana_vaca', label: 'Caravana', render: v => v || '—' },
   { key: 'observacion', label: 'Obs.', render: v => v || '—' },
@@ -3662,12 +3680,13 @@ function attachAbortosEvents() {
       return true;
     }).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
     const el = document.getElementById('ab-hist-tabla');
-    if (el) { el.innerHTML = buildEntityTable(items, ABORTOS_COLS_, 'abortos', 'aborto_id'); attachTableDeleteEvents('abortos', 'aborto_id'); }
+    if (el) { el.innerHTML = buildEntityTable(items.map(conCampanaNombreAborto_), ABORTOS_COLS_, 'abortos', 'aborto_id'); attachTableDeleteEvents('abortos', 'aborto_id'); }
   };
 
   const save = document.getElementById('ab-save');
   if (save) save.onclick = async () => {
     const fecha = document.getElementById('ab-fecha').value;
+    const campanaId = document.getElementById('ab-campana-id').value;
     const rodeoId = document.getElementById('ab-rodeo').value;
     const obs = document.getElementById('ab-obs').value.trim();
     const trasladaAVenta = document.querySelector('#ab-traslada-group .selected')?.dataset.traslada !== 'no';
@@ -3684,7 +3703,7 @@ function attachAbortosEvents() {
     let ok = 0, errores = 0;
     try {
       for (const caravana of caravanas) {
-        const data = { fecha, rodeo_id: rodeoId, caravana_vaca: caravana, observacion: obs };
+        const data = { fecha, rodeo_id: rodeoId, caravana_vaca: caravana, observacion: obs, campana_id: campanaId };
         try {
           const abResult = await apiCall('create', { body: { entity: 'abortos', data } });
           const abortoId = abResult && abResult.id;
@@ -3707,6 +3726,7 @@ function attachAbortosEvents() {
               rodeo_destino_id: rodeoVacaVenta.rodeo_id,
               campo_destino_id: rodeoVacaVenta.campo_id,
               cantidad: 1,
+              campana_id: campanaId,
               // Tag [abid:<id>] — mismo patrón que [cid:...]/[pid:...]/[erid:...] — para
               // poder encontrar y borrar este traslado en cascada si se borra el aborto.
               // Antes no llevaba ningún tag: borrar un aborto dejaba el traslado huérfano.
@@ -18165,10 +18185,11 @@ function openEditModal(entity, idCol, id) {
   // no trae la clave (registro cargado antes de agregar la columna, o caché
   // vieja del navegador sin refrescar), el campo directamente no aparecía en
   // el modal — no es que faltara el selector, faltaba el campo entero.
-  // Mortandad (v15) y Pariciones (v16) nunca tuvieron un campo de texto libre
-  // 'campana' como las otras cinco, así que solo necesitan este default — no
-  // entran en ocultarCampanaTexto porque no hay nada viejo que ocultarles.
-  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad','pariciones'].includes(entity)) {
+  // Mortandad (v15), Pariciones (v16) y Abortos (v17) nunca tuvieron un campo
+  // de texto libre 'campana' como las otras cinco, así que solo necesitan
+  // este default — no entran en ocultarCampanaTexto porque no hay nada
+  // viejo que ocultarles.
+  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad','pariciones','abortos'].includes(entity)) {
     if (!('campana_id' in item)) item.campana_id = '';
   }
   const ocultarCampanaTexto = ['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity);
@@ -18356,9 +18377,10 @@ function openEditModal(entity, idCol, id) {
       // corregir el rodeo o la fecha) no actualizaba el Movimiento vinculado
       // (el Traslado por aborto, tag [abid:<id>]) — quedaba con los datos
       // VIEJOS, mostrando una "baja por aborto" en un rodeo o fecha que ya no
-      // corresponde al aborto real. Ahora, si se edita el rodeo o la fecha de
-      // un aborto, se busca el Movimiento vinculado y se actualiza también.
-      if (entity === 'abortos' && (data.rodeo_id !== undefined || data.fecha !== undefined)) {
+      // corresponde al aborto real. Ahora, si se edita el rodeo, la fecha o
+      // la campaña de un aborto, se busca el Movimiento vinculado y se
+      // actualiza también (campana_id agregado en v17, mismo motivo).
+      if (entity === 'abortos' && (data.rodeo_id !== undefined || data.fecha !== undefined || data.campana_id !== undefined)) {
         try {
           if (!S.cache.movimientos) await loadEntity('movimientos');
           const movLigado = (S.cache.movimientos||[]).find(m => (m.observaciones||'').includes(`[abid:${id}]`));
@@ -18368,6 +18390,7 @@ function openEditModal(entity, idCol, id) {
               fecha: data.fecha,
               rodeo_origen_id: data.rodeo_id,
               campo_origen_id: rodeoNuevo ? rodeoNuevo.campo_id : movLigado.campo_origen_id,
+              campana_id: data.campana_id,
             } } });
             invalidateCache('movimientos');
             await loadEntity('movimientos', true);
