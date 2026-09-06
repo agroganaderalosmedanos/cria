@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_150';
+const APP_VERSION = 'index_consolidado_4_6_155_151';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -18368,6 +18368,25 @@ function openEditModal(entity, idCol, id) {
     // porque están ocultos, pero pueden tener un valor sobrante de antes — se borra
     // para que la planilla no quede con un dato confuso e inerte).
     camposAOcultar.forEach(k => { data[k] = ''; });
+    // RENDIMIENTO + CORRECCIÓN — antes "data" siempre traía TODOS los campos del
+    // formulario, hubieran cambiado o no (el loop de arriba los lee todos). Eso
+    // hacía que cualquier chequeo del tipo "data.fecha !== undefined" diera
+    // SIEMPRE verdadero, aunque no se hubiera tocado la fecha — el sistema
+    // creía que TODO cambió en cada guardado. Consecuencias reales que ya
+    // vimos: la validación de stock de Ventas/Movimientos se disparaba en
+    // cualquier edición (aunque solo se tocara el precio o la campaña), y en
+    // Abortos la sincronización del Movimiento vinculado se ejecutaba siempre,
+    // sin importar si de verdad cambió algo relevante para él. Acá se compara
+    // cada valor nuevo contra el que el registro YA tenía guardado (no contra
+    // "está definido"), y se saca de "data" lo que no cambió — así "data" queda
+    // con SOLO los campos realmente modificados, y todo el código de más abajo
+    // (que ya está bien escrito revisando "data.algo !== undefined") empieza a
+    // funcionar como se pensó, sin tener que tocar esa lógica.
+    Object.keys(data).forEach(k => {
+      const valorNuevo = data[k] === undefined || data[k] === null ? '' : data[k];
+      const valorViejo = item[k] === undefined || item[k] === null ? '' : item[k];
+      if (String(valorNuevo) === String(valorViejo)) delete data[k];
+    });
     const saveBtn = document.getElementById('edit-modal-save');
     saveBtn.disabled = true;
     try {
@@ -18380,6 +18399,9 @@ function openEditModal(entity, idCol, id) {
       // corresponde al aborto real. Ahora, si se edita el rodeo, la fecha o
       // la campaña de un aborto, se busca el Movimiento vinculado y se
       // actualiza también (campana_id agregado en v17, mismo motivo).
+      // Esto queda SECUENCIAL (no se puede paralelizar con lo de abajo) porque
+      // primero hay que encontrar el Movimiento vinculado y escribirle el
+      // cambio, antes de poder refrescarlo.
       if (entity === 'abortos' && (data.rodeo_id !== undefined || data.fecha !== undefined || data.campana_id !== undefined)) {
         try {
           if (!S.cache.movimientos) await loadEntity('movimientos');
@@ -18393,41 +18415,57 @@ function openEditModal(entity, idCol, id) {
               campana_id: data.campana_id,
             } } });
             invalidateCache('movimientos');
-            await loadEntity('movimientos', true);
-            S.stock = null; await loadStock();
             toast('Traslado vinculado también actualizado', 'ok');
           }
         } catch(e) { toast('El aborto se guardó, pero no se pudo actualizar el traslado vinculado — revisalo manualmente en Movimientos.', 'err'); }
       }
-      // OJO — mismo tipo de bug que el de Abortos de arriba, pero al revés: acá
-      // el backend (updateEntity) SÍ cascada automáticamente los cambios de una
-      // Parición editada hacia el Movimiento (nacidos vivos) y la Mortandad
-      // (nacidos muertos) vinculados — pero el frontend no se enteraba, porque
-      // solo invalidaba/recargaba la caché de 'pariciones'. Resultado: el dato
-      // real en la planilla quedaba bien sincronizado, pero "Buscar huérfanos"
-      // (que lee de la caché en memoria, sin pedir nada fresco) comparaba la
-      // Parición ya corregida contra un Movimiento/Mortandad todavía viejos en
-      // memoria, y marcaba un falso "desincronizado" hasta el próximo refresh
-      // completo de la página. Ahora se recargan también esas dos cachés.
-      if (entity === 'pariciones') {
-        try {
-          await Promise.all([loadEntity('movimientos', true), loadEntity('mortandad', true)]);
-          S.stock = null; await loadStock();
-        } catch(e) { toast('La parición se guardó, pero no se pudo refrescar Movimientos/Mortandad — revisalo manualmente si "Buscar huérfanos" marca algo raro.', 'err'); }
-      }
       toast('Registro actualizado', 'ok');
-      await loadEntity(entity, true);
-      // El Dashboard general solo depende de Servicios/Tactos/Pariciones/Destetes/Abortos/Mortandad
-      // (KPIs de Cría) — recargarlo en CADA edición, sin importar la entidad, es un viaje de
-      // ida y vuelta a Apps Script innecesario y lento. Solo se recarga si la entidad editada
-      // realmente puede afectar esos KPIs.
+      // OJO — RENDIMIENTO: antes, todo lo de acá abajo se esperaba UNO ATRÁS DEL
+      // OTRO (recargar Movimientos, después Mortandad, después Stock, después la
+      // propia entidad, después el Dashboard...) — cada uno un viaje de ida y
+      // vuelta a Apps Script, aunque NINGUNO dependa del resultado de otro. Con
+      // muchos registros para editar seguidos, esa espera acumulada se sentía
+      // como que el sistema estaba "trabado" entre guardado y guardado. Ahora se
+      // disparan todos juntos y se esperan en paralelo — el tiempo total pasa a
+      // ser el del más lento de todos, no la suma de todos. Cada lectura tiene
+      // su propio .catch para no perder el aviso puntual si UNA falla, sin que
+      // eso frene ni oculte el resultado de las demás.
       const ENTIDADES_AFECTAN_DASHBOARD_ = ['servicios', 'tactos', 'pariciones', 'destetes', 'abortos', 'mortandad'];
-      if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) { await loadDashboard(); }
-      if (entity === 'movimientos') { S.stock = null; await loadStock(); S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
+      const lecturasRefresco_ = [
+        loadEntity(entity, true).catch(() => { toast('El registro se guardó, pero no se pudo refrescar su lista — probá recargar la página.', 'err'); }),
+      ];
+      if (entity === 'pariciones') {
+        // El backend ya sincronizó Movimiento/Mortandad vinculados al guardar la
+        // Parición (ver comentario histórico más abajo) — acá solo hace falta
+        // traer esas dos cachés frescas para que "Buscar huérfanos" no compare
+        // contra datos viejos en memoria.
+        lecturasRefresco_.push(
+          loadEntity('movimientos', true).catch(() => { toast('La parición se guardó, pero no se pudo refrescar Movimientos — revisalo manualmente si "Buscar huérfanos" marca algo raro.', 'err'); }),
+          loadEntity('mortandad', true).catch(() => { toast('La parición se guardó, pero no se pudo refrescar Mortandad — revisalo manualmente si "Buscar huérfanos" marca algo raro.', 'err'); }),
+        );
+      }
+      if (entity === 'abortos') {
+        lecturasRefresco_.push(loadEntity('movimientos', true).catch(() => {}));
+      }
+      if (entity === 'pariciones' || entity === 'abortos' || entity === 'movimientos') {
+        S.stock = null;
+        lecturasRefresco_.push(loadStock().catch(() => { toast('El registro se guardó, pero no se pudo refrescar el Stock.', 'err'); }));
+      }
+      if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) {
+        lecturasRefresco_.push(loadDashboard().catch(() => { toast('El registro se guardó, pero no se pudo refrescar el Dashboard.', 'err'); }));
+      }
+      if (entity === 'compras_insumos' || entity === 'consumos_insumos' || entity === 'productos') {
+        S.stockProductos = null;
+        lecturasRefresco_.push(loadStockProductos().catch(() => {}));
+      }
+      if (entity === 'productos' || entity === 'campos' || entity === 'rodeos' || entity === 'compradores') {
+        lecturasRefresco_.push(loadCatalogs().catch(() => {}));
+      }
+      await Promise.all(lecturasRefresco_);
+      // Flags de recálculo — no piden nada a la red, solo obligan a que la
+      // próxima vez que se muestre ese panel se recalcule con los datos nuevos.
+      if (entity === 'movimientos') { S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
       if (entity === 'precios_internos' || entity === 'destetes' || entity === 'ventas') { S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null; }
-      if (entity === 'compras_insumos' || entity === 'consumos_insumos') { S.stockProductos = null; await loadStockProductos(); }
-      if (entity === 'productos') { await loadCatalogs(); S.stockProductos = null; await loadStockProductos(); }
-      if (entity === 'campos' || entity === 'rodeos' || entity === 'compradores') { await loadCatalogs(); }
       closeModal();
       render();
     } catch (err) { toast(err.message, 'err'); saveBtn.disabled = false; }
