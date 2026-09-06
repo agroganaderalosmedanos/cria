@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_158';
+const APP_VERSION = 'index_consolidado_4_6_155_162';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2197,114 +2197,107 @@ function buildHome() {
     '</div></div>';
 }
 
-// ── CIERRE DE CAMPAÑA (crear Saldos Iniciales para la campaña siguiente) ──
-// Problema real detectado: un "Saldo inicial" se carga UNA sola vez en la
-// vida de un rodeo (cuando arranca o se hereda) — nunca se vuelve a crear
-// uno al empezar cada campaña nueva. Como la Existencia Inicial (EI) de la
-// Conciliación se calcula sumando los Saldos Iniciales TAGEADOS a la
-// campaña seleccionada, la primera campaña cargada en el sistema (2025/2026,
-// con sus Saldos Iniciales originales) cierra bien — pero la siguiente
-// (2026/2027) arranca con EI=0, porque nadie le creó un Saldo Inicial propio.
-// Esto no es "un cálculo mal hecho" — es una pieza que nunca se construyó:
-// el traspaso de existencia entre campañas. Esta función lo automatiza: toma
-// el stock REAL por rodeo al cierre de la campaña elegida (con
-// stockPorRodeoACorte_, que es puramente por fecha — no depende de que la
-// campaña esté bien tageada en todos lados, así que sirve de ancla confiable
-// incluso si algo más quedó mal clasificado) y crea un Movimiento "Saldo
-// inicial" por cada rodeo de Cría con stock > 0, fechado al inicio de la
-// campaña siguiente y tageado a ella.
-window.cerrarCampanaPreview_ = function() {
-  const el = document.getElementById('cerrar-campana-resultado');
-  if (!el) return;
-  const campanasCat = (S.cache.campanas || []).slice().sort((a,b)=>String(a.fecha_inicio||'').localeCompare(String(b.fecha_inicio||'')));
-  const campSelec = S._dashCampana || (campanasCat.find(c=>c.activa===true||String(c.activa).toUpperCase()==='TRUE')?.campana_id) || (campanasCat[0]?.campana_id || '');
-  const campCerrada = campanasCat.find(c => String(c.campana_id) === String(campSelec));
-  if (!campCerrada) { el.innerHTML = '<div class="helper-text" style="color:var(--red-text)">No se encontró la campaña seleccionada.</div>'; return; }
-  if (!campCerrada.fecha_fin) {
-    el.innerHTML = `<div class="helper-text" style="color:var(--clay-text)">⚠ "${campCerrada.nombre}" no tiene fecha de fin cargada en el catálogo de Campañas — no se puede calcular su cierre. Es probablemente la campaña en curso, que no corresponde cerrar todavía.</div>`;
-    return;
-  }
-  // La campaña siguiente: la que arranca inmediatamente después del cierre
-  // de la elegida. Si hay más de una candidata o ninguna, se le pide al
-  // usuario que la elija (no se adivina).
-  const candidatas = campanasCat.filter(c => String(c.fecha_inicio||'') > String(campCerrada.fecha_fin));
-  const siguienteAuto = candidatas.length ? candidatas.reduce((a,b)=>String(a.fecha_inicio)<String(b.fecha_inicio)?a:b) : null;
 
-  const rodeosCria = (S.catalogs.rodeos || []).filter(r => normAct_(r.actividad) === 'cria');
-  const stockMap = stockPorRodeoACorte_(campCerrada.fecha_fin);
-  const filas = rodeosCria
-    .map(r => ({ rodeo: r, stock: Math.round(stockMap[String(r.rodeo_id)] || 0) }))
-    .filter(f => f.stock > 0)
-    .sort((a,b) => a.rodeo.nombre.localeCompare(b.rodeo.nombre));
+// ── EXISTENCIA INICIAL RECURSIVA (Cría) ──────────────────────────────────
+// Reemplaza el enfoque anterior (un botón que CREABA un Movimiento "Saldo
+// inicial" falso al cerrar una campaña). El usuario señaló, con razón, el
+// problema de fondo de esa idea: "Saldo inicial" tiene que significar una
+// sola cosa — el alta real de un rodeo, cargada una única vez — no un
+// artefacto contable que además queda "congelado" si después se corrige
+// algo en la campaña anterior (ej. una mortandad que se había omitido).
+//
+// La solución de raíz: la Existencia Inicial de una campaña NUNCA se
+// guarda — se CALCULA, siempre, como la Existencia Final de la campaña
+// anterior (que a su vez depende de LA ANTERIOR A ESA, recursivamente,
+// hasta llegar a la primera campaña cargada en el sistema — ahí, y solo
+// ahí, "Existencia Inicial" son los Saldos Iniciales reales tageados a
+// ella). Ventajas: (1) el Libro de Movimientos queda 100% real — cero
+// registros artificiales, trazabilidad completa; (2) si mañana se corrige
+// un dato en una campaña vieja, TODAS las campañas posteriores heredan la
+// corrección automáticamente, sin tocar nada a mano ni volver a "cerrar".
+//
+// eiCriaCampana_(campanaId): punto de partida de una campaña = EF de la
+// anterior (recursivo) + cualquier Saldo Inicial REAL tageado directo a
+// esta campaña (en la práctica, esto último solo debería ser distinto de
+// cero en la primera campaña del sistema, o si se incorpora un rodeo nuevo
+// con su propia alta real en una campaña posterior — casos genuinos, no
+// parches).
+// efCriaCampanaStockPorRodeo_(campanaId): EI de esa campaña + todo lo que
+// pasó DENTRO de ella (traslados, ventas, mortandad — ya scopeados por
+// campaña en el resto del Dashboard).
+// Memoizadas dentro de un mismo render() para no recorrer la cadena entera
+// una vez por cada término que las necesita (EI en cabezas, EI en $, EF por
+// rodeo, etc.) — se reinicia al principio de cada buildDashboard().
+let _memoEiCriaCampana_ = {};
+function eiCriaCampana_(campanaId) {
+  if (!campanaId) return { stockPorRodeo: {}, propios: [] };
+  if (_memoEiCriaCampana_[campanaId]) return _memoEiCriaCampana_[campanaId];
+  const campanasOrdenadas = (S.cache.campanas || []).slice().sort((a,b)=>String(a.fecha_inicio||'').localeCompare(String(b.fecha_inicio||'')));
+  const idx = campanasOrdenadas.findIndex(c => String(c.campana_id) === String(campanaId));
+  const anterior = idx > 0 ? campanasOrdenadas[idx-1] : null;
+  const base = anterior ? efCriaCampanaStockPorRodeo_(anterior.campana_id) : {};
 
-  if (!filas.length) {
-    el.innerHTML = `<div class="helper-text" style="color:var(--clay-text)">No se encontró stock de Cría al cierre de "${campCerrada.nombre}" (${fd(campCerrada.fecha_fin)}) — nada para trasladar.</div>`;
-    return;
-  }
-
-  const opcionesCampana = candidatas.length
-    ? candidatas.map(c => `<option value="${c.campana_id}" ${siguienteAuto && String(c.campana_id)===String(siguienteAuto.campana_id)?'selected':''}>${c.nombre}</option>`).join('')
-    : `<option value="">— No hay ninguna campaña cargada que empiece después del ${fd(campCerrada.fecha_fin)} — creala primero en el catálogo de Campañas —</option>`;
-  let h = `<div class="panel" style="border:2px solid var(--blue)">
-    <div class="panel-title">🔒 Cierre de "${campCerrada.nombre}" → apertura de la siguiente</div>
-    <p class="helper-text">Esto va a crear un Movimiento "Saldo inicial" por cada rodeo de Cría con stock al ${fd(campCerrada.fecha_fin)}, fechado al inicio de la campaña que elijas abajo, y tageado a ella. <strong>No modifica ni borra nada existente</strong> — solo agrega registros nuevos. Revisá la lista antes de confirmar.</p>
-    <div class="fg" style="max-width:280px;margin-bottom:12px"><label>Campaña que se abre con este stock</label>
-      <select id="cerrar-campana-destino">${opcionesCampana}</select>
-    </div>
-    <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Campo</th><th class="tc">Stock al cierre</th><th>Ya tiene Saldo Inicial en destino</th></tr></thead><tbody>`;
-  filas.forEach(f => {
-    const yaExiste = (S.cache.movimientos||[]).some(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===String(f.rodeo.rodeo_id) && String(m.campana_id)===String(siguienteAuto?.campana_id||''));
-    h += `<tr${yaExiste?' style="opacity:.5"':''}><td>${f.rodeo.nombre}</td><td>${campoNombre(f.rodeo.campo_id)}</td><td class="tc">${fn(f.stock)}</td><td>${yaExiste?'⚠ Sí — se va a saltear':'—'}</td></tr>`;
+  const propios = (S.cache.movimientos || []).filter(m =>
+    m.tipo === 'Saldo inicial' && !esAltaPorParicion_(m) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)
+  );
+  const stockPorRodeo = Object.assign({}, base);
+  propios.forEach(m => {
+    stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + (Number(m.cantidad)||0);
   });
-  h += `</tbody></table></div>
-    <div style="margin-top:12px;display:flex;gap:8px">
-      <button class="btn btn-primary" id="cerrar-campana-confirmar-btn" onclick='cerrarCampanaConfirmar_(${JSON.stringify(filas.map(f=>({rodeo_id:f.rodeo.rodeo_id,campo_id:f.rodeo.campo_id,stock:f.stock})))})'>Confirmar y crear Saldos Iniciales</button>
-      <button class="btn btn-ghost" onclick="document.getElementById('cerrar-campana-resultado').innerHTML=''">Cancelar</button>
-    </div>
-  </div>`;
-  el.innerHTML = h;
-};
-window.cerrarCampanaConfirmar_ = async function(filas) {
-  const destinoId = document.getElementById('cerrar-campana-destino')?.value;
-  const campanaDestino = (S.cache.campanas||[]).find(c => String(c.campana_id) === String(destinoId));
-  if (!campanaDestino || !campanaDestino.fecha_inicio) { toast('Elegí una campaña de destino válida (con fecha de inicio cargada).', 'err'); return; }
-  const btn = document.getElementById('cerrar-campana-confirmar-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Creando...'; }
-  // Se saltea cualquier rodeo que YA tenga un Saldo Inicial tageado a la
-  // campaña destino — para que correr esto dos veces por error no duplique.
-  const pendientes = filas.filter(f => !(S.cache.movimientos||[]).some(m =>
-    m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===String(f.rodeo_id) && String(m.campana_id)===String(destinoId)
-  ));
-  let creados = 0, errores = 0;
-  for (const f of pendientes) {
-    try {
-      await apiCall('create', { body: { entity: 'movimientos', data: {
-        tipo: 'Saldo inicial',
-        fecha: campanaDestino.fecha_inicio,
-        campo_destino_id: f.campo_id,
-        rodeo_destino_id: f.rodeo_id,
-        cantidad: f.stock,
-        precio_cabeza: 0,
-        campana_id: destinoId,
-        observaciones: `Saldo inicial — apertura ${campanaDestino.nombre} (cierre de campaña anterior)`,
-      } } });
-      creados++;
-    } catch (err) { errores++; }
-  }
-  invalidateCache('movimientos');
-  await loadEntity('movimientos', true);
-  S.stock = null; await loadStock();
-  S.dashboard = null; S._resultCria = null;
-  toast(`${creados} Saldos Iniciales creados${filas.length-pendientes.length>0?`, ${filas.length-pendientes.length} salteados (ya existían)`:''}${errores?`, ⚠ ${errores} con error`:''}. Faltan cargar el precio por cabeza de cada uno (podés hacerlo desde el ✎ en Movimientos, con "Completar precio desde Valorización de Stock").`, errores?'err':'ok');
-  document.getElementById('cerrar-campana-resultado').innerHTML = '';
-  render();
-};
+
+  const resultado = { stockPorRodeo, propios };
+  _memoEiCriaCampana_[campanaId] = resultado;
+  return resultado;
+}
+function efCriaCampanaStockPorRodeo_(campanaId) {
+  const ei = eiCriaCampana_(campanaId);
+  const stockPorRodeo = Object.assign({}, ei.stockPorRodeo);
+  const movsC = (S.cache.movimientos || []).filter(m =>
+    m.tipo !== 'Saldo inicial' && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)
+  );
+  movsC.forEach(m => {
+    const cant = Number(m.cantidad) || 0;
+    if (m.rodeo_destino_id) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    if (m.rodeo_origen_id) stockPorRodeo[String(m.rodeo_origen_id)] = (stockPorRodeo[String(m.rodeo_origen_id)]||0) - cant;
+  });
+  const ventasC = (S.cache.ventas || []).filter(v => campanaEfectiva_(v.fecha_salida, v.campana_id) === String(campanaId));
+  ventasC.forEach(v => { stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
+  const mortandadC = (S.cache.mortandad || []).filter(m => campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId));
+  mortandadC.forEach(m => { if (esMortandadPorParicion_(m)) return; stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
+  return stockPorRodeo;
+}
+// Campaña inmediatamente anterior a la dada (por fecha_inicio), o null si es
+// la primera cargada en el sistema.
+function campanaAnteriorA_(campanaId) {
+  const campanasOrdenadas = (S.cache.campanas || []).slice().sort((a,b)=>String(a.fecha_inicio||'').localeCompare(String(b.fecha_inicio||'')));
+  const idx = campanasOrdenadas.findIndex(c => String(c.campana_id) === String(campanaId));
+  return idx > 0 ? campanasOrdenadas[idx-1] : null;
+}
+// Valoriza (a precios de HOY, mismo criterio que "Stock valorizado actual")
+// un mapa {rodeo_id: stock} para un conjunto de rodeos — reusado tanto para
+// valorizar el EI heredado como el EF de cualquier campaña.
+function valorizarStockPorRodeoHoy_(stockPorRodeo, rodeosFiltro, pesadasArr) {
+  let total = 0;
+  rodeosFiltro.forEach(r => {
+    const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
+    if (!stock) return;
+    const pesadasR = pesadasArr.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const pesoP = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+    total += valorizarRodeo_(r, stock, pesoP);
+  });
+  return total;
+}
 
 function buildDashboard() {
   // Mostrar loader mientras cargan los datos
   if (!S.cache.movimientos || !S.cache.ventas || !S.cache.campanas) {
     return '<div class="loader"><div class="spinner"></div>Cargando datos del dashboard…</div>';
   }
+  // Se reinicia en cada render — si no, un render viejo podría quedar
+  // memoizado con datos de S.cache que ya cambiaron (ej. después de editar
+  // un Movimiento).
+  _memoEiCriaCampana_ = {};
   const campos   = (S.catalogs && S.catalogs.campos) || [];
   const rodeos   = (S.catalogs && S.catalogs.rodeos) || [];
   // Fecha de corte: por defecto hoy. Todo lo que esté cargado con fecha posterior
@@ -2348,12 +2341,8 @@ function buildDashboard() {
   // desaparecerían del Dashboard de un día para el otro. Por eso, cuando
   // falta el campana_id, se usa la campaña que corresponde por FECHA como
   // respaldo — mismo criterio de "default por fecha, editable" que ya rige
-  // en todos los formularios nuevos.
-  const campanaEfectiva_ = (fecha, campanaIdGuardado) => {
-    if (campanaIdGuardado) return String(campanaIdGuardado);
-    const c = campanaDeFecha_(fecha);
-    return c ? String(c.campana_id) : '';
-  };
+  // en todos los formularios nuevos. (campanaEfectiva_ ahora es global, ver
+  // su definición junto a campanaDeFecha_.)
   const movs     = (S.cache.movimientos || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
   const ventas   = (S.cache.ventas || []).filter(v => (!esCampanaActivaCria || (v.fecha_salida||'') <= corteCria) && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campSelec));
   const consumos = (S.cache.consumos_insumos || []).filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campSelec));
@@ -2420,9 +2409,7 @@ function buildDashboard() {
       ${corteCria!==today()?`<button class="btn btn-ghost btn-sm" onclick="S._corteCria=null;render()" title="Volver a hoy">↺ Hoy</button>`:''}
     </div>
     <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaCriaExcel_()" title="Descarga un Excel con cabezas y $ por rodeo, pariciones, destetes y el detalle crudo de movimientos, para revisar todo sin pasar de pantalla en pantalla">📊 Exportar auditoría a Excel</button>
-    <button class="btn btn-secondary btn-sm" onclick="cerrarCampanaPreview_()" title="Crea el Saldo Inicial de la campaña siguiente a partir del Stock final valorizado de la campaña seleccionada — para que la Existencia Inicial de la campaña nueva no arranque en cero">🔒 Cerrar campaña (crear Saldos Iniciales)</button>
-  </div>
-  <div id="cerrar-campana-resultado" style="margin-bottom:14px"></div>`;
+  </div>`;
 
   if (!campSelec) {
     h += `<div class="empty-state"><span class="ico">📊</span><div class="msg">Cargá al menos una Campaña en el catálogo de Campañas para ver el dashboard.</div></div>`;
@@ -2504,7 +2491,13 @@ function buildDashboard() {
   }, 0);
 
   // 3. Stock valorizado actual (rodeos Cría)
-  const stockPorRodeo = {};
+  // Arranca con la Existencia Inicial HEREDADA (recursiva, ver
+  // eiCriaCampana_/efCriaCampanaStockPorRodeo_ más arriba) en vez de {} —
+  // así una campaña que no sea la primera del sistema ya no arranca de cero.
+  // Lo que pasa DENTRO de esta campaña se sigue calculando con movs/ventas/
+  // mortandadCria (las variables locales de acá arriba, que sí respetan el
+  // corte de fecha cuando esta es la campaña activa) — sin tocar esa parte.
+  const stockPorRodeo = Object.assign({}, eiCriaCampana_(campSelec).stockPorRodeo);
   movs.forEach(m => {
     const cant = Number(m.cantidad)||0;
     if (m.tipo==='Saldo inicial') {
@@ -2555,7 +2548,17 @@ function buildDashboard() {
     if (campSelecField && String(m.campo_destino_id) !== String(campSelecField)) return false;
     return true;
   });
-  const totalSaldoInicial = saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, _criaMoneda), 0);
+  // Existencia Inicial HEREDADA de la campaña anterior (recursiva, ver
+  // eiCriaCampana_/efCriaCampanaStockPorRodeo_ más arriba) — valorizada a
+  // precios de HOY, mismo criterio que "Stock valorizado actual". Se suma a
+  // los Saldos Iniciales REALES tageados directo a esta campaña (en la
+  // práctica, solo distinto de cero en la primera campaña del sistema) para
+  // armar el renglón "Stock inicial" completo, sin depender de haber creado
+  // ningún Movimiento artificial.
+  const campAnteriorObj = campanaAnteriorA_(campSelec);
+  const eiHeredadoStockPorRodeo = campAnteriorObj ? efCriaCampanaStockPorRodeo_(campAnteriorObj.campana_id) : {};
+  const eiHeredadoARS = valorizarStockPorRodeoHoy_(eiHeredadoStockPorRodeo, rodeosCriaFilt, pesadas);
+  const totalSaldoInicial = convertirAMoneda_(eiHeredadoARS, corteCria, _criaMoneda) + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, _criaMoneda), 0);
 
   // Altas por Parición (nacimientos) del período — mismo universo de rodeos/campo
   // que saldosIniciales, pero solo los que tienen el tag [pid:...].
@@ -2637,7 +2640,7 @@ function buildDashboard() {
 
   // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio,
   // que muestra la Existencia tanto en cabezas como en importe.
-  const eiCabCria = saldosIniciales.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const eiCabCria = rodeosCriaFilt.reduce((s,r) => s+(eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0), 0) + saldosIniciales.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
   const efCabCria = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
 
   // Términos en cabezas para la Conciliación de Existencia (EI+Compras+Cesiones
@@ -2673,7 +2676,7 @@ function buildDashboard() {
     return s + valorizarRodeo_(rodeo||{categoria:(rodeo?.categoria||'').toLowerCase()}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
   }, 0);
   const totalIngresosARS = totalVentasARS + totalCesionesARS + stockValCriaARS;
-  const totalSaldoInicialARS = saldosIniciales.reduce((s,m) => s + valorMovimientoEntrada_(m).total, 0);
+  const totalSaldoInicialARS = eiHeredadoARS + saldosIniciales.reduce((s,m) => s + valorMovimientoEntrada_(m).total, 0);
   const nacImpCriaARS = altasParicionCria.reduce((s,m) => {
     const rodeoDest = rodeosPorId[String(m.rodeo_destino_id)];
     if (!rodeoDest) return s;
@@ -2730,7 +2733,7 @@ function buildDashboard() {
   // cotización del corte (igual que en el Dashboard), no por transacción.
   const stockValCriaUSD = convertirAMoneda_(stockValCriaARS, corteCria, 'USD');
   const totalIngresosUSD = totalVentasUSD + totalCesionesUSD + stockValCriaUSD;
-  const totalSaldoInicialUSD = saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
+  const totalSaldoInicialUSD = convertirAMoneda_(eiHeredadoARS, corteCria, 'USD') + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
   const totalComprasUSD = comprasCria.reduce((s,c) => s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, 'USD'), 0);
   let totalAlimUSD = 0, totalVeterUSD = 0;
   consumosCria.forEach(c => {
@@ -17424,6 +17427,20 @@ function campanaDeFecha_(fecha) {
     if (c.fecha_fin && f > String(c.fecha_fin)) return false;
     return true;
   }) || null;
+}
+// Promovida a función global (antes vivía SOLO dentro de buildDashboard) para
+// que las funciones recursivas de EI/EF por campaña (eiCriaCampana_,
+// efCriaCampanaStockPorRodeo_) puedan usarla también — no depende de nada
+// más que campanaDeFecha_, así que sacarla de ahí no cambia ningún
+// comportamiento existente, solo la hace reutilizable.
+// OJO — registros viejos (cargados antes de que existiera el selector de
+// campaña) no tienen campana_id guardado todavía. Si se los excluyera
+// directo, desaparecerían de golpe. Por eso, cuando falta el campana_id, se
+// usa la campaña que corresponde por FECHA como respaldo.
+function campanaEfectiva_(fecha, campanaIdGuardado) {
+  if (campanaIdGuardado) return String(campanaIdGuardado);
+  const c = campanaDeFecha_(fecha);
+  return c ? String(c.campana_id) : '';
 }
 // Nombre de campaña para mostrar en tablas que arman sus celdas a mano (no
 // pasan por buildEntityTable), como el Libro de Movimientos — que mezcla
