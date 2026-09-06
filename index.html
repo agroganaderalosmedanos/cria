@@ -148,6 +148,17 @@ table.dt th.col-actions-sticky, table.dt td.col-actions-sticky {
   z-index: 1;
 }
 table.dt tbody tr:hover td.col-actions-sticky { background: var(--bg2); }
+/* Mismo problema que col-actions-sticky pero del lado izquierdo: en tablas
+   anchas (ej. Libro de Movimientos, con Campaña cerca del principio), al
+   scrollear para llegar al ✎ de la derecha, la columna de Campaña se perdía
+   de vista — y sin verla no se sabe si ese registro ya está confirmado o no.
+   Se fija al costado izquierdo para que quede visible junto con el ✎. */
+table.dt th.col-campana-sticky, table.dt td.col-campana-sticky {
+  position: sticky; left: 0; background: var(--bg);
+  box-shadow: 3px 0 6px rgba(0,0,0,0.08);
+  z-index: 1;
+}
+table.dt tbody tr:hover td.col-campana-sticky { background: var(--bg2); }
 table.dt th { text-align: left; padding: 10px 14px; background: var(--bg2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
 table.dt th.tc, table.dt td.tc { text-align: center; }
 table.dt td { padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -246,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_152';
+const APP_VERSION = 'index_consolidado_4_6_155_153';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5914,9 +5925,10 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   cols.forEach(c => {
     const activo = sortState.key === c.key;
     const flecha = activo ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
-    h += `<th class="sortable-th" onclick="sortHistorialMov('${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
+    const claseSticky = c.key === '_campanaNombre' ? ' col-campana-sticky' : '';
+    h += `<th class="sortable-th${claseSticky}" onclick="sortHistorialMov('${c.key}')" style="cursor:pointer;user-select:none" title="Ordenar por ${c.label}">${c.label}${flecha}</th>`;
   });
-  h += '<th></th></tr></thead><tbody>';
+  h += '<th class="col-actions-sticky"></th></tr></thead><tbody>';
 
   filasVista.forEach(f => {
     const costoTxt = f.precio_kg > 0 && f.peso_prom_kg > 0
@@ -5931,7 +5943,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
     const trStyle = f.sinCosto ? ' style="background:rgba(200,150,40,0.07)"' : '';
     h += `<tr${trStyle}>
       <td>${fd(f.fecha)}</td>
-      <td>${f._campanaNombre.startsWith && f._campanaNombre.startsWith('⚠') ? `<span style="color:var(--clay-text)">${f._campanaNombre}</span>` : (f._campanaNombre.includes && f._campanaNombre.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${f._campanaNombre}</span>` : f._campanaNombre)}</td>
+      <td class="col-campana-sticky">${f._campanaNombre.startsWith && f._campanaNombre.startsWith('⚠') ? `<span style="color:var(--clay-text)">${f._campanaNombre}</span>` : (f._campanaNombre.includes && f._campanaNombre.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${f._campanaNombre}</span>` : f._campanaNombre)}</td>
       <td><span class="pill ${f.tipoClass}">${f.tipoLabel}</span></td>
       <td>${f.caravana}</td>
       <td>${f.campoOrigen}</td>
@@ -5942,7 +5954,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       <td class="tc">${f.peso_prom_kg ? fn(f.peso_prom_kg) : '—'}</td>
       <td class="tr">${costoTxt}</td>
       <td>${f.obs}</td>
-      <td>${f.editable ? `<div class="row-actions">
+      <td class="col-actions-sticky">${f.editable ? `<div class="row-actions">
         <button class="icon-btn" data-edit="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Editar">✎</button>
         <button class="icon-btn danger" data-del="${f.id}" data-entity="${f.entity}" data-idcol="${f.idCol}" title="Eliminar">✕</button>
       </div>` : ''}</td>
