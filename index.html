@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_156';
+const APP_VERSION = 'index_consolidado_4_6_155_157';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5274,7 +5274,10 @@ function buildDestetes() {  const _criaTabs = [
       <div class="fg"><label>Campo</label>
         <select id="de-campo" onchange="document.getElementById('de-rodeo').innerHTML = rodeoOptionsHtml(rodeosConPrenadasPorCampo(this.value)); deActualizarAvisoNacimientos_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="de-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="de-fecha" value="${today()}" onchange="document.getElementById('de-campana-id').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
+        <select id="de-campana-id">${svCampanaOptionsHtml_(today())}</select>
+      </div>
       <div class="fg"><label>Rodeo</label>
         <select id="de-rodeo" onchange="deActualizarAvisoNacimientos_()">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
@@ -5378,20 +5381,36 @@ function buildDestetes() {  const _criaTabs = [
       </select>
     </div>
   </div>
+  <button class="btn btn-secondary btn-sm" id="de-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('destetes', 'Destetes', 'de-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
   <div id="de-hist-tabla">` + buildDestetesTabla_(items) + `</div>`;
   return h;
 }
 // Columnas + armado de la tabla de historial de Destetes — separado para
 // reusarlo en el render inicial y en el refiltrado por campo/rodeo.
 function buildDestetesTabla_(items) {
-  return buildEntityTable(items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))), [
+  return buildEntityTable(items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).map(conCampanaNombreDestete_), [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
+    { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : (v.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${v}</span>` : v) },
     { key: 'rodeo_id', label: 'Rodeo', render: v => rodeoNombre(v) },
     { key: 'machos', label: 'Machos', render: v => fn(v) },
     { key: 'hembras', label: 'Hembras', render: v => fn(v) },
     { key: 'total', label: 'Total', render: v => `<strong>${fn(v)}</strong>` },
     { key: 'peso_prom_kg', label: 'Peso prom.', render: v => v ? fn(v) + ' kg' : '—' },
   ], 'destetes', 'destete_id');
+}
+// Nombre de campaña para mostrar en la tabla — deriva de campana_id (fuente
+// de verdad); si falta (registro viejo, cargado antes de v20), se propone
+// por fecha, marcada "(sin confirmar)". Mismo criterio que el resto.
+function conCampanaNombreDestete_(it) {
+  let nombre;
+  if (it.campana_id) {
+    const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(it.campana_id));
+    nombre = c ? c.nombre : '⚠ Campaña inválida';
+  } else {
+    const c = campanaDeFecha_(it.fecha);
+    nombre = c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
+  }
+  return { ...it, _campanaNombre: nombre };
 }
 window.deActualizarAvisoNacimientos_ = function() {
   const aviso = document.getElementById('de-aviso-nacimientos');
@@ -5451,6 +5470,7 @@ function attachDestetesEvents() {
     if (peso <= 0) { toast('El peso promedio es obligatorio — se usa para calcular la cesión interna a Recría. Si no pesaste, cargá una estimación.', 'err'); return; }
     const data = {
       fecha: document.getElementById('de-fecha').value,
+      campana_id: document.getElementById('de-campana-id').value,
       rodeo_id: document.getElementById('de-rodeo').value,
       machos, hembras, total: machos + hembras,
       peso_prom_kg: peso,
@@ -5476,7 +5496,8 @@ function attachDestetesEvents() {
 
     save.disabled = true;
     try {
-      await apiCall('create', { body: { entity: 'destetes', data } });
+      const deResult = await apiCall('create', { body: { entity: 'destetes', data } });
+      const desteteId = deResult && deResult.id;
       invalidateCache('destetes');
 
       if (trasladar && rodeoDestRecria) {
@@ -5491,7 +5512,13 @@ function attachDestetesEvents() {
           rodeo_destino_id: rodeoDestRecria,
           cantidad: data.total,
           peso_prom_kg: peso,
-          observaciones: 'Traslado por destete — ' + data.total + ' terneros (' + machos + ' machos, ' + hembras + ' hembras)',
+          campana_id: data.campana_id,
+          // Tag [deid:<id>] — mismo patrón que [cid:...]/[pid:...]/[abid:...]/[erid:...].
+          // Antes este traslado no llevaba ningún tag, así que no había forma de
+          // encontrarlo después para sincronizarlo o borrarlo en cascada si se
+          // editaba/borraba el Destete — ese arreglo queda pendiente para otra
+          // sesión, pero el tag ya se agrega ahora para no perder la referencia.
+          observaciones: `[deid:${desteteId}] Traslado por destete — ` + data.total + ' terneros (' + machos + ' machos, ' + hembras + ' hembras)',
         };
         await apiCall('create', { body: { entity: 'movimientos', data: movData } });
         invalidateCache('movimientos');
@@ -18296,11 +18323,11 @@ function openEditModal(entity, idCol, id) {
   // no trae la clave (registro cargado antes de agregar la columna, o caché
   // vieja del navegador sin refrescar), el campo directamente no aparecía en
   // el modal — no es que faltara el selector, faltaba el campo entero.
-  // Mortandad (v15), Pariciones (v16) y Abortos (v17) nunca tuvieron un campo
-  // de texto libre 'campana' como las otras cinco, así que solo necesitan
-  // este default — no entran en ocultarCampanaTexto porque no hay nada
-  // viejo que ocultarles.
-  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad','pariciones','abortos'].includes(entity)) {
+  // Mortandad (v15), Pariciones (v16), Abortos (v17) y Destetes (v20) nunca
+  // tuvieron un campo de texto libre 'campana' como las otras cinco, así que
+  // solo necesitan este default — no entran en ocultarCampanaTexto porque no
+  // hay nada viejo que ocultarles.
+  if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad','pariciones','abortos','destetes'].includes(entity)) {
     if (!('campana_id' in item)) item.campana_id = '';
   }
   const ocultarCampanaTexto = ['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity);
