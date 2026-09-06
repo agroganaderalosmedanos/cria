@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_171';
+const APP_VERSION = 'index_consolidado_4_6_155_172';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6934,27 +6934,19 @@ function buildRecriaDashboard() {
     <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaRecriaExcel_()" title="Descarga un Excel con cabezas y $ por rodeo, más el detalle crudo de movimientos, para revisar todo sin pasar de pantalla en pantalla">📊 Exportar auditoría a Excel</button>
   </div>`;
 
-  // ── CAMPAÑA (Existencia recursiva) ───────────────────────────────────────
-  // Selector de Campaña propio de esta sección — independiente del filtro de
-  // "Campo" de arriba. Mismo criterio que Cría: si la campaña elegida es la
-  // activa, respeta la fecha de corte de arriba; si ya cerró, se muestra
-  // completa siempre (no tiene sentido "cortarla" a mitad de camino).
-  // _memoEiRecriaCampana_ se resetea acá (una vez por render) para no
-  // arrastrar resultados calculados con datos de un render anterior.
+  // ── CAMPAÑA ACTIVA (Existencia recursiva) ────────────────────────────────
+  // Sin selector: esta sección siempre muestra la EI/EF de la campaña ACTIVA
+  // del catálogo — no la de una campaña vieja. Si ninguna campaña está
+  // marcada "activa" en el catálogo (caso raro), se usa la más reciente como
+  // respaldo, mismo criterio que ya usa Cría. _memoEiRecriaCampana_ se
+  // resetea acá (una vez por render) para no arrastrar resultados calculados
+  // con datos de un render anterior.
   _memoEiRecriaCampana_ = {};
   const campanasCatRec = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
   const campanaActivaRec = campanasCatRec.find(c => c.activa===true || String(c.activa).toUpperCase()==='TRUE');
-  const campSelecCampanaRec = S.rcDashCampana || (campanaActivaRec ? campanaActivaRec.campana_id : (campanasCatRec[0]?.campana_id || ''));
+  const campSelecCampanaRec = campanaActivaRec ? campanaActivaRec.campana_id : (campanasCatRec[0]?.campana_id || '');
   const campSelecCampanaObjRec = campanasCatRec.find(c => String(c.campana_id) === String(campSelecCampanaRec));
   const esCampanaActivaRecria = !!(campSelecCampanaObjRec && (campSelecCampanaObjRec.activa===true || String(campSelecCampanaObjRec.activa).toUpperCase()==='TRUE'));
-
-  h += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;margin-top:-8px">
-    <label style="font-size:13px;font-weight:600">Campaña (Existencia):</label>
-    <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
-      onchange="S.rcDashCampana=this.value;render()">
-      ${campanasCatRec.map(c=>`<option value="${c.campana_id}" ${String(campSelecCampanaRec)===String(c.campana_id)?'selected':''}>${c.nombre}${(c.activa===true||String(c.activa).toUpperCase()==='TRUE')?' (activa)':''}</option>`).join('')}
-    </select>
-  </div>`;
 
   // Rodeos de Recría para esta sección — TODOS, incluyendo inactivos (un
   // rodeo pudo tener stock en una campaña vieja y no debe desaparecer de su
