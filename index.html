@@ -246,7 +246,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_151';
+const APP_VERSION = 'index_consolidado_4_6_155_152';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5833,6 +5833,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       })();
       return {
         fecha: m.fecha || '',
+        _campanaNombre: campanaNombreGenerico_(m.fecha, m.campana_id),
         tipoLabel: m.tipo, tipoClass: m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green',
         caravana: m.caravana || '—',
         campoOrigen: m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—',
@@ -5848,6 +5849,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
     }),
     ...ventasF.map(v => ({
       fecha: v.fecha_salida || '',
+      _campanaNombre: campanaNombreGenerico_(v.fecha_salida, v.campana_id),
       tipoLabel: 'Venta', tipoClass: 'pill-red',
       caravana: '—',
       campoOrigen: v.campo_id ? campoNombre(v.campo_id) : '—', rodeoOrigen: v.rodeo_id ? rodeoNombre(v.rodeo_id) : '—',
@@ -5860,6 +5862,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       const esBaja = !!v.baja;
       return {
         fecha: v.fecha || '',
+        _campanaNombre: '—',
         tipoLabel: (esBaja ? 'Baja' : 'Venta') + ' (Corrales)', tipoClass: esBaja ? 'pill-clay' : 'pill-red',
         caravana: '—',
         campoOrigen: CORRAL_CAMPO_NOMBRE_[String(v.cid)] || 'Sin campo asignado', rodeoOrigen: 'Corral ' + v.cid,
@@ -5887,7 +5890,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   });
 
   const cols = [
-    { key: 'fecha', label: 'Fecha' }, { key: 'tipoLabel', label: 'Tipo' }, { key: 'caravana', label: 'Caravana' },
+    { key: 'fecha', label: 'Fecha' }, { key: '_campanaNombre', label: 'Campaña' }, { key: 'tipoLabel', label: 'Tipo' }, { key: 'caravana', label: 'Caravana' },
     { key: 'campoOrigen', label: 'Campo origen' }, { key: 'rodeoOrigen', label: 'Rodeo origen' },
     { key: 'campoDestino', label: 'Campo destino' }, { key: 'rodeoDestino', label: 'Rodeo destino' },
     { key: 'cantidad', label: 'Cant.' }, { key: 'peso_prom_kg', label: 'Peso (kg)' }, { key: 'costoMostrar', label: 'Costo ingreso' }, { key: 'obs', label: 'Obs.' },
@@ -5928,6 +5931,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
     const trStyle = f.sinCosto ? ' style="background:rgba(200,150,40,0.07)"' : '';
     h += `<tr${trStyle}>
       <td>${fd(f.fecha)}</td>
+      <td>${f._campanaNombre.startsWith && f._campanaNombre.startsWith('⚠') ? `<span style="color:var(--clay-text)">${f._campanaNombre}</span>` : (f._campanaNombre.includes && f._campanaNombre.includes('(sin confirmar)') ? `<span style="color:var(--text3)">${f._campanaNombre}</span>` : f._campanaNombre)}</td>
       <td><span class="pill ${f.tipoClass}">${f.tipoLabel}</span></td>
       <td>${f.caravana}</td>
       <td>${f.campoOrigen}</td>
@@ -17221,6 +17225,20 @@ function campanaDeFecha_(fecha) {
     if (c.fecha_fin && f > String(c.fecha_fin)) return false;
     return true;
   }) || null;
+}
+// Nombre de campaña para mostrar en tablas que arman sus celdas a mano (no
+// pasan por buildEntityTable), como el Libro de Movimientos — que mezcla
+// Movimientos, Ventas y Corrales en una sola tabla. Mismo criterio que las
+// funciones conCampanaNombre_X de Mortandad/Pariciones/Abortos/Ventas: si
+// hay campana_id cargado se usa ese (fuente de verdad); si no, se propone
+// por fecha, marcado "(sin confirmar)".
+function campanaNombreGenerico_(fecha, campanaId) {
+  if (campanaId) {
+    const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(campanaId));
+    return c ? c.nombre : '⚠ Campaña inválida';
+  }
+  const c = campanaDeFecha_(fecha);
+  return c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
 }
 // Opciones del selector de Campaña para el formulario de Servicios — propone
 // la campaña que corresponde a la fecha (según el catálogo de Campañas),
