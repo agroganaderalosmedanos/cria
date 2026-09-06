@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_154';
+const APP_VERSION = 'index_consolidado_4_6_155_155';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3638,6 +3638,7 @@ function buildAbortos() {  const _criaTabs = [
       </select>
     </div>
   </div>
+  <button class="btn btn-secondary btn-sm" id="ab-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('abortos', 'Abortos', 'ab-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
   <div id="ab-hist-tabla">`;
   const itemsFilt = items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
   h += buildEntityTable(itemsFilt.map(conCampanaNombreAborto_), ABORTOS_COLS_, 'abortos', 'aborto_id');
@@ -3827,6 +3828,7 @@ function buildPariciones() {  const _criaTabs = [
       </select>
     </div>
   </div>
+  <button class="btn btn-secondary btn-sm" id="pa-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('pariciones', 'Pariciones', 'pa-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
   <div id="pa-hist-tabla">`;
   h += buildEntityTable(items.map(conCampanaNombreParicion_), PARICIONES_COLS_, 'pariciones', 'paricion_id');
   h += `</div>`;
@@ -4369,6 +4371,7 @@ function buildMortandad() {
       </select>
     </div>
   </div>
+  <button class="btn btn-secondary btn-sm" id="mo-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('mortandad', 'Mortandad', 'mo-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
   <div id="mo-hist-tabla">`;
   h += buildEntityTable(items.map(conCampanaNombreMortandad_), MORTANDAD_COLS_, 'mortandad', 'mortandad_id');
   h += `</div>`;
@@ -5778,6 +5781,7 @@ function buildMovimientos() {
         </select>
       </div>
     </div>
+    <button class="btn btn-secondary btn-sm" id="mv-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('movimientos', 'Movimientos', 'mv-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
     <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], S.corralesVentas || [], '', '')}</div>
   </div>
 
@@ -11520,6 +11524,7 @@ function buildVentas() {
 
   // Historial liquidadas
   h += `<div class="section-label">Historial de ventas</div>`;
+  h += `<button class="btn btn-secondary btn-sm" id="ve-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('ventas', 'Ventas', 've-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>`;
   h += buildEntityTable(liquidadas.map(conCampanaNombre_), [
     { key: 'fecha_salida', label: 'Fecha', render: v => fd(v) },
     { key: '_campanaNombre', label: 'Campaña', render: v => v ? `<span class="pill pill-gold">${v}</span>` : '—' },
@@ -17251,6 +17256,32 @@ function campanaNombreGenerico_(fecha, campanaId) {
   }
   const c = campanaDeFecha_(fecha);
   return c ? c.nombre + ' (sin confirmar)' : '⚠ Sin campaña';
+}
+// Confirmación masiva de campañas por fecha — llama a la acción de backend
+// que calcula y escribe, en una sola pasada, la campaña de TODOS los
+// registros de una entidad que todavía no la tienen cargada. Nunca toca un
+// registro que ya tenga campaña puesta. Se usa desde un botón en cada
+// pantalla (Movimientos, Ventas, Mortandad, Pariciones, Abortos).
+async function confirmarCampanasBloque_(entity, entityLabel, btnId) {
+  if (!confirm(`¿Confirmar la campaña (según la fecha de cada registro) de TODOS los ${entityLabel} que todavía no la tienen cargada?\n\nNo se toca ningún registro que ya tenga campaña puesta — esto es seguro de correr aunque ya hayas confirmado algunos a mano.`)) return;
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Confirmando...'; }
+  try {
+    const r = await apiCall('confirmarCampanasPorFecha', { body: { entity } });
+    let msg = `${r.confirmadas} confirmadas por fecha`;
+    if (r.yaTenian) msg += `, ${r.yaTenian} ya tenían campaña`;
+    if (r.sinCampanaCoincidente) msg += `, ⚠ ${r.sinCampanaCoincidente} sin ninguna campaña que coincida con su fecha (revisar el catálogo de Campañas o esas fechas puntuales)`;
+    toast(msg, r.sinCampanaCoincidente ? 'err' : 'ok');
+    invalidateCache(entity);
+    await loadEntity(entity, true);
+    S.dashboard = null; S._resultCria = null;
+    if (entity === 'movimientos' || entity === 'ventas') { S.stock = null; await loadStock(); }
+    render();
+  } catch (err) {
+    toast(err.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Confirmar campañas por fecha (masivo)'; }
+  }
 }
 // Opciones del selector de Campaña para el formulario de Servicios — propone
 // la campaña que corresponde a la fecha (según el catálogo de Campañas),
