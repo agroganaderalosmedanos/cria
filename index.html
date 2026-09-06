@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_163';
+const APP_VERSION = 'index_consolidado_4_6_155_164';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2253,8 +2253,15 @@ function eiCriaCampana_(campanaId) {
 function efCriaCampanaStockPorRodeo_(campanaId) {
   const ei = eiCriaCampana_(campanaId);
   const stockPorRodeo = Object.assign({}, ei.stockPorRodeo);
+  // OJO — mismo bug real detectado y corregido acá que en buildDashboard:
+  // "m.tipo !== 'Saldo inicial'" excluía TAMBIÉN a los nacimientos por
+  // Parición (que también son tipo 'Saldo inicial', tag [pid:...]) — esos NO
+  // están en eiCriaCampana_ (van aparte, como "Nacimientos"), así que
+  // quedaban sin sumar en ningún lado. Ahora se incluyen los Traslados Y los
+  // Saldo Inicial que sean alta por Parición; se excluyen solo los Saldo
+  // Inicial NO-parición (esos ya están en eiCriaCampana_ más arriba).
   const movsC = (S.cache.movimientos || []).filter(m =>
-    m.tipo !== 'Saldo inicial' && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)
+    (m.tipo !== 'Saldo inicial' || esAltaPorParicion_(m)) && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)
   );
   movsC.forEach(m => {
     const cant = Number(m.cantidad) || 0;
@@ -2497,15 +2504,24 @@ function buildDashboard() {
   // OJO — bug real encontrado y corregido: eiCriaCampana_(campSelec) YA
   // incluye los "Saldo inicial" genuinos tageados directo a esta misma
   // campaña (ver su propio filtro "propios" más arriba). Este loop de acá
-  // abajo NO tiene que volver a sumarlos — si no, un rodeo con Saldo Inicial
-  // real en esta campaña (típicamente solo pasa en la primera campaña del
-  // sistema) quedaba contado DOS veces. Por eso el 'Saldo inicial' queda
-  // explícitamente afuera de este forEach; solo se procesan acá los
-  // Traslados, que eiCriaCampana_ no toca.
+  // abajo NO tiene que volver a sumar los Saldo Inicial NO-parición — si no,
+  // un rodeo con Saldo Inicial real en esta campaña (típicamente solo pasa en
+  // la primera campaña del sistema) quedaba contado DOS veces. PERO los
+  // Saldo Inicial que SÍ son altas por Parición (nacimientos del período,
+  // tag [pid:...]) quedan justo AFUERA de eiCriaCampana_ a propósito (van en
+  // el renglón "Nacimientos" de la Conciliación, no en "EI") — así que esos
+  // sí hay que sumarlos acá, o los terneros recién nacidos desaparecen del
+  // stock (bug real detectado: "Terneros al pie" quedaba afuera de todos
+  // lados a la vez).
   const stockPorRodeo = Object.assign({}, eiCriaCampana_(campSelec).stockPorRodeo);
   movs.forEach(m => {
     const cant = Number(m.cantidad)||0;
-    if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
+    if (m.tipo==='Saldo inicial') {
+      if (esAltaPorParicion_(m)) {
+        stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+      }
+      // Saldo inicial NO-parición: ya contado en eiCriaCampana_(campSelec) más arriba.
+    } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
       if (m.rodeo_origen_id)  stockPorRodeo[String(m.rodeo_origen_id)]  = (stockPorRodeo[String(m.rodeo_origen_id)] ||0) - cant;
       if (m.rodeo_destino_id) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
     }
