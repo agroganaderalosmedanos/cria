@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_153';
+const APP_VERSION = 'index_consolidado_4_6_155_154';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -18437,13 +18437,19 @@ function openEditModal(entity, idCol, id) {
           if (!S.cache.movimientos) await loadEntity('movimientos');
           const movLigado = (S.cache.movimientos||[]).find(m => (m.observaciones||'').includes(`[abid:${id}]`));
           if (movLigado) {
-            const rodeoNuevo = (S.catalogs.rodeos||[]).find(r => String(r.rodeo_id)===String(data.rodeo_id));
-            await apiCall('update', { body: { entity: 'movimientos', id: movLigado.movimiento_id, data: {
-              fecha: data.fecha,
-              rodeo_origen_id: data.rodeo_id,
-              campo_origen_id: rodeoNuevo ? rodeoNuevo.campo_id : movLigado.campo_origen_id,
-              campana_id: data.campana_id,
-            } } });
+            // Armar el paquete SOLO con lo que de verdad cambió en el Aborto —
+            // antes siempre mandaba campo_origen_id (aunque no hubiera cambiado
+            // el rodeo), lo que hacía que el backend disparara la validación de
+            // stock del Movimiento en cualquier edición, incluso al confirmar
+            // solo la campaña.
+            const movData = { campana_id: data.campana_id };
+            if (data.fecha !== undefined) movData.fecha = data.fecha;
+            if (data.rodeo_id !== undefined) {
+              const rodeoNuevo = (S.catalogs.rodeos||[]).find(r => String(r.rodeo_id)===String(data.rodeo_id));
+              movData.rodeo_origen_id = data.rodeo_id;
+              if (rodeoNuevo) movData.campo_origen_id = rodeoNuevo.campo_id;
+            }
+            await apiCall('update', { body: { entity: 'movimientos', id: movLigado.movimiento_id, data: movData } });
             invalidateCache('movimientos');
             toast('Traslado vinculado también actualizado', 'ok');
           }
