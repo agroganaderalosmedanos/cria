@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_155';
+const APP_VERSION = 'index_consolidado_4_6_155_156';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5782,6 +5782,8 @@ function buildMovimientos() {
       </div>
     </div>
     <button class="btn btn-secondary btn-sm" id="mv-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('movimientos', 'Movimientos', 'mv-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
+    <button class="btn btn-secondary btn-sm" onclick="window.mvBuscarIdsDuplicados_()" style="margin-bottom:10px;margin-left:8px;font-size:12px">🔍 Buscar IDs duplicados</button>
+    <div id="mv-duplicados-resultado" style="margin-bottom:10px"></div>
     <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], S.corralesVentas || [], '', '')}</div>
   </div>
 
@@ -5967,6 +5969,54 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   h += '</tbody></table></div>';
   return h;
 }
+// Auditoría de solo lectura: busca movimiento_id repetidos en Movimientos.
+// Encontrado a raíz de un caso real — al hacer clic en el ✎ de una fila se
+// abría el modal de OTRA fila distinta. Causa: dos (o más) Movimientos con
+// el MISMO id (ya había pasado antes, ver ids 153-156 en sesiones previas,
+// por una condición de carrera al guardar dos cosas casi al mismo tiempo,
+// resuelta con LockService — pero un duplicado viejo de antes de ese arreglo
+// puede seguir dando vueltas). openEditModal busca "el primer registro cuyo
+// id coincida" — si hay dos con el mismo id, siempre abre el primero de la
+// lista, sin importar en qué fila de la tabla se haya clickeado. Esta
+// auditoría no corrige nada sola (cambiar un id a mano es una operación
+// delicada) — solo muestra cuáles están duplicados para poder corregirlos
+// directamente en la hoja de Sheets.
+window.mvBuscarIdsDuplicados_ = async function() {
+  const el = document.getElementById('mv-duplicados-resultado');
+  if (!el) return;
+  el.innerHTML = '<p class="helper-text">Buscando...</p>';
+  try {
+    // Se pide fresco (no la caché en memoria) para descartar de entrada que
+    // sea un tema de datos viejos en el navegador, no una duplicación real.
+    await loadEntity('movimientos', true);
+    const movs = S.cache.movimientos || [];
+    const porId = {};
+    movs.forEach(m => {
+      const id = String(m.movimiento_id);
+      (porId[id] || (porId[id] = [])).push(m);
+    });
+    const duplicados = Object.keys(porId).filter(id => porId[id].length > 1);
+    if (!duplicados.length) {
+      el.innerHTML = '<div class="helper-text" style="color:var(--green-text)">✓ No se encontraron IDs duplicados en Movimientos.</div>';
+      return;
+    }
+    let h = `<div class="panel" style="border:2px solid var(--red);background:rgba(220,50,50,0.05)">
+      <div class="panel-title" style="color:var(--red-text)">⚠ ${duplicados.length} ID${duplicados.length>1?'s':''} de Movimiento duplicado${duplicados.length>1?'s':''}</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:12px">Esto hace que al tocar el ✎ de cualquiera de las filas con el mismo ID se abra siempre LA MISMA (la primera que encuentra el sistema), sin importar cuál clickeaste. Para corregirlo: en la hoja "Movimientos" de Sheets, buscá uno de los dos IDs repetidos (columna A) y cambialo por un número que no esté usado por ningún otro Movimiento — no hace falta tocar nada más de esa fila, ningún otro lugar del sistema apunta al movimiento_id.</div>`;
+    duplicados.forEach(id => {
+      h += `<div style="margin:10px 0 4px;font-weight:700">ID ${id} — aparece ${porId[id].length} veces</div>
+        <div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Tipo</th><th>Rodeo origen</th><th>Rodeo destino</th><th class="tc">Cant.</th><th>Obs.</th></tr></thead><tbody>`;
+      porId[id].forEach(m => {
+        h += `<tr><td>${fd(m.fecha)}</td><td>${m.tipo||'—'}</td><td>${m.rodeo_origen_id?rodeoNombre(m.rodeo_origen_id):'—'}</td><td>${m.rodeo_destino_id?rodeoNombre(m.rodeo_destino_id):'—'}</td><td class="tc">${fn(m.cantidad)}</td><td>${m.observaciones||'—'}</td></tr>`;
+      });
+      h += `</tbody></table></div>`;
+    });
+    h += `</div>`;
+    el.innerHTML = h;
+  } catch (err) {
+    el.innerHTML = `<div class="helper-text" style="color:var(--red-text)">Error al buscar: ${err.message}</div>`;
+  }
+};
 window.sortHistorialMov = function(key) {
   if (!S.sort) S.sort = {};
   const current = S.sort.historialMov;
