@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_178';
+const APP_VERSION = 'index_consolidado_4_6_155_179';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3350,6 +3350,59 @@ function buildDashboard() {
     h += `<tr style="background:var(--bg2);font-weight:800">
       <td colspan="6" class="tr">TOTAL cesiones</td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totCes,_criaMoneda)}</td>
+    </tr>`;
+    h += '</tbody></table></div></div>';
+  }
+
+  // ── Detalle Reposición de Vientres (Recría → Cría) — espejo de la de
+  // arriba, pero en sentido contrario: acá Cría RECIBE animales de Recría. ──
+  if (reposicionVientres.length) {
+    h += `<div class="panel">
+      <div class="panel-title">🐮 Cesiones (Reposición de Vientres desde Recría) — detalle</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
+        <th class="tc">Cab.</th><th class="tc">Kg prom.</th>
+        <th class="tr">Precio</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totRepos = 0;
+    reposicionVientres.forEach(m => {
+      const cant = Number(m.cantidad)||0;
+      const peso = Number(m.peso_prom_kg)||0;
+      const precioCabeza = Number(m.precio_cabeza)||0;
+      const precioKg = Number(m.precio_kg)||0;
+      let total = 0, pesoUsado = peso, esPorCabeza = precioCabeza > 0;
+      if (precioCabeza > 0) {
+        total = cant * precioCabeza;
+      } else if (precioKg && peso) {
+        total = cant * peso * precioKg;
+      } else if (precioKg && !peso) {
+        const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+        total = cant * pesoUsado * precioKg;
+      } else {
+        const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+        const pesadasR = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado = pesadasR[0] ? Number(pesadasR[0].peso_prom_kg)||0 : 0;
+        total = valorizarRodeo_(rodeo||{categoria:'vaquillona'}, cant, pesoUsado);
+      }
+      totRepos += convertirAMoneda_(total, m.fecha, _criaMoneda);
+      const or = rodeosPorId[String(m.rodeo_origen_id)];
+      const de = rodeosPorId[String(m.rodeo_destino_id)];
+      const precioMostrar = precioCabeza || precioKg;
+      const sinPrecio = !precioMostrar;
+      h += `<tr${sinPrecio?' style="background:rgba(200,150,40,0.06)"':''}>
+        <td>${fd(m.fecha)}</td>
+        <td><strong>${or?.nombre||'—'}</strong></td>
+        <td>${de?.nombre||'—'}</td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tc">${pesoUsado?fn(pesoUsado)+' kg'+(peso?'':' <span style="font-size:10px;color:var(--text3)">(pesada)</span>'):'—'}</td>
+        <td class="tr">${precioMostrar?'$ '+fn(precioMostrar)+(esPorCabeza?'/cab.':'/kg'):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
+        <td class="tr"><strong>${fnMoneda_(convertirAMoneda_(total, m.fecha, _criaMoneda),_criaMoneda)}</strong></td>
+      </tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800">
+      <td colspan="6" class="tr">TOTAL Reposición de Vientres</td>
+      <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(totRepos,_criaMoneda)}</td>
     </tr>`;
     h += '</tbody></table></div></div>';
   }
@@ -7606,7 +7659,8 @@ function buildRecriaDashboard() {
       if (!cant) return;
       const val = valorizarRodeoAFecha_(r, cant, campAnteriorObjRec.fecha_fin);
       eiHeredadoARSRec += val;
-      eiHeredadoDetalleRec.push({ rodeo: r, cant, valConv: convertirAMoneda_(val, campAnteriorObjRec.fecha_fin, moneda) });
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, campAnteriorObjRec.fecha_fin);
+      eiHeredadoDetalleRec.push({ rodeo: r, cant, pesoP, valConv: convertirAMoneda_(val, campAnteriorObjRec.fecha_fin, moneda) });
     });
   }
   const totalEICampanaRec = convertirAMoneda_(eiHeredadoARSRec, campAnteriorObjRec ? campAnteriorObjRec.fecha_fin : corteRecria, moneda)
@@ -7735,12 +7789,12 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">📦 Existencia Inicial (EI) valorizada — por rodeo, campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''}</div>`;
     if (eiHeredadoDetalleRec.length) {
       h += `<p class="helper-text">Heredada del cierre de la campaña anterior (calculada, no es un Movimiento cargado) — valorizada al precio vigente al ${fd(campAnteriorObjRec.fecha_fin)}:</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Valor (al cierre anterior)</th></tr></thead><tbody>`;
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Peso prom.</th><th class="tr">Valor (al cierre anterior)</th></tr></thead><tbody>`;
       eiHeredadoDetalleRec.forEach(r => {
-        h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
+        h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
       });
       h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL heredado</td>
-        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td>
+        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td><td class="tr"></td>
         <td class="tr">${fnMoneda_(eiHeredadoDetalleRec.reduce((s,r)=>s+r.valConv,0),moneda)}</td></tr>`;
       h += `</tbody></table></div>`;
     }
@@ -7799,24 +7853,11 @@ function buildRecriaDashboard() {
   // Sueldos KPI
   h += buildSueldoKpiPanel_('recria');
 
-  // ── Detalle EF (Stock final valorizado) ───────────────────────────────────
-  const stockDetalleRec = stockDetalleRec_;
-  if (stockDetalleRec.length) {
-    h += `<div class="panel"><div class="panel-title">📦 Stock final valorizado (EF) — por rodeo</div>
-      <div class="tw"><table class="dt"><thead><tr>
-        <th>Rodeo</th><th class="tc">Stock</th><th class="tr">Peso prom.</th><th class="tr">Valor total</th>
-      </tr></thead><tbody>`;
-    stockDetalleRec.forEach(r=>{
-      h += `<tr><td><strong>${r.nombre}</strong></td>
-        <td class="tc">${fn(r.stock)}</td>
-        <td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td>
-        <td class="tr"><strong>${fmM(r.val)}</strong></td></tr>`;
-    });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
-      <td class="tc">${fn(stockDetalleRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td></td>
-      <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValRecria,moneda)}</td></tr>`;
-    h += `</tbody></table></div></div>`;
-  }
+  // (La tabla vieja "Stock final valorizado (EF) — por rodeo" se sacó de
+  // acá — para la campaña activa daba el mismo número que la nueva
+  // "Existencia Final (EF) valorizada — por rodeo, campaña X" de más
+  // arriba, porque las dos valorizan a la fecha de corte cuando la campaña
+  // está activa. Quedaba duplicada.)
 
   // ── Conciliación de Existencia POR CAMPAÑA — Recría (cabezas) ────────────
   // NUEVO — Existencia Inicial recursiva (EI = EF de la campaña anterior),
@@ -7855,31 +7896,10 @@ function buildRecriaDashboard() {
     ventas: ventasCabRecria, mortandad: mortCabRecria,
   }, efCabRecria);
 
-  // ── Detalle EI (Saldo inicial) ────────────────────────────────────────────
-  const saldosInicRec = movs.filter(m=>m.tipo==='Saldo inicial'&&rodeosIdsFilt.has(String(m.rodeo_destino_id)));
-  if (saldosInicRec.length) {
-    h += `<div class="panel"><div class="panel-title">📋 Saldo inicial (EI) — por rodeo</div>
-      <div class="tw"><table class="dt"><thead><tr>
-        <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Precio</th>${moneda==='USD'?'<th class="tr">Cotización</th>':''}<th class="tr">Total</th>
-      </tr></thead><tbody>`;
-    let totEI=0;
-    saldosInicRec.forEach(m=>{
-      const cant=Number(m.cantidad)||0;
-      const { total, precioLabel } = valorMovimientoEntrada_(m);
-      // Cotización DEL DÍA DE ESTE MOVIMIENTO, no la del corte — mismo fix que en Cría.
-      const totalConv = convertirAMoneda_(total, m.fecha, moneda);
-      totEI+=totalConv;
-      const tcMov = moneda==='USD' ? tipoCambioVigente_(m.fecha) : null;
-      h += `<tr><td>${fd(m.fecha)}</td><td><strong>${rodeoNombre(m.rodeo_destino_id)}</strong></td>
-        <td class="tc">${fn(cant)}</td>
-        <td class="tr">${precioLabel || '<span style="color:var(--clay-text);font-size:11px">⚠ sin precio</span>'}</td>
-        ${moneda==='USD'?`<td class="tr" style="font-size:11px;color:var(--text3)">${tcMov?'$ '+fn(Number(tcMov.valor||tcMov),2):'—'}</td>`:''}
-        <td class="tr"><strong>${total?fnMoneda_(totalConv,moneda):'—'}</strong></td></tr>`;
-    });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="${moneda==='USD'?5:4}" class="tr">TOTAL EI</td>
-      <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(totEI,moneda)}</td></tr>`;
-    h += `</tbody></table></div></div>`;
-  }
+  // (La tabla vieja "Saldo inicial (EI) — por rodeo" se sacó de acá — quedaba
+  // duplicada con "Existencia Inicial (EI) valorizada — por rodeo, campaña X"
+  // de más arriba, que ya muestra lo mismo con más contexto: heredado de la
+  // campaña anterior + Saldos Iniciales propios de esta campaña.)
 
   // ── Detalle Cesiones recibidas de Cría — SCOPEADO POR CAMPAÑA (usa
   // movsCampanaRec, ya filtrado por campanaEfectiva_ === campaña elegida,
@@ -7951,6 +7971,47 @@ function buildRecriaDashboard() {
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL cesiones enviadas</td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totCesEnv,moneda)}</td></tr>`;
+    h += `</tbody></table></div></div>`;
+  }
+
+  // ── Detalle Reposición a Cría — SCOPEADO POR CAMPAÑA (espejo de "Cesiones
+  // (Reposición de Vientres)" del lado de Cría) ────────────────────────────
+  if (reposicionACriaCampanaRec.length) {
+    h += `<div class="panel"><div class="panel-title">🐮 Reposición a Cría — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
+      <div class="tw"><table class="dt"><thead><tr>
+        <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
+        <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">Precio</th><th class="tr">Total</th>
+      </tr></thead><tbody>`;
+    let totReposCampana = 0;
+    reposicionACriaCampanaRec.forEach(m=>{
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+      const precioCabeza=Number(m.precio_cabeza)||0;
+      const precioKg=Number(m.precio_kg)||0;
+      let total=0, pesoUsado=peso, esPorCabeza=precioCabeza>0;
+      if (precioCabeza>0) { total=cant*precioCabeza; }
+      else if (precioKg&&peso) { total=cant*peso*precioKg; }
+      else if (precioKg&&!peso) {
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=cant*pesoUsado*precioKg;
+      } else {
+        const or=rodeosAllMap[String(m.rodeo_origen_id)];
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=valorizarRodeo_(or||{categoria:'vaquillona'},cant,pesoUsado);
+      }
+      const totalConv = convertirAMoneda_(total, m.fecha, moneda);
+      totReposCampana += totalConv;
+      const precioMostrar = precioCabeza || precioKg;
+      h += `<tr${!precioMostrar?' style="background:rgba(200,150,40,0.06)"':''}>
+        <td>${fd(m.fecha)}</td><td><strong>${rodeoNombre(m.rodeo_origen_id)}</strong></td><td>${rodeoNombre(m.rodeo_destino_id)}</td>
+        <td class="tc">${fn(cant)}</td>
+        <td class="tc">${pesoUsado?fn(pesoUsado)+' kg':'—'}</td>
+        <td class="tr">${precioMostrar?'$ '+fn(precioMostrar)+(esPorCabeza?'/cab.':'/kg'):'<span style="color:var(--gold-text);font-size:11px">⚠ valor del mes</span>'}</td>
+        <td class="tr"><strong>${fnMoneda_(totalConv,moneda)}</strong></td></tr>`;
+    });
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL Reposición a Cría</td>
+      <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totReposCampana,moneda)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
 
