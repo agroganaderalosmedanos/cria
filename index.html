@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_172';
+const APP_VERSION = 'index_consolidado_4_6_155_173';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -7416,6 +7416,18 @@ function buildRecriaDashboard() {
   // toca en esta pasada; una vez que este cierre bien en todas las campañas
   // se evalúa si lo reemplaza.
   h += `<div class="section-label">📅 Existencia por campaña — ${campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : '—'}${esCampanaActivaRecria ? ' (activa)' : ' (cerrada)'}</div>`;
+  // DIAGNÓSTICO TEMPORAL — para encontrar por qué cambiar de campaña no
+  // cambiaba los números. Muestra el rango de fechas real de la campaña
+  // elegida (según el catálogo Campañas) y cuántos registros de cada hoja
+  // entraron en el cálculo de ESTA campaña puntual. Si al cambiar de
+  // campaña estos conteos NO cambian, el problema está en el filtro; si
+  // cambian pero el total de cabezas da igual, es coincidencia de datos.
+  // Se saca en cuanto quede confirmado que anda bien.
+  h += `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;padding:8px 12px;background:var(--bg2);border-radius:8px">
+    🔍 Diagnóstico — Campaña "${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:'?'}": ${campSelecCampanaObjRec?campSelecCampanaObjRec.fecha_inicio:'?'} a ${campSelecCampanaObjRec?(campSelecCampanaObjRec.fecha_fin||'(sin fecha fin)'):'?'}
+    · Movimientos incluidos: ${movsCampanaRec.length} · Ventas incluidas: ${ventasCampanaRec.length} · Mortandad incluida: ${mortandadCampanaRec.length}
+    · Saldos Iniciales propios de esta campaña: ${eiRecriaCampana_(campSelecCampanaRec).propios.length}
+  </div>`;
   h += buildConciliacionCabezas_('Recría — ' + (campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : 'campaña'), {
     ei: eiCabRecriaCampana, compras: clasRecCampana.compras, cesionesRecibidas: clasRecCampana.cesionesRecibidas,
     nacimientos: 0, cesionesEnviadas: clasRecCampana.cesionesEnviadas,
