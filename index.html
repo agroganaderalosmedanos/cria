@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_185';
+const APP_VERSION = 'index_consolidado_4_6_155_186';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6299,7 +6299,9 @@ function buildMovimientos() {
     </div>
     <button class="btn btn-secondary btn-sm" id="mv-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('movimientos', 'Movimientos', 'mv-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
     <button class="btn btn-secondary btn-sm" onclick="window.mvBuscarIdsDuplicados_()" style="margin-bottom:10px;margin-left:8px;font-size:12px">🔍 Buscar IDs duplicados</button>
+    <button class="btn btn-secondary btn-sm" onclick="window.mvBuscarPreciosTrasladoInterno_()" style="margin-bottom:10px;margin-left:8px;font-size:12px">🧹 Revisar precios en traslados internos</button>
     <div id="mv-duplicados-resultado" style="margin-bottom:10px"></div>
+    <div id="mv-precios-internos-resultado" style="margin-bottom:10px"></div>
     <div id="mv-historial-tabla">${buildMovimientosHistorial_(items, S.cache.ventas || [], S.corralesVentas || [], '', '')}</div>
   </div>
 
@@ -6497,6 +6499,78 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
 // auditoría no corrige nada sola (cambiar un id a mano es una operación
 // delicada) — solo muestra cuáles están duplicados para poder corregirlos
 // directamente en la hoja de Sheets.
+// Traslados entre rodeos de la MISMA actividad (recategorización interna
+// dentro de Cría, Recría o Terminación) con un precio cargado — ese precio
+// no lo lee ningún cálculo del sistema (las cesiones solo miran precio
+// cuando origen y destino son de actividades DISTINTAS), así que es un dato
+// muerto que solo puede confundir a quien mire el registro más adelante.
+// Detección de solo lectura primero; recién con la confirmación del usuario
+// se ponen en 0 — nunca en automático sin que se vea la lista antes.
+window.mvBuscarPreciosTrasladoInterno_ = async function() {
+  const el = document.getElementById('mv-precios-internos-resultado');
+  if (!el) return;
+  el.innerHTML = '<p class="helper-text">Buscando...</p>';
+  try {
+    await loadEntity('movimientos', true);
+    const movs = S.cache.movimientos || [];
+    const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+    const rodeosMap = Object.fromEntries(rodeos.map(r => [String(r.rodeo_id), r]));
+    const encontrados = movs.filter(m => {
+      if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+      const precioCargado = (Number(m.precio_cabeza)||0) > 0 || (Number(m.precio_kg)||0) > 0;
+      if (!precioCargado) return false;
+      const origen = rodeosMap[String(m.rodeo_origen_id)];
+      const destino = rodeosMap[String(m.rodeo_destino_id)];
+      return origen && destino && normAct_(origen.actividad) === normAct_(destino.actividad);
+    });
+    if (!encontrados.length) {
+      el.innerHTML = '<div class="helper-text" style="color:var(--green-text)">✓ No hay traslados internos con precio cargado.</div>';
+      return;
+    }
+    let h = `<div class="panel" style="border:2px solid var(--gold,#a67c00);background:rgba(200,150,40,0.05)">
+      <div class="panel-title" style="color:var(--gold-text,#92400e)">🧹 ${encontrados.length} traslado${encontrados.length>1?'s':''} interno${encontrados.length>1?'s':''} con precio cargado</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:12px">Origen y destino son de la misma actividad — este precio no lo usa ningún cálculo del sistema. Podés dejarlo así (es inofensivo) o ponerlo en 0 para más prolijidad.</div>
+      <div class="tw"><table class="dt"><thead><tr><th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th><th class="tc">Cant.</th><th class="tr">Precio cabeza</th><th class="tr">Precio kg</th><th></th></tr></thead><tbody>`;
+    encontrados.forEach(m => {
+      h += `<tr id="mv-pi-row-${m.movimiento_id}">
+        <td>${fd(m.fecha)}</td><td>${rodeoNombre(m.rodeo_origen_id)}</td><td>${rodeoNombre(m.rodeo_destino_id)}</td>
+        <td class="tc">${fn(m.cantidad)}</td>
+        <td class="tr">${Number(m.precio_cabeza)>0?'$ '+fn(m.precio_cabeza):'—'}</td>
+        <td class="tr">${Number(m.precio_kg)>0?'$ '+fn(m.precio_kg):'—'}</td>
+        <td><button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="window.mvLimpiarPrecioUno_('${m.movimiento_id}')">Poner en 0</button></td>
+      </tr>`;
+    });
+    h += `</tbody></table></div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="window.mvLimpiarPrecioTodos_(${JSON.stringify(encontrados.map(m=>m.movimiento_id))})">🧹 Poner los ${encontrados.length} en 0</button>
+    </div>`;
+    el.innerHTML = h;
+  } catch (err) {
+    el.innerHTML = `<div class="helper-text" style="color:var(--red-text)">Error al buscar: ${err.message}</div>`;
+  }
+};
+window.mvLimpiarPrecioUno_ = async function(movimientoId) {
+  try {
+    await apiCall('update', { body: { entity: 'movimientos', id: movimientoId, data: { precio_cabeza: 0, precio_kg: 0 } } });
+    invalidateCache('movimientos');
+    const row = document.getElementById('mv-pi-row-' + movimientoId);
+    if (row) row.remove();
+    toast('Precio puesto en 0', 'ok');
+  } catch (err) { toast(err.message, 'err'); }
+};
+window.mvLimpiarPrecioTodos_ = async function(ids) {
+  if (!confirm('¿Poner en 0 el precio de ' + ids.length + ' traslados internos? Esta acción no se puede deshacer desde acá (quedaría en el Log de todos modos).')) return;
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await apiCall('update', { body: { entity: 'movimientos', id, data: { precio_cabeza: 0, precio_kg: 0 } } });
+      ok++;
+    } catch (err) { fail++; }
+  }
+  invalidateCache('movimientos');
+  toast(`${ok} traslados actualizados${fail?', '+fail+' fallaron':''}`, fail ? 'err' : 'ok');
+  await loadEntity('movimientos', true);
+  window.mvBuscarPreciosTrasladoInterno_();
+};
 window.mvBuscarIdsDuplicados_ = async function() {
   const el = document.getElementById('mv-duplicados-resultado');
   if (!el) return;
