@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_183';
+const APP_VERSION = 'index_consolidado_4_6_155_184';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6223,16 +6223,16 @@ function buildMovimientos() {
     </div>
     <div class="fgrid">
       <div class="fg" id="mv-campo-origen-wrap" style="display:none"><label>Campo origen</label>
-        <select id="mv-campo-origen" onchange="document.getElementById('mv-origen').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="mv-campo-origen" onchange="document.getElementById('mv-origen').innerHTML = rodeoOptionsHtml(rodeosPorCampo(this.value)); mvActualizarVisibilidadPrecio_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg" id="mv-origen-wrap" style="display:none"><label>Rodeo origen</label>
-        <select id="mv-origen">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
+        <select id="mv-origen" onchange="mvActualizarVisibilidadPrecio_()">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}</select>
       </div>
       <div class="fg" id="mv-campo-destino-wrap"><label>Campo destino</label>
         <select id="mv-campo-destino" onchange="actualizarRodeosDestino_()">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg"><label id="mv-destino-label">Rodeo destino</label>
-        <select id="mv-destino" onchange="mostrarNuevoRodeoDestino_()">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}
+        <select id="mv-destino" onchange="mostrarNuevoRodeoDestino_(); mvActualizarVisibilidadPrecio_()">${rodeoOptionsHtml(rodeosPorCampo(campos[0]?.campo_id))}
           <option value="__nuevo__">➕ Crear rodeo nuevo...</option>
         </select>
       </div>
@@ -6915,6 +6915,47 @@ window.mostrarNuevoRodeoDestino_ = function() {
   const val = document.getElementById('mv-destino')?.value;
   const wrap = document.getElementById('mv-nuevo-rodeo-wrap');
   if (wrap) wrap.style.display = val === '__nuevo__' ? 'flex' : 'none';
+  mvActualizarVisibilidadPrecio_();
+};
+
+// Traslado entre dos rodeos de la MISMA actividad (ej. Recría→Recría, como
+// una reclasificación interna de categoría) no debería llevar precio/costo
+// — esos animales ya tenían su valor desde que entraron a esa actividad, y
+// cargar un precio acá registra un costo de ingreso que nunca existió. El
+// campo de precio/costo solo tiene sentido cuando el traslado cruza de una
+// actividad a otra (Cría↔Recría, Recría↔Terminación) — eso sí es una cesión
+// real con valor. El peso de ingreso, en cambio, se deja visible siempre:
+// no genera ningún costo fantasma, y sirve como respaldo para valorizar más
+// adelante si ese rodeo todavía no tiene pesada propia (ver
+// pesoIngresoRodeoAFecha_), sea traslado interno o cesión entre actividades.
+window.mvActualizarVisibilidadPrecio_ = function() {
+  const precioWrap = document.getElementById('mv-precio-wrap');
+  if (!precioWrap) return;
+  const tipoSel = document.querySelector('#mv-tipo-group .selected');
+  const tipo = tipoSel ? tipoSel.dataset.tipo : 'Saldo inicial';
+  if (tipo === 'Saldo inicial') {
+    // Saldo inicial no tiene "origen" — es un alta real, el precio siempre
+    // tiene sentido acá (es el costo con el que entró ese stock al sistema).
+    precioWrap.style.display = 'flex';
+    return;
+  }
+  const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+  const origenId = document.getElementById('mv-origen')?.value;
+  const destinoId = document.getElementById('mv-destino')?.value;
+  const origen = rodeos.find(r => String(r.rodeo_id) === String(origenId));
+  const destino = rodeos.find(r => String(r.rodeo_id) === String(destinoId));
+  const mismaActividad = origen && destino && destinoId !== '__nuevo__' && normAct_(origen.actividad) === normAct_(destino.actividad);
+  precioWrap.style.display = mismaActividad ? 'none' : 'flex';
+  if (mismaActividad) {
+    // Limpiar cualquier valor que haya quedado cargado antes de cambiar de
+    // rodeo, para no guardar un precio de un traslado que ya no corresponde.
+    const cabezaInput = document.getElementById('mv-precio-cabeza');
+    const kgInput = document.getElementById('mv-precio-kg');
+    if (cabezaInput) cabezaInput.value = '';
+    if (kgInput) kgInput.value = '';
+    const preview = document.getElementById('mv-costo-preview');
+    if (preview) preview.style.display = 'none';
+  }
 };
 
 function attachMovimientosEvents() {
@@ -6932,11 +6973,12 @@ function attachMovimientosEvents() {
     document.getElementById('mv-origen-wrap').style.display = (esIndividual || esBloque) ? 'flex' : 'none';
     document.getElementById('mv-caravana-wrap').style.display = esIndividual ? 'flex' : 'none';
     document.getElementById('mv-cantidad-wrap').style.display = esIndividual ? 'none' : 'flex';
-    // El precio y el peso se muestran para Saldo inicial y también para Traslados,
-    // por si el traslado representa un ingreso de costo (ej: compra que entra directo
-    // a un corral de Terminación sin pasar por un Saldo inicial separado).
-    document.getElementById('mv-precio-wrap').style.display = 'flex';
+    // El precio se muestra para Saldo inicial siempre, y para Traslados solo
+    // cuando origen y destino son de ACTIVIDADES DISTINTAS (cesión real entre
+    // Cría/Recría/Terminación) — un traslado dentro de la misma actividad no
+    // debería cargar costo, esos animales ya tenían valor desde antes.
     document.getElementById('mv-peso-wrap').style.display = 'flex';
+    mvActualizarVisibilidadPrecio_();
     document.getElementById('mv-precio-label').innerHTML = esSaldoInicial
       ? 'Costo de ingreso <span class="opt">— opcional</span>'
       : 'Costo de ingreso <span class="opt">— opcional, solo si este traslado representa una compra</span>';
@@ -7049,6 +7091,11 @@ function attachMovimientosEvents() {
   };
   attachTableDeleteEvents('movimientos', 'movimiento_id');
   attachTableDeleteEvents('ventas', 'venta_id');
+  // Inicializar la UI según el tipo por defecto (Saldo inicial) — antes no se
+  // llamaba nunca al cargar la pantalla por primera vez, solo al hacer click
+  // en un tipo, así que el campo de precio podía quedar mal mostrado hasta
+  // que el usuario tocara algo.
+  applyTipoUI('Saldo inicial');
 }
 
 // ── RECRÍA ────────────────────────────────────────────────────────────────
