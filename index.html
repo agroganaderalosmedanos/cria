@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_181';
+const APP_VERSION = 'index_consolidado_4_6_155_183';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2338,7 +2338,8 @@ function valorizarRodeoAFecha_(rodeo, stock, fecha) {
   const p = preciosValGet_(fecha);
   const cat = (rodeo.categoria || '').toLowerCase().trim();
   if (CATS_POR_CABEZA_.includes(cat)) {
-    const precio = cat === 'toro' ? (p.toro||0) : cat === 'torito' ? (p.torito||0) : (p.vaca||0);
+    const precio = cat === 'toro' ? (p.toro||0) : cat === 'torito' ? (p.torito||0)
+      : cat === 'vaquillona venta madre' ? (p.vaquillona_venta_cab||0) : (p.vaca||0);
     return cant * precio;
   }
   let pesoP = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
@@ -3453,7 +3454,7 @@ function buildDashboard() {
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo</th><th class="tc">Cab.</th>
         <th class="tr">Kg campo</th><th class="tr">Precio pactado</th>
-        <th class="tr">Importe liq.</th><th class="tr">Total</th>
+        <th class="tr">Importe liq.</th><th class="tr">Precio ($/cab.)</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totVentas = 0;
     ventasCria.slice().sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||''))).forEach(v => {
@@ -3464,6 +3465,7 @@ function buildDashboard() {
       const total = imLiq || (pPact * kg) || 0;
       const totalConv = convertirAMoneda_(total, v.fecha_salida, _criaMoneda);
       const imLiqConv = convertirAMoneda_(imLiq, v.fecha_salida, _criaMoneda);
+      const precioCab = cant ? totalConv / cant : 0;
       totVentas += totalConv;
       const rodeo = rodeosPorId[String(v.rodeo_id)];
       const sinLiq = !imLiq;
@@ -3474,11 +3476,12 @@ function buildDashboard() {
         <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
         <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
         <td class="tr">${imLiq?fnMoneda_(imLiqConv,_criaMoneda):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
+        <td class="tr">${precioCab?fnMoneda_(precioCab,_criaMoneda):'—'}</td>
         <td class="tr"><strong>${total?fnMoneda_(totalConv,_criaMoneda):'—'}</strong></td>
       </tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800">
-      <td colspan="6" class="tr">TOTAL ventas</td>
+      <td colspan="6" class="tr">TOTAL ventas</td><td class="tr"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totVentas,_criaMoneda)}</td>
     </tr>`;
     h += '</tbody></table></div></div>';
@@ -8063,7 +8066,7 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo</th><th class="tc">Cab.</th>
-        <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Total</th>
+        <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Precio ($/cab.)</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totVent=0;
     ventasCampanaRec.slice().sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||''))).forEach(v=>{
@@ -8072,6 +8075,7 @@ function buildRecriaDashboard() {
       const total=imLiq||(pPact*kg)||0;
       const totalConv = convertirAMoneda_(total, v.fecha_salida, moneda);
       const imLiqConv = convertirAMoneda_(imLiq, v.fecha_salida, moneda);
+      const precioCab = cant ? totalConv / cant : 0;
       totVent+=totalConv;
       h += `<tr${!imLiq?' style="background:rgba(200,150,40,0.04)"':''}>
         <td>${fd(v.fecha_salida)}</td><td><strong>${rodeoNombre(v.rodeo_id)}</strong></td>
@@ -8079,9 +8083,10 @@ function buildRecriaDashboard() {
         <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
         <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
         <td class="tr">${imLiq?fnMoneda_(imLiqConv,moneda):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
+        <td class="tr">${precioCab?fnMoneda_(precioCab,moneda):'—'}</td>
         <td class="tr"><strong>${total?fnMoneda_(totalConv,moneda):'—'}</strong></td></tr>`;
     });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL ventas</td>
+    h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL ventas</td><td class="tr"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totVent,moneda)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
@@ -18490,7 +18495,7 @@ function buildABM() {
   if (tab === 'rodeos') {
     const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
     const campos  = (S.catalogs && S.catalogs.campos) || [];
-    const cats = ['vaca','vaquillona','ternera','toro','torito','novillito','novillo','ternero','vaquilloncita','vaquillona proximo servicio'];
+    const cats = ['vaca','vaquillona','ternera','toro','torito','novillito','novillo','ternero','vaquilloncita','vaquillona proximo servicio','vaquillona venta madre'];
     h += `<div class="panel">
       <div class="panel-title">Nuevo rodeo / corral</div>
       <div class="fgrid">
@@ -18759,7 +18764,7 @@ function attachABMCorralesEvents_() {
 }
 // POR CABEZA: vaca, toro, torito
 // POR KG:     vaca venta, ternero, ternera, vaquillona, vaquillona venta, novillito, novillo
-const CATS_POR_CABEZA_ = ['vaca', 'toro', 'torito'];
+const CATS_POR_CABEZA_ = ['vaca', 'toro', 'torito', 'vaquillona venta madre'];
 const CATS_POR_KG_     = ['vaca venta', 'ternero', 'ternera', 'vaquillona', 'vaquillona venta', 'novillito', 'novillo'];
 
 // Devuelve el valor de un rodeo dado su stock y última pesada
@@ -18771,6 +18776,7 @@ function valorizarRodeo_(rodeo, stock, pesadaProm) {
   if (CATS_POR_CABEZA_.includes(cat)) {
     const precio = cat === 'toro'   ? (p.toro   || 0)
                  : cat === 'torito' ? (p.torito || 0)
+                 : cat === 'vaquillona venta madre' ? (p.vaquillona_venta_cab || 0)
                  : (p.vaca || 0);
     return cant * precio;
   }
