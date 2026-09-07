@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_180';
+const APP_VERSION = 'index_consolidado_4_6_155_181';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2307,6 +2307,31 @@ function valorizarStockPorRodeoHoy_(stockPorRodeo, rodeosFiltro, pesadasArr) {
 // FECHA dada en vez de "hoy" — no modifica valorizarRodeo_ (usada en muchos
 // otros lados con la convención de precio corriente) para no arriesgar nada
 // ahí; esta es una función aparte, aislada, solo para este uso puntual.
+// Peso "de ingreso" de un rodeo a una fecha dada — cuando el rodeo todavía
+// no tiene ninguna pesada propia (recién nacido/recién trasladado), el
+// sistema SÍ tiene un dato real de peso: el que se cargó en el Movimiento
+// que lo trajo (destete pesado, o cesión con peso_prom_kg cargado). Se usa
+// el promedio ponderado por cantidad de todas las entradas (Saldo inicial o
+// Traslado) con fecha <= la que se está valorizando y peso_prom_kg > 0.
+// Devuelve también la fecha de la entrada más reciente usada, para poder
+// avisar "sin pesada propia, peso de ingreso del <fecha>" en los reportes.
+function pesoIngresoRodeoAFecha_(rodeoId, fecha) {
+  const entradas = (S.cache.movimientos || []).filter(m =>
+    (m.tipo === 'Saldo inicial' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
+    String(m.rodeo_destino_id) === String(rodeoId) &&
+    (m.fecha || '') <= fecha &&
+    Number(m.peso_prom_kg) > 0
+  );
+  if (!entradas.length) return { peso: 0, fecha: null };
+  let sumPeso = 0, sumCant = 0, fechaMasReciente = null;
+  entradas.forEach(m => {
+    const cant = Number(m.cantidad) || 0;
+    sumPeso += cant * Number(m.peso_prom_kg);
+    sumCant += cant;
+    if (!fechaMasReciente || String(m.fecha) > String(fechaMasReciente)) fechaMasReciente = m.fecha;
+  });
+  return { peso: sumCant ? sumPeso / sumCant : 0, fecha: fechaMasReciente };
+}
 function valorizarRodeoAFecha_(rodeo, stock, fecha) {
   const cant = Number(stock) || 0;
   if (!cant) return 0;
@@ -2316,7 +2341,8 @@ function valorizarRodeoAFecha_(rodeo, stock, fecha) {
     const precio = cat === 'toro' ? (p.toro||0) : cat === 'torito' ? (p.torito||0) : (p.vaca||0);
     return cant * precio;
   }
-  const pesoP = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
+  let pesoP = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
+  if (!pesoP) pesoP = pesoIngresoRodeoAFecha_(rodeo.rodeo_id, fecha).peso;
   const precioPorKg = cat === 'ternero' ? (p.ternero||0) : cat === 'ternera' ? (p.ternera||0)
     : cat === 'vaquillona' ? (p.vaquillona||0) : cat === 'vaquillona venta' ? (p.vaquillona_venta||0)
     : cat === 'novillito' ? (p.novillito||0) : cat === 'novillo' ? (p.novillo||0)
@@ -2347,18 +2373,26 @@ function valorizarStockPorRodeoAFecha_(stockPorRodeo, rodeosFiltro, fecha) {
 // UNA FECHA dada (no siempre "hoy") — para que la etiqueta ("por kg"/"por
 // cabeza") que se muestra coincida con el precio que realmente se usó en el
 // cálculo cuando ese cálculo es a fecha fija (EF de una campaña cerrada, EI
-// heredada), no con el precio de hoy.
+// heredada), no con el precio de hoy. Distingue además "por kg (pesada
+// propia)" de "por kg (peso de ingreso)" — este último es el caso en que el
+// rodeo no tiene pesada propia todavía y se usó el peso con el que entró
+// (destete/cesión) como estimación: el precio puede reflejar una ganancia o
+// pérdida real por variación de precio, pero NO refleja el engorde propio
+// del rodeo desde que entró, porque el sistema no tiene ese dato todavía.
 function metodoValorizacionAFecha_(rodeo, fecha) {
   const p = preciosValGet_(fecha);
   const cat = (rodeo.categoria || '').toLowerCase().trim();
   if (CATS_POR_CABEZA_.includes(cat)) return 'por cabeza';
-  const kg = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
+  const kgPropio = ultimaPesadaACorte_(rodeo.rodeo_id, fecha);
   const precioPorKg = cat === 'ternero' ? p.ternero : cat === 'ternera' ? p.ternera
     : cat === 'vaquillona' ? p.vaquillona : cat === 'vaquillona venta' ? p.vaquillona_venta
     : cat === 'novillito' ? p.novillito : cat === 'novillo' ? p.novillo
     : cat === 'vaca venta' ? p.vaca_venta : 0;
-  if (kg && precioPorKg) return 'por kg';
-  return 'por cabeza (sin pesada)';
+  if (!precioPorKg) return 'por cabeza (sin pesada)';
+  if (kgPropio) return 'por kg (pesada propia)';
+  const ingreso = pesoIngresoRodeoAFecha_(rodeo.rodeo_id, fecha);
+  if (ingreso.peso) return '⚠ por kg (peso de ingreso ' + fd(ingreso.fecha) + ' — sin pesada propia, no refleja engorde)';
+  return 'por cabeza (sin pesada ni peso de ingreso)';
 }
 
 // ── EXISTENCIA INICIAL RECURSIVA (Recría) ────────────────────────────────
@@ -3255,14 +3289,16 @@ function buildDashboard() {
       // mira. Distinto, a propósito, de "Stock valorizado actual" (EF), que
       // sí es a precio de hoy.
       h += `<p class="helper-text">Heredado del cierre de la campaña anterior (calculado, no es un Movimiento cargado) — valorizado al precio vigente al ${fd(campAnteriorObj.fecha_fin)}:</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th></tr></thead><tbody>`;
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Método</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th></tr></thead><tbody>`;
       rodeosConEIHeredada.forEach(r => {
         const cant = eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0;
         const val = valorizarRodeoAFecha_(r, cant, campAnteriorObj.fecha_fin);
         const valConv = convertirAMoneda_(val, campAnteriorObj.fecha_fin, _criaMoneda);
         const unit = cant ? valConv / cant : 0;
+        const pesoP = ultimaPesadaACorte_(r.rodeo_id, campAnteriorObj.fecha_fin) || pesoIngresoRodeoAFecha_(r.rodeo_id, campAnteriorObj.fecha_fin).peso;
+        const metodo = metodoValorizacionAFecha_(r, campAnteriorObj.fecha_fin);
         totEICab += cant; totEIVal += valConv;
-        h += `<tr><td><strong>${r.nombre}</strong></td><td class="tc">${fn(cant)}</td><td class="tr">${fnMoneda_(unit,_criaMoneda)}</td><td class="tr">${fnMoneda_(valConv,_criaMoneda)}</td></tr>`;
+        h += `<tr><td><strong>${r.nombre}</strong></td><td class="tc">${fn(cant)}</td><td class="tr">${pesoP?fn(pesoP)+' kg':'—'}</td><td class="tr" style="font-size:11px;color:${metodo.startsWith('⚠')?'var(--gold-text,#a67c00)':'var(--text3)'}">${metodo}</td><td class="tr">${fnMoneda_(unit,_criaMoneda)}</td><td class="tr">${fnMoneda_(valConv,_criaMoneda)}</td></tr>`;
       });
       h += `</tbody></table></div>`;
     }
@@ -7640,8 +7676,8 @@ function buildRecriaDashboard() {
     if (!stock) return;
     const val = valorizarRodeoAFecha_(r, stock, fechaValorEFRec);
     stockValRecriaCampanaARS += val;
-    const pesoP = ultimaPesadaACorte_(r.rodeo_id, fechaValorEFRec);
-    efDetalleCampanaRec.push({ rodeo: r, stock, pesoP, valConv: convertirAMoneda_(val, fechaValorEFRec, moneda) });
+    const pesoP = ultimaPesadaACorte_(r.rodeo_id, fechaValorEFRec) || pesoIngresoRodeoAFecha_(r.rodeo_id, fechaValorEFRec).peso;
+    efDetalleCampanaRec.push({ rodeo: r, stock, pesoP, metodo: metodoValorizacionAFecha_(r, fechaValorEFRec), valConv: convertirAMoneda_(val, fechaValorEFRec, moneda) });
   });
   const stockValRecriaCampana = convertirAMoneda_(stockValRecriaCampanaARS, fechaValorEFRec, moneda);
 
@@ -7662,8 +7698,8 @@ function buildRecriaDashboard() {
       if (!cant) return;
       const val = valorizarRodeoAFecha_(r, cant, campAnteriorObjRec.fecha_fin);
       eiHeredadoARSRec += val;
-      const pesoP = ultimaPesadaACorte_(r.rodeo_id, campAnteriorObjRec.fecha_fin);
-      eiHeredadoDetalleRec.push({ rodeo: r, cant, pesoP, valConv: convertirAMoneda_(val, campAnteriorObjRec.fecha_fin, moneda) });
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, campAnteriorObjRec.fecha_fin) || pesoIngresoRodeoAFecha_(r.rodeo_id, campAnteriorObjRec.fecha_fin).peso;
+      eiHeredadoDetalleRec.push({ rodeo: r, cant, pesoP, metodo: metodoValorizacionAFecha_(r, campAnteriorObjRec.fecha_fin), valConv: convertirAMoneda_(val, campAnteriorObjRec.fecha_fin, moneda) });
     });
   }
   const totalEICampanaRec = convertirAMoneda_(eiHeredadoARSRec, campAnteriorObjRec ? campAnteriorObjRec.fecha_fin : corteRecria, moneda)
@@ -7769,18 +7805,19 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">📦 Existencia Final (EF) valorizada — por rodeo, campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''}</div>
       <p class="helper-text">Valorizada al ${esCampanaActivaRecria?'precio vigente a la fecha de corte ('+fd(fechaValorEFRec)+')':'precio vigente al cierre de la campaña ('+fd(fechaValorEFRec)+')'}.</p>
       <div class="tw"><table class="dt"><thead><tr>
-        <th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th>
+        <th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Método</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     efDetalleCampanaRec.forEach(r=>{
       const unit = r.stock ? r.valConv / r.stock : 0;
       h += `<tr><td><strong>${r.rodeo.nombre}</strong></td>
         <td class="tc">${fn(r.stock)}</td>
         <td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td>
+        <td class="tr" style="font-size:11px;color:${r.metodo.startsWith('⚠')?'var(--gold-text,#a67c00)':'var(--text3)'}">${r.metodo}</td>
         <td class="tr">${fnMoneda_(unit,moneda)}</td>
         <td class="tr"><strong>${fnMoneda_(r.valConv,moneda)}</strong></td></tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
-      <td class="tc">${fn(efDetalleCampanaRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td class="tr"></td><td class="tr"></td>
+      <td class="tc">${fn(efDetalleCampanaRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td class="tr"></td><td class="tr"></td><td class="tr"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValRecriaCampana,moneda)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
@@ -7794,13 +7831,13 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">📦 Existencia Inicial (EI) valorizada — por rodeo, campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''}</div>`;
     if (eiHeredadoDetalleRec.length) {
       h += `<p class="helper-text">Heredada del cierre de la campaña anterior (calculada, no es un Movimiento cargado) — valorizada al precio vigente al ${fd(campAnteriorObjRec.fecha_fin)}:</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th></tr></thead><tbody>`;
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Método</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th></tr></thead><tbody>`;
       eiHeredadoDetalleRec.forEach(r => {
         const unit = r.cant ? r.valConv / r.cant : 0;
-        h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td><td class="tr">${fnMoneda_(unit,moneda)}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
+        h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td><td class="tr" style="font-size:11px;color:${r.metodo.startsWith('⚠')?'var(--gold-text,#a67c00)':'var(--text3)'}">${r.metodo}</td><td class="tr">${fnMoneda_(unit,moneda)}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
       });
       h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL heredado</td>
-        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td><td class="tr"></td><td class="tr"></td>
+        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td><td class="tr"></td><td class="tr"></td><td class="tr"></td>
         <td class="tr">${fnMoneda_(eiHeredadoDetalleRec.reduce((s,r)=>s+r.valConv,0),moneda)}</td></tr>`;
       h += `</tbody></table></div>`;
     }
