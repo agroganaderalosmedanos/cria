@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_176';
+const APP_VERSION = 'index_consolidado_4_6_155_177';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -7460,11 +7460,14 @@ function buildRecriaDashboard() {
     rodeosRecCampanaSet.has(String(c.rodeo_id))
   );
   let egAlimCampanaRec = 0, egVetCampanaRec = 0;
+  const detalleAlimCampanaRec = [], detalleVetCampanaRec = [];
   consumosCampanaRec.forEach(c=>{
     const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
     const costoARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
     const costo = convertirAMoneda_(costoARS, c.fecha, moneda);
-    if (prod&&prod.categoria==='Veterinaria') egVetCampanaRec += costo; else egAlimCampanaRec += costo;
+    const fila = { fecha: c.fecha, prod: prod?.nombre||'—', rodeo: rodeoNombre(c.rodeo_id), cant: Number(c.cantidad)||0, costo };
+    if (prod&&prod.categoria==='Veterinaria') { egVetCampanaRec += costo; detalleVetCampanaRec.push(fila); }
+    else { egAlimCampanaRec += costo; detalleAlimCampanaRec.push(fila); }
   });
 
   // 7. Sueldos — acotados por el rango REAL de la campaña (piso Y techo).
@@ -7530,7 +7533,7 @@ function buildRecriaDashboard() {
         <td class="tr"><strong>${fnMoneda_(r.valConv,moneda)}</strong></td></tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
-      <td class="tc">${fn(efDetalleCampanaRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td></td>
+      <td class="tc">${fn(efDetalleCampanaRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td class="tr"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValRecriaCampana,moneda)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
@@ -7548,6 +7551,9 @@ function buildRecriaDashboard() {
       eiHeredadoDetalleRec.forEach(r => {
         h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
       });
+      h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL heredado</td>
+        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td>
+        <td class="tr">${fnMoneda_(eiHeredadoDetalleRec.reduce((s,r)=>s+r.valConv,0),moneda)}</td></tr>`;
       h += `</tbody></table></div>`;
     }
     if (propiosEIRec.length) {
@@ -7555,10 +7561,12 @@ function buildRecriaDashboard() {
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Precio</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
+      let totPropiosCab = 0, totPropiosVal = 0;
       propiosEIRec.forEach(m => {
         const cant = Number(m.cantidad)||0;
         const { total, precioLabel } = valorMovimientoEntrada_(m);
         const totalConv = convertirAMoneda_(total, m.fecha, moneda);
+        totPropiosCab += cant; totPropiosVal += totalConv;
         const rodeo = rodeosAllMap[String(m.rodeo_destino_id)];
         h += `<tr>
           <td>${fd(m.fecha)}</td>
@@ -7568,10 +7576,14 @@ function buildRecriaDashboard() {
           <td class="tr"><strong>${total ? fnMoneda_(totalConv,moneda) : '—'}</strong></td>
         </tr>`;
       });
+      h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2" class="tr">TOTAL Saldos Iniciales</td>
+        <td class="tc">${fn(totPropiosCab)} cab.</td><td class="tr"></td>
+        <td class="tr">${fnMoneda_(totPropiosVal,moneda)}</td></tr>`;
       h += `</tbody></table></div>`;
     }
+    const totEICampanaCab = eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0) + propiosEIRec.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
     h += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-weight:800">
-      <span>TOTAL EI</span><span>${fnMoneda_(totalEICampanaRec,moneda)}</span>
+      <span>TOTAL EI — ${fn(totEICampanaCab)} cab.</span><span>${fnMoneda_(totalEICampanaRec,moneda)}</span>
     </div></div>`;
   }
 
@@ -7643,21 +7655,9 @@ function buildRecriaDashboard() {
     ventas: ventasCabRecriaCampana, mortandad: mortCabRecriaCampana,
   }, efCabRecriaCampanaReal);
 
-  const rodeosConEICampanaRec = Array.from(rodeosRecCampanaSet).filter(rid => (eiStockPorRodeoRec[rid]||0) > 0);
-  if (rodeosConEICampanaRec.length) {
-    h += `<div class="panel">
-      <div class="panel-title">📋 Existencia Inicial (EI) — por rodeo, campaña ${campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : ''}</div>
-      <p class="helper-text">Heredada del cierre de la campaña anterior (calculada, no es un Movimiento cargado en Sheets) + Saldos Iniciales reales cargados directamente en esta campaña, si los hay.</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas (EI)</th></tr></thead><tbody>`;
-    let totEICampRec = 0;
-    rodeosConEICampanaRec.forEach(rid => {
-      const cant = eiStockPorRodeoRec[rid]||0;
-      totEICampRec += cant;
-      h += `<tr><td><strong>${rodeoNombre(rid)}</strong></td><td class="tc">${fn(cant)}</td></tr>`;
-    });
-    h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EI</td><td class="tc">${fn(totEICampRec)}</td></tr>`;
-    h += `</tbody></table></div></div>`;
-  }
+  // (La tabla de detalle "EI por rodeo" en cabezas se sacó de acá — quedaba
+  // duplicada con "Existencia Inicial (EI) valorizada — por rodeo" de más
+  // arriba, que ya muestra cabezas Y valor en una sola tabla.)
 
   // ── Conciliación de Existencia HISTÓRICA (cabezas) — acumulado a la fecha
   // de corte, sin distinguir campaña. Se deja sin tocar por ahora.
@@ -7693,16 +7693,18 @@ function buildRecriaDashboard() {
     h += `</tbody></table></div></div>`;
   }
 
-  // ── Detalle Cesiones recibidas de Cría ────────────────────────────────────
-  const cesRecCria = movs.filter(m=>{
+  // ── Detalle Cesiones recibidas de Cría — SCOPEADO POR CAMPAÑA (usa
+  // movsCampanaRec, ya filtrado por campanaEfectiva_ === campaña elegida,
+  // en vez de "movs" que solo filtraba por fecha de corte) ────────────────
+  const cesRecCria = movsCampanaRec.filter(m=>{
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or=rodeosAllMap[String(m.rodeo_origen_id)];
     const de=rodeosAllMap[String(m.rodeo_destino_id)];
-    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria'&&todosRodeosRecriaIds.has(String(m.rodeo_destino_id));
+    return or&&(normAct_(or.actividad)==='cria'||normAct_(or.actividad)==='cria')&&de&&normAct_(de.actividad)==='recria'&&rodeosRecCampanaSet.has(String(m.rodeo_destino_id));
   });
   if (cesRecCria.length) {
     const pesadasAll = S.cache.pesadas||[];
-    h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Cría — detalle</div>
+    h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Cría — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
         <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">Precio</th><th class="tr">Total</th>
@@ -7739,15 +7741,15 @@ function buildRecriaDashboard() {
     h += `</tbody></table></div></div>`;
   }
 
-  // ── Detalle Cesiones enviadas a Terminación ───────────────────────────────
-  if (egresos.filter(e=>e.destino==='Engorde').length) {
-    h += `<div class="panel"><div class="panel-title">⬆ Cesiones enviadas a Terminación — detalle</div>
+  // ── Detalle Cesiones enviadas a Terminación — SCOPEADO POR CAMPAÑA ──────
+  if (egresosCampanaRec.filter(e=>e.destino==='Engorde').length) {
+    h += `<div class="panel"><div class="panel-title">⬆ Cesiones enviadas a Terminación — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
         <th class="tc">Cab.</th><th class="tc">Kg prom.</th><th class="tr">$/kg</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totCesEnv=0;
-    egresos.filter(e=>e.destino==='Engorde').forEach(e=>{
+    egresosCampanaRec.filter(e=>e.destino==='Engorde').forEach(e=>{
       const cant=Number(e.cant_animales)||0, peso=Number(e.peso_prom_kg)||0, precioKg=Number(e.precio_kg_cesion)||0;
       const total=cant*peso*precioKg;
       const totalConv = convertirAMoneda_(total, e.fecha, moneda);
@@ -7764,15 +7766,15 @@ function buildRecriaDashboard() {
     h += `</tbody></table></div></div>`;
   }
 
-  // ── Detalle Ventas ────────────────────────────────────────────────────────
-  if (ventas.length) {
-    h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle</div>
+  // ── Detalle Ventas — SCOPEADO POR CAMPAÑA ────────────────────────────────
+  if (ventasCampanaRec.length) {
+    h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Fecha</th><th>Rodeo</th><th class="tc">Cab.</th>
         <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     let totVent=0;
-    ventas.slice().sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||''))).forEach(v=>{
+    ventasCampanaRec.slice().sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||''))).forEach(v=>{
       const cant=Number(v.cant_animales)||0, kg=Number(v.peso_campo_kg)||0;
       const pPact=Number(v.precio_pactado)||0, imLiq=Number(v.importe_liq)||0;
       const total=imLiq||(pPact*kg)||0;
@@ -7809,8 +7811,8 @@ function buildRecriaDashboard() {
       <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(tot,moneda)}</td></tr>`;
     return t+'</tbody></table></div></div>';
   };
-  if (detalleAlim.length) h += buildInsumoTableRec_(detalleAlim, '🌿 Alimentación e insumos — detalle');
-  if (detalleVet.length)  h += buildInsumoTableRec_(detalleVet,  '💉 Veterinaria — detalle');
+  if (detalleAlimCampanaRec.length) h += buildInsumoTableRec_(detalleAlimCampanaRec, `🌿 Alimentación e insumos — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})`);
+  if (detalleVetCampanaRec.length)  h += buildInsumoTableRec_(detalleVetCampanaRec,  `💉 Veterinaria — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})`);
 
   // Mortandad — al final del dashboard, destacada en rojo
   if (mortTotal > 0) {
