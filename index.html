@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_177';
+const APP_VERSION = 'index_consolidado_4_6_155_178';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2632,6 +2632,48 @@ function buildDashboard() {
     return s + convertirAMoneda_(importeARS, m.fecha, _criaMoneda);
   }, 0);
 
+  // 2b. Reposición de Vientres — el espejo de "Cesiones a Recría/Engorde":
+  // acá el animal viaja al revés (Recría → Cría), típicamente vaquillonas que
+  // se inseminan y vuelven al plantel de cría. Es un EGRESO para Cría (entra
+  // un animal, "cuesta" lo mismo que le costó salir a Recría) — simétrico al
+  // ingreso "Reposición a Cría" del lado de Recría. Se identifica por
+  // ACTIVIDAD de los rodeos (no por el tag [erid:...], porque no todos los
+  // traslados de este tipo lo tienen — por ejemplo uno cargado a mano por
+  // ABM+Movimientos en vez de por la pantalla de Egresos Recría).
+  const reposicionVientres = movs.filter(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+    const origen  = rodeosPorId[String(m.rodeo_origen_id)];
+    const destino = rodeosPorId[String(m.rodeo_destino_id)];
+    return origen && normAct_(origen.actividad)==='recria' &&
+           destino && normAct_(destino.actividad)==='cria' &&
+           rodeosCriaIds.has(String(m.rodeo_destino_id));
+  });
+  // Misma valorización de 3 niveles que totalCesiones: precio_cabeza →
+  // precio_kg → tabla de Precios Valorización por categoría (del rodeo de
+  // ORIGEN, que es el que define qué eran esos animales antes de pasar a Cría).
+  const totalReposicionVientres = reposicionVientres.reduce((s,m) => {
+    const cant = Number(m.cantidad)||0;
+    const peso = Number(m.peso_prom_kg)||0;
+    const precioKg = Number(m.precio_kg)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    let importeARS;
+    if (precioCabeza > 0) {
+      importeARS = cant * precioCabeza;
+    } else if (precioKg && peso) {
+      importeARS = cant * peso * precioKg;
+    } else if (precioKg && !peso) {
+      const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoFallback = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
+      importeARS = cant * pesoFallback * precioKg;
+    } else {
+      const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+      const pesadasRodeo = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const pesoP = pesadasRodeo[0] ? Number(pesadasRodeo[0].peso_prom_kg)||0 : 0;
+      importeARS = valorizarRodeo_(rodeo||{categoria:'vaquillona'}, cant, pesoP);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, _criaMoneda);
+  }, 0);
+
   // 3. Stock valorizado actual (rodeos Cría)
   // Arranca con la Existencia Inicial HEREDADA (recursiva, ver
   // eiCriaCampana_/efCriaCampanaStockPorRodeo_ más arriba) en vez de {} —
@@ -2790,7 +2832,7 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   , _criaMoneda);
 
-  const totalEgresos = totalSaldoInicial + totalCompras + totalAlim + totalVeter + totalSueldosCria;
+  const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria;
   const margen = totalIngresos - totalEgresos;
 
   // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
@@ -2861,6 +2903,20 @@ function buildDashboard() {
     return s + valorizarRodeo_(rodeoDest, Number(m.cantidad)||0, pd[0]?Number(pd[0].peso_prom_kg)||0:0);
   }, 0);
   const totalComprasARS = comprasCria.reduce((s,c) => s+(Number(c.importe_total)||0), 0);
+  const totalReposicionVientresARS = reposicionVientres.reduce((s,m) => {
+    const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    if (precioCabeza > 0) return s + cant*precioCabeza;
+    const precioKg = Number(m.precio_kg)||0;
+    if (precioKg && peso) return s + cant*peso*precioKg;
+    if (precioKg && !peso) {
+      const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return s + cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+    }
+    const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+    const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    return s + valorizarRodeo_(rodeo||{categoria:'vaquillona'}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+  }, 0);
   let totalAlimARS = 0, totalVeterARS = 0;
   consumosCria.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
@@ -2873,7 +2929,7 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   ); // sin moneda → siempre ARS
-  const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS;
+  const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalReposicionVientresARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
   // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN (no con la cotización
@@ -2913,6 +2969,23 @@ function buildDashboard() {
   const totalIngresosUSD = totalVentasUSD + totalCesionesUSD + stockValCriaUSD;
   const totalSaldoInicialUSD = convertirAMoneda_(eiHeredadoARS, campAnteriorObj ? campAnteriorObj.fecha_fin : corteCria, 'USD') + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
   const totalComprasUSD = comprasCria.reduce((s,c) => s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, 'USD'), 0);
+  const totalReposicionVientresUSD = reposicionVientres.reduce((s,m) => {
+    const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+    const precioCabeza = Number(m.precio_cabeza)||0;
+    const precioKg = Number(m.precio_kg)||0;
+    let importeARS;
+    if (precioCabeza > 0) importeARS = cant*precioCabeza;
+    else if (precioKg && peso) importeARS = cant*peso*precioKg;
+    else if (precioKg && !peso) {
+      const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
+    } else {
+      const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+      const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = valorizarRodeo_(rodeo||{categoria:'vaquillona'}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, 'USD');
+  }, 0);
   let totalAlimUSD = 0, totalVeterUSD = 0;
   consumosCria.forEach(c => {
     const prod = prodPorId[String(c.producto_id)];
@@ -2926,7 +2999,7 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   , 'USD');
-  const totalEgresosUSD = totalSaldoInicialUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalSueldosCriaUSD;
+  const totalEgresosUSD = totalSaldoInicialUSD + totalComprasUSD + totalReposicionVientresUSD + totalAlimUSD + totalVeterUSD + totalSueldosCriaUSD;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
 
   // Guardar resultados para que Resultados Económicos los lea directamente —
@@ -2938,7 +3011,7 @@ function buildDashboard() {
     ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
     ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: totalVentasARS, ingCesiones: totalCesionesARS, ef: stockValCriaARS,
-    ei: totalSaldoInicialARS, compras: totalComprasARS, egAlim: totalAlimARS, egVet: totalVeterARS, egSueldos: totalSueldosCriaARS,
+    ei: totalSaldoInicialARS, compras: totalComprasARS, reposicionVientres: totalReposicionVientresARS, egAlim: totalAlimARS, egVet: totalVeterARS, egSueldos: totalSueldosCriaARS,
     cantVentas: ventasCria.length,
     eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: nacImpCriaARS,
     comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
@@ -3075,6 +3148,13 @@ function buildDashboard() {
             <div style="font-size:11px;color:var(--text3)">${comprasCria.length} compras campaña ${campSelecObj?.nombre || campSelec}</div>
           </div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalCompras,_criaMoneda)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">🐮 Cesiones (Reposición de Vientres desde Recría)</div>
+            <div style="font-size:11px;color:var(--text3)">${reposicionVientres.length} traslado${reposicionVientres.length!==1?'s':''} campaña ${campSelecObj?.nombre || campSelec}</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${totalReposicionVientres>0?fnMoneda_(totalReposicionVientres,_criaMoneda):'—'}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -7068,6 +7148,38 @@ function buildRecriaDashboard() {
     detalleCesEng.push({ fecha: e.fecha, rodeo: rodeoNombre(e.rodeo_id), cant, kg: kgTot, importe: imp, sinPrecio: !precioKg });
   });
 
+  // 2b. Reposición a Cría — espejo de "Cesión desde Cría": acá el animal
+  // viaja al revés (Recría → Cría). Ingreso para Recría. Se identifica por
+  // actividad de los rodeos, no por tag. Mapa de rodeos local (rodeosAllMap_
+  // con guión bajo) para no chocar con la declaración de rodeosAllMap más
+  // abajo, que se usa recién en la sección de Egresos.
+  const rodeosAllMap_ = Object.fromEntries((S.catalogs&&S.catalogs.rodeos||[]).map(r=>[String(r.rodeo_id),r]));
+  let ingReposicionACria = 0;
+  movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap_[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap_[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='recria'&&de&&normAct_(de.actividad)==='cria'&&todosRodeosRecriaIds.has(String(m.rodeo_origen_id));
+  }).forEach(m=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    let total=0, pesoUsado=peso;
+    if (precioCabeza>0) { total=cant*precioCabeza; }
+    else if (precioKg&&peso) { total=cant*peso*precioKg; }
+    else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=cant*pesoUsado*precioKg;
+    } else {
+      const or=rodeosAllMap_[String(m.rodeo_origen_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=valorizarRodeo_(or||{categoria:'vaquillona'},cant,pesoUsado);
+    }
+    ingReposicionACria += convertirAMoneda_(total, m.fecha, moneda);
+  });
+
   // 3. Stock valorizado a la fecha de corte
   let stockValRecriaARS = 0;
   const stockDetalleRec_ = [];
@@ -7083,7 +7195,7 @@ function buildRecriaDashboard() {
   // cotización del corte, a diferencia de los ítems de FLUJO de arriba/abajo.
   const stockValRecria = convertirAMoneda_(stockValRecriaARS, corteRecria, moneda);
 
-  const totalIngresos = ingVentas + ingCesionEng + stockValRecria;
+  const totalIngresos = ingVentas + ingCesionEng + ingReposicionACria + stockValRecria;
 
   // EGRESOS
   // 1. Cesión desde Cría — traslados de Cría a rodeos de Recría con precio/kg
@@ -7173,7 +7285,26 @@ function buildRecriaDashboard() {
     const origen = rodeosTodos().find(r=>String(r.rodeo_id)===String(e.rodeo_id));
     return s + valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
   }, 0);
-  const totalIngresosARS = ingVentasARS + ingCesionEngARS + stockValRecriaARS;
+  const ingReposicionACriaARS = movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap_[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap_[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='recria'&&de&&normAct_(de.actividad)==='cria'&&todosRodeosRecriaIds.has(String(m.rodeo_origen_id));
+  }).reduce((s,m)=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    if (precioCabeza>0) return s + cant*precioCabeza;
+    if (precioKg&&peso) return s + cant*peso*precioKg;
+    if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return s + cant*(pp[0]?Number(pp[0].peso_prom_kg)||0:0)*precioKg;
+    }
+    const or=rodeosAllMap_[String(m.rodeo_origen_id)];
+    const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    return s + valorizarRodeo_(or||{categoria:'vaquillona'},cant,pp[0]?Number(pp[0].peso_prom_kg)||0:0);
+  }, 0);
+  const totalIngresosARS = ingVentasARS + ingCesionEngARS + ingReposicionACriaARS + stockValRecriaARS;
   const egCesionCriaARS = movs.filter(m=>{
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or = rodeosAllMap[String(m.rodeo_origen_id)];
@@ -7237,7 +7368,29 @@ function buildRecriaDashboard() {
     return s + convertirAMoneda_(importeARS, e.fecha, 'USD');
   }, 0);
   const stockValRecriaUSD = convertirAMoneda_(stockValRecriaARS, corteRecria, 'USD');
-  const totalIngresosUSD = ingVentasUSD + ingCesionEngUSD + stockValRecriaUSD;
+  const ingReposicionACriaUSD = movs.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap_[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap_[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='recria'&&de&&normAct_(de.actividad)==='cria'&&todosRodeosRecriaIds.has(String(m.rodeo_origen_id));
+  }).reduce((s,m)=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    let importeARS;
+    if (precioCabeza>0) importeARS = cant*precioCabeza;
+    else if (precioKg&&peso) importeARS = cant*peso*precioKg;
+    else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = cant*(pp[0]?Number(pp[0].peso_prom_kg)||0:0)*precioKg;
+    } else {
+      const or=rodeosAllMap_[String(m.rodeo_origen_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      importeARS = valorizarRodeo_(or||{categoria:'vaquillona'},cant,pp[0]?Number(pp[0].peso_prom_kg)||0:0);
+    }
+    return s + convertirAMoneda_(importeARS, m.fecha, 'USD');
+  }, 0);
+  const totalIngresosUSD = ingVentasUSD + ingCesionEngUSD + ingReposicionACriaUSD + stockValRecriaUSD;
   const egCesionCriaUSD = movs.filter(m=>{
     if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
     const or = rodeosAllMap[String(m.rodeo_origen_id)];
@@ -7312,7 +7465,7 @@ function buildRecriaDashboard() {
   S._resultRecria = {
     ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
     ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
-    ingVentas: ingVentasARS, ingCesEng: ingCesionEngARS, ef: stockValRecriaARS,
+    ingVentas: ingVentasARS, ingCesEng: ingCesionEngARS, ingReposicionACria: ingReposicionACriaARS, ef: stockValRecriaARS,
     ei: egEIARS, egCesionCria: egCesionCriaARS, egCompraExt: egCompraExternaARS, egAlim: egAlimARS, egVet: egVetARS, egSueldos: egSueldosARS,
     eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0, nacImp: 0,
     comprasCab: clasRec.compras, cesRecCab: clasRec.cesionesRecibidas, cesEnvCab: clasRec.cesionesEnviadas,
@@ -7387,6 +7540,40 @@ function buildRecriaDashboard() {
     ingCesionEngCampanaRec += convertirAMoneda_(imp, e.fecha, moneda);
   });
 
+  // 2b. Reposición a Cría — el espejo de "Cesión desde Cría": acá el animal
+  // viaja al revés (Recría → Cría), típicamente vaquillonas que se inseminan
+  // y vuelven al plantel de cría. Es un INGRESO para Recría (el animal sale,
+  // "se cobra" lo mismo que le va a costar a Cría recibirlo) — simétrico al
+  // egreso "Cesiones (Reposición de Vientres)" que se agregó del lado de
+  // Cría. Se identifica por ACTIVIDAD de los rodeos (no por el tag
+  // [erid:...], porque no todos los traslados de este tipo lo tienen).
+  const reposicionACriaCampanaRec = movsCampanaRec.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='recria'&&de&&normAct_(de.actividad)==='cria'&&rodeosRecCampanaSet.has(String(m.rodeo_origen_id));
+  });
+  let ingReposicionACriaCampanaRec = 0;
+  reposicionACriaCampanaRec.forEach(m=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    let total=0, pesoUsado=peso;
+    if (precioCabeza>0) { total=cant*precioCabeza; }
+    else if (precioKg&&peso) { total=cant*peso*precioKg; }
+    else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=cant*pesoUsado*precioKg;
+    } else {
+      const or=rodeosAllMap[String(m.rodeo_origen_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=valorizarRodeo_(or||{categoria:'vaquillona'},cant,pesoUsado);
+    }
+    ingReposicionACriaCampanaRec += convertirAMoneda_(total, m.fecha, moneda);
+  });
+
   // 3. EF valorizado — usa el stock por rodeo ya calculado (stockPorRodeoCampanaRec,
   // cabezas), valorizado a fechaValorEFRec. Se guarda el detalle por rodeo
   // para la tabla de abajo.
@@ -7402,7 +7589,7 @@ function buildRecriaDashboard() {
   });
   const stockValRecriaCampana = convertirAMoneda_(stockValRecriaCampanaARS, fechaValorEFRec, moneda);
 
-  const totalIngresosCampanaRec = ingVentasCampanaRec + ingCesionEngCampanaRec + stockValRecriaCampana;
+  const totalIngresosCampanaRec = ingVentasCampanaRec + ingCesionEngCampanaRec + ingReposicionACriaCampanaRec + stockValRecriaCampana;
 
   // 4. EI valorizado — heredado de la campaña anterior a SU fecha_fin (fija),
   // + saldos propios de esta campaña, cada uno a su propia fecha. Mismo
@@ -7490,6 +7677,7 @@ function buildRecriaDashboard() {
       <table class="dt" style="margin-bottom:12px"><tbody>
         <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fnMoneda_(ingVentasCampanaRec,moneda)}</strong></td></tr>
         <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fnMoneda_(ingCesionEngCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>🐮 Reposición a Cría</td><td class="tr"><strong>${ingReposicionACriaCampanaRec>0?fnMoneda_(ingReposicionACriaCampanaRec,moneda):'—'}</strong></td></tr>
         <tr><td>📦 Existencia Final (EF)</td><td class="tr"><strong>${fnMoneda_(stockValRecriaCampana,moneda)}</strong></td></tr>
         <tr style="background:var(--green-bg);font-weight:700"><td><strong>Total ingresos</strong></td><td class="tr" style="color:var(--green);font-size:20px"><strong>${fnMoneda_(totalIngresosCampanaRec,moneda)}</strong></td></tr>
       </tbody></table>
