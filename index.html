@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_189';
+const APP_VERSION = 'index_consolidado_4_6_155_190';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -19064,21 +19064,25 @@ function buildPreciosValPanel_() {
 
     <div style="margin-bottom:16px">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">⚖️ Por kg vivo</div>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Si un rodeo no tiene pesada cargada, se usa el precio por cabeza como respaldo.</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Si un rodeo de Recría/Terminación no tiene pesada cargada, se usa el precio por cabeza como respaldo. <strong>Excepción: "Vaquillona ($/cab)"</strong> es el precio que se usa siempre que el rodeo sea de <strong>Cría</strong> (plantel de reposición, no en engorde) — ahí no es un respaldo, es el precio principal.</div>
       <div class="fgrid">
         ${[
-          ['ternero',          'pv-ternero',          'pv-ternero-cab',          '🐮 Ternero macho',    p.ternero,          p.ternero_cab],
-          ['ternera',          'pv-ternera',          'pv-ternera-cab',          '🐮 Ternera hembra',   p.ternera,          p.ternera_cab],
-          ['vaquillona',       'pv-vaquillona',       'pv-vaquillona-cab',       '🐄 Vaquillona',       p.vaquillona,       p.vaquillona_cab],
-          ['vaquillona_venta', 'pv-vaquillona-venta', 'pv-vaquillona-venta-cab', '🐄 Vaquillona venta', p.vaquillona_venta, p.vaquillona_venta_cab],
-          ['novillito',        'pv-novillito',        'pv-novillito-cab',        '🐂 Novillito',        p.novillito,        p.novillito_cab],
-          ['novillo',          'pv-novillo',          'pv-novillo-cab',          '🥩 Novillo',          p.novillo,          p.novillo_cab],
-          ['vaca_venta',       'pv-vaca-venta',       'pv-vaca-venta-cab',       '🐄 Vaca venta',       p.vaca_venta,       p.vaca_venta_cab],
-        ].map(([,idKg,idCab,label,valKg,valCab])=>`
+          ['ternero',          'pv-ternero',          'pv-ternero-cab',          '🐮 Ternero macho',    p.ternero,          p.ternero_cab,          '($/cab sin pesada)'],
+          ['ternera',          'pv-ternera',          'pv-ternera-cab',          '🐮 Ternera hembra',   p.ternera,          p.ternera_cab,          '($/cab sin pesada)'],
+          ['vaquillona',       'pv-vaquillona',       'pv-vaquillona-cab',       '🐄 Vaquillona',       p.vaquillona,       p.vaquillona_cab,       '($/cab — Cría, o Recría sin pesada)'],
+          ['vaquillona_venta', 'pv-vaquillona-venta', 'pv-vaquillona-venta-cab', '🐄 Vaquillona venta', p.vaquillona_venta, p.vaquillona_venta_cab, '($/cab sin pesada)'],
+          ['novillito',        'pv-novillito',        'pv-novillito-cab',        '🐂 Novillito',        p.novillito,        p.novillito_cab,        '($/cab sin pesada)'],
+          ['novillo',          'pv-novillo',          'pv-novillo-cab',          '🥩 Novillo',          p.novillo,          p.novillo_cab,          '($/cab sin pesada)'],
+          ['vaca_venta',       'pv-vaca-venta',       'pv-vaca-venta-cab',       '🐄 Vaca venta',       p.vaca_venta,       p.vaca_venta_cab,       '($/cab sin pesada)'],
+        ].map(([,idKg,idCab,label,valKg,valCab,labelCab])=>`
           <div class="fg"><label>${label} ($/kg)</label><input type="number" id="${idKg}" value="${valKg||''}" placeholder="Ej: 3200" min="0" step="10"></div>
-          <div class="fg"><label>${label} ($/cab sin pesada)</label><input type="number" id="${idCab}" value="${valCab||''}" placeholder="Ej: 450000" min="0" step="1000"></div>
+          <div class="fg"><label>${label} ${labelCab}</label><input type="number" id="${idCab}" value="${valCab||''}" placeholder="Ej: 450000" min="0" step="1000"></div>
         `).join('')}
       </div>
+    </div>
+
+    <div style="margin-bottom:16px;padding:10px 12px;background:var(--bg2);border-radius:8px;font-size:11.5px;color:var(--text2)">
+      🐄 <strong>Vaquillona venta madre</strong> (reposición con destino conocido) se valoriza siempre por cabeza, con el mismo precio de "Vaquillona venta ($/cab sin pesada)" de arriba — no tiene un campo propio.
     </div>
 
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
