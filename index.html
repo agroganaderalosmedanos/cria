@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_179';
+const APP_VERSION = 'index_consolidado_4_6_155_180';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3209,11 +3209,12 @@ function buildDashboard() {
       <div class="panel-title">📦 Stock final valorizado (EF) — por rodeo</div>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Rodeo</th><th>Campo</th><th>Categoría</th>
-        <th class="tc">Stock</th><th class="tr">Peso prom.</th>
-        <th class="tr">Método</th><th class="tr">Valor total</th>
+        <th class="tc">Cantidad</th><th class="tr">Peso prom.</th>
+        <th class="tr">Método</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     stockDetalleRows.forEach(row => {
       const metodo = metodoValorizacionAFecha_(row.rodeo, fechaValoracionCampSelec);
+      const unit = row.stock ? row.val / row.stock : 0;
       h += `<tr>
         <td><strong>${row.rodeo.nombre}</strong></td>
         <td>${campoNombre(row.rodeo.campo_id)}</td>
@@ -3221,13 +3222,14 @@ function buildDashboard() {
         <td class="tc">${fn(row.stock)}</td>
         <td class="tr">${row.pesoP ? fn(row.pesoP)+' kg' : '—'}</td>
         <td class="tr" style="font-size:11px;color:var(--text3)">${metodo}</td>
+        <td class="tr">${fmCria_(unit)}</td>
         <td class="tr"><strong>${fmCria_(row.val)}</strong></td>
       </tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800">
       <td colspan="3" class="tr">TOTAL EF</td>
       <td class="tc">${fn(stockDetalleRows.reduce((s,r)=>s+r.stock,0))} cab.</td>
-      <td colspan="2"></td>
+      <td colspan="3"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValCria, _criaMoneda)}</td>
     </tr>`;
     h += '</tbody></table></div></div>';
@@ -3253,13 +3255,14 @@ function buildDashboard() {
       // mira. Distinto, a propósito, de "Stock valorizado actual" (EF), que
       // sí es a precio de hoy.
       h += `<p class="helper-text">Heredado del cierre de la campaña anterior (calculado, no es un Movimiento cargado) — valorizado al precio vigente al ${fd(campAnteriorObj.fecha_fin)}:</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Valor (al cierre anterior)</th></tr></thead><tbody>`;
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th></tr></thead><tbody>`;
       rodeosConEIHeredada.forEach(r => {
         const cant = eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0;
         const val = valorizarRodeoAFecha_(r, cant, campAnteriorObj.fecha_fin);
         const valConv = convertirAMoneda_(val, campAnteriorObj.fecha_fin, _criaMoneda);
+        const unit = cant ? valConv / cant : 0;
         totEICab += cant; totEIVal += valConv;
-        h += `<tr><td><strong>${r.nombre}</strong></td><td class="tc">${fn(cant)}</td><td class="tr">${fnMoneda_(valConv,_criaMoneda)}</td></tr>`;
+        h += `<tr><td><strong>${r.nombre}</strong></td><td class="tc">${fn(cant)}</td><td class="tr">${fnMoneda_(unit,_criaMoneda)}</td><td class="tr">${fnMoneda_(valConv,_criaMoneda)}</td></tr>`;
       });
       h += `</tbody></table></div>`;
     }
@@ -7766,16 +7769,18 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">📦 Existencia Final (EF) valorizada — por rodeo, campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''}</div>
       <p class="helper-text">Valorizada al ${esCampanaActivaRecria?'precio vigente a la fecha de corte ('+fd(fechaValorEFRec)+')':'precio vigente al cierre de la campaña ('+fd(fechaValorEFRec)+')'}.</p>
       <div class="tw"><table class="dt"><thead><tr>
-        <th>Rodeo</th><th class="tc">Stock</th><th class="tr">Peso prom.</th><th class="tr">Valor total</th>
+        <th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th>
       </tr></thead><tbody>`;
     efDetalleCampanaRec.forEach(r=>{
+      const unit = r.stock ? r.valConv / r.stock : 0;
       h += `<tr><td><strong>${r.rodeo.nombre}</strong></td>
         <td class="tc">${fn(r.stock)}</td>
         <td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td>
+        <td class="tr">${fnMoneda_(unit,moneda)}</td>
         <td class="tr"><strong>${fnMoneda_(r.valConv,moneda)}</strong></td></tr>`;
     });
     h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EF</td>
-      <td class="tc">${fn(efDetalleCampanaRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td class="tr"></td>
+      <td class="tc">${fn(efDetalleCampanaRec.reduce((s,r)=>s+r.stock,0))} cab.</td><td class="tr"></td><td class="tr"></td>
       <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(stockValRecriaCampana,moneda)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
@@ -7789,12 +7794,13 @@ function buildRecriaDashboard() {
     h += `<div class="panel"><div class="panel-title">📦 Existencia Inicial (EI) valorizada — por rodeo, campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''}</div>`;
     if (eiHeredadoDetalleRec.length) {
       h += `<p class="helper-text">Heredada del cierre de la campaña anterior (calculada, no es un Movimiento cargado) — valorizada al precio vigente al ${fd(campAnteriorObjRec.fecha_fin)}:</p>
-      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cabezas</th><th class="tr">Peso prom.</th><th class="tr">Valor (al cierre anterior)</th></tr></thead><tbody>`;
+      <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th class="tc">Cantidad</th><th class="tr">Peso prom.</th><th class="tr">Precio unit. ($/cab.)</th><th class="tr">Total</th></tr></thead><tbody>`;
       eiHeredadoDetalleRec.forEach(r => {
-        h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
+        const unit = r.cant ? r.valConv / r.cant : 0;
+        h += `<tr><td><strong>${r.rodeo.nombre}</strong></td><td class="tc">${fn(r.cant)}</td><td class="tr">${r.pesoP?fn(r.pesoP)+' kg':'—'}</td><td class="tr">${fnMoneda_(unit,moneda)}</td><td class="tr">${fnMoneda_(r.valConv,moneda)}</td></tr>`;
       });
       h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL heredado</td>
-        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td><td class="tr"></td>
+        <td class="tc">${fn(eiHeredadoDetalleRec.reduce((s,r)=>s+r.cant,0))} cab.</td><td class="tr"></td><td class="tr"></td>
         <td class="tr">${fnMoneda_(eiHeredadoDetalleRec.reduce((s,r)=>s+r.valConv,0),moneda)}</td></tr>`;
       h += `</tbody></table></div>`;
     }
