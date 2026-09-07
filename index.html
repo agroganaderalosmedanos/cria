@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_184';
+const APP_VERSION = 'index_consolidado_4_6_155_185';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -19345,7 +19345,22 @@ function openEditModal(entity, idCol, id) {
   // (siempre se ignoran). Ocultarlos evita confusión — sino parece que el saldo inicial
   // "viene de" otro rodeo, cuando en realidad es un ingreso directo sin origen.
   const ocultarOrigenSaldoInicial = entity === 'movimientos' && item.tipo === 'Saldo inicial';
-  const camposAOcultar = ocultarOrigenSaldoInicial ? ['campo_origen_id', 'rodeo_origen_id'] : [];
+  // Traslado entre rodeos de la MISMA actividad (recategorización interna
+  // dentro de Cría, Recría o Terminación) sin precio ya cargado: ocultar los
+  // campos de precio, mismo criterio que en el formulario de "Registrar
+  // movimiento" — evita cargar un costo de ingreso que nunca existió. Si YA
+  // hay un valor cargado (de antes de este cambio, o de un error), se sigue
+  // mostrando igual para poder verlo y corregirlo/borrarlo.
+  let mismaActividadSinPrecio = false;
+  if (entity === 'movimientos' && !ocultarOrigenSaldoInicial) {
+    const rodeosCatalogo = (S.catalogs && S.catalogs.rodeos) || [];
+    const origenR = rodeosCatalogo.find(r => String(r.rodeo_id) === String(item.rodeo_origen_id));
+    const destinoR = rodeosCatalogo.find(r => String(r.rodeo_id) === String(item.rodeo_destino_id));
+    const precioYaCargado = (Number(item.precio_cabeza)||0) > 0 || (Number(item.precio_kg)||0) > 0;
+    mismaActividadSinPrecio = !!(origenR && destinoR && normAct_(origenR.actividad) === normAct_(destinoR.actividad) && !precioYaCargado);
+  }
+  const camposAOcultar = ocultarOrigenSaldoInicial ? ['campo_origen_id', 'rodeo_origen_id']
+    : mismaActividadSinPrecio ? ['precio_cabeza', 'precio_kg'] : [];
   keys.forEach(k => {
     if (camposAOcultar.includes(k)) return;
     const type = fieldInputType_(k, item[k]);
@@ -19383,14 +19398,18 @@ function openEditModal(entity, idCol, id) {
         <div class="modal-header"><h3>Editar registro</h3><button class="modal-close" id="edit-modal-close">✕</button></div>
         <div class="modal-body">
           <div class="fgrid">${fieldsHtml}</div>
-          ${entity === 'movimientos' && ('precio_cabeza' in item) && ('precio_kg' in item) ? `
+          ${entity === 'movimientos' && ('precio_cabeza' in item) && ('precio_kg' in item) && !mismaActividadSinPrecio ? `
           <div id="edit-modal-precio-hint" style="margin-top:8px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:11px;color:#92400e">
             ⚠ Cargá <strong>uno solo</strong> de los dos precios (por cabeza <em>o</em> por kg) — el que dejes en 0 se ignora. El campo que no vas a usar se pone gris solo.
           </div>` : ''}
-          ${entity === 'movimientos' && (item.tipo === 'Saldo inicial' || item.tipo === 'Traslado en bloque' || item.tipo === 'Traslado individual') ? `
+          ${entity === 'movimientos' && (item.tipo === 'Saldo inicial' || item.tipo === 'Traslado en bloque' || item.tipo === 'Traslado individual') && !mismaActividadSinPrecio ? `
           <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
             <button type="button" class="btn btn-ghost btn-sm" id="edit-modal-usar-precio-mes" style="font-size:12px;padding:4px 10px">💲 Completar precio desde Valorización de Stock</button>
             <span style="font-size:11px;color:var(--text3);margin-left:8px">${item.tipo === 'Saldo inicial' ? 'Usa el precio del mes de la fecha del saldo inicial según la categoría del rodeo' : 'Para traslados internos sin precio real de compra — usa el precio de mercado del mes'}</span>
+          </div>` : ''}
+          ${mismaActividadSinPrecio ? `
+          <div style="margin-top:8px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:11px;color:var(--text3)">
+            ℹ Este traslado es dentro de la misma actividad — no lleva costo de ingreso (esos animales ya tenían valor desde antes). Si en realidad cruza de actividad, revisá el rodeo de origen/destino.
           </div>` : ''}
         </div>
         <div class="modal-footer">
