@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_174';
+const APP_VERSION = 'index_consolidado_4_6_155_175';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -7458,6 +7458,168 @@ function buildRecriaDashboard() {
     h += `<tr style="background:var(--bg2);font-weight:800"><td class="tr">TOTAL EI</td><td class="tc">${fn(totEICampRec)}</td></tr>`;
     h += `</tbody></table></div></div>`;
   }
+
+  // ── MARGEN BRUTO RECRÍA — POR CAMPAÑA ────────────────────────────────────
+  // Mismo esquema ya usado en el Dashboard de Cría por campaña: Ingresos =
+  // Ventas + Cesión a Terminación + EF valorizado. Egresos = EI valorizado +
+  // Cesión desde Cría + Alimentación + Veterinaria + Sueldos. Panel nuevo, en
+  // paralelo al de más abajo (que sigue igual, acumulado a la fecha de
+  // corte) — no se toca ninguna variable de ese panel viejo (ingVentas,
+  // egEI, egCesionCria, egSueldos, etc.).
+  //
+  // Fecha de valorización de la EF de esta campaña: fecha_fin fija si ya
+  // cerró, fecha de corte si es la activa — mismo criterio que Cría
+  // (fechaValoracionCampSelec).
+  const fechaValorEFRec = !esCampanaActivaRecria && campSelecCampanaObjRec && campSelecCampanaObjRec.fecha_fin
+    ? campSelecCampanaObjRec.fecha_fin : corteRecria;
+  const rodeosRecCampanaArr = rodeosAll.filter(r => normAct_(r.actividad)==='recria' && (!campSelec || String(r.campo_id)===String(campSelec)));
+
+  // 1. Ventas — reusa ventasCampanaRec, ya scopeado por campaña más arriba.
+  let ingVentasCampanaRec = 0;
+  ventasCampanaRec.forEach(v => {
+    const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+    ingVentasCampanaRec += convertirAMoneda_(imp, v.fecha_salida, moneda);
+  });
+
+  // 2. Cesión a Terminación — Egresos Recría con destino Engorde, scopeados
+  // por campaña (mismo cálculo de 3 niveles que ya usa el panel viejo).
+  const egresosCampanaRec = (S.cache.egresos_recria||[]).filter(e =>
+    (!esCampanaActivaRecria || (e.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(e.fecha, e.campana_id) === String(campSelecCampanaRec) &&
+    rodeosRecCampanaSet.has(String(e.rodeo_id))
+  );
+  let ingCesionEngCampanaRec = 0;
+  egresosCampanaRec.filter(e=>e.destino==='Engorde').forEach(e=>{
+    const cant=Number(e.cant_animales)||0;
+    let peso=Number(e.peso_prom_kg)||0;
+    const precioKg=Number(e.precio_kg_cesion)||0;
+    const precioCabeza=Number(e.precio_cabeza_cesion)||0;
+    let imp=0;
+    if (precioCabeza>0) {
+      imp = cant*precioCabeza;
+    } else if (precioKg&&peso) {
+      imp = cant*peso*precioKg;
+    } else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      imp = cant*peso*precioKg;
+    } else {
+      const origen = rodeosAllMap[String(e.rodeo_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      imp = valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
+    }
+    ingCesionEngCampanaRec += convertirAMoneda_(imp, e.fecha, moneda);
+  });
+
+  // 3. EF valorizado — usa el stock por rodeo YA calculado más arriba
+  // (stockPorRodeoCampanaRec, cabezas), valorizado a fechaValorEFRec.
+  let stockValRecriaCampanaARS = 0;
+  rodeosRecCampanaArr.forEach(r=>{
+    const stock = Math.max(0, stockPorRodeoCampanaRec[String(r.rodeo_id)]||0);
+    if (!stock) return;
+    stockValRecriaCampanaARS += valorizarRodeoAFecha_(r, stock, fechaValorEFRec);
+  });
+  const stockValRecriaCampana = convertirAMoneda_(stockValRecriaCampanaARS, fechaValorEFRec, moneda);
+
+  const totalIngresosCampanaRec = ingVentasCampanaRec + ingCesionEngCampanaRec + stockValRecriaCampana;
+
+  // 4. EI valorizado — heredado de la campaña anterior a SU fecha_fin (fija),
+  // + saldos propios de esta campaña, cada uno a su propia fecha. Mismo
+  // desglose que usa Cría (eiHeredadoARS + saldosIniciales).
+  const campAnteriorObjRec = campanaAnteriorA_(campSelecCampanaRec);
+  const heredadoStockPorRodeoRec = campAnteriorObjRec ? efRecriaCampanaStockPorRodeo_(campAnteriorObjRec.campana_id) : {};
+  const eiHeredadoARSRec = campAnteriorObjRec ? valorizarStockPorRodeoAFecha_(heredadoStockPorRodeoRec, rodeosRecCampanaArr, campAnteriorObjRec.fecha_fin) : 0;
+  const propiosEIRec = eiRecriaCampana_(campSelecCampanaRec).propios;
+  const totalEICampanaRec = convertirAMoneda_(eiHeredadoARSRec, campAnteriorObjRec ? campAnteriorObjRec.fecha_fin : corteRecria, moneda)
+    + propiosEIRec.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
+
+  // 5. Cesión desde Cría (egreso) — mismo cálculo de 3 niveles que el panel
+  // viejo, sobre movsCampanaRec (ya scopeado por campaña) en vez de movs
+  // (que ahí está scopeado por fecha de corte nomás).
+  let egCesionCriaCampanaRec = 0;
+  movsCampanaRec.filter(m=>{
+    if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+    const or = rodeosAllMap[String(m.rodeo_origen_id)];
+    const de = rodeosAllMap[String(m.rodeo_destino_id)];
+    return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&rodeosRecCampanaSet.has(String(m.rodeo_destino_id));
+  }).forEach(m=>{
+    const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+    const precioCabeza=Number(m.precio_cabeza)||0;
+    const precioKg=Number(m.precio_kg)||0;
+    let total=0, pesoUsado=peso;
+    if (precioCabeza>0) { total=cant*precioCabeza; }
+    else if (precioKg&&peso) { total=cant*peso*precioKg; }
+    else if (precioKg&&!peso) {
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=cant*pesoUsado*precioKg;
+    } else {
+      const or=rodeosAllMap[String(m.rodeo_origen_id)];
+      const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+      total=valorizarRodeo_(or||{},cant,pesoUsado);
+    }
+    egCesionCriaCampanaRec += convertirAMoneda_(total, m.fecha, moneda);
+  });
+
+  // 6. Alimentación y Veterinaria — Consumos Insumos scopeados por campaña
+  // (rodeo de Recría + campanaEfectiva_ === campaña elegida).
+  const consumosCampanaRec = (S.cache.consumos_insumos||[]).filter(c =>
+    (!esCampanaActivaRecria || (c.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(c.fecha, c.campana_id) === String(campSelecCampanaRec) &&
+    rodeosRecCampanaSet.has(String(c.rodeo_id))
+  );
+  let egAlimCampanaRec = 0, egVetCampanaRec = 0;
+  consumosCampanaRec.forEach(c=>{
+    const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
+    const costoARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+    const costo = convertirAMoneda_(costoARS, c.fecha, moneda);
+    if (prod&&prod.categoria==='Veterinaria') egVetCampanaRec += costo; else egAlimCampanaRec += costo;
+  });
+
+  // 7. Sueldos — acotados por el rango REAL de la campaña (piso Y techo),
+  // mismo criterio ya corregido en Cría. El panel viejo de abajo todavía
+  // solo tiene techo (bug pendiente, no se toca en esta pasada).
+  const fechaDesdeSueldosRec = campSelecCampanaObjRec && campSelecCampanaObjRec.fecha_inicio ? campSelecCampanaObjRec.fecha_inicio : '0000-01-01';
+  const egSueldosCampanaRec = sueldoTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosRec.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValorEFRec.slice(0,7)
+  , moneda);
+
+  const totalEgresosCampanaRec = totalEICampanaRec + egCesionCriaCampanaRec + egAlimCampanaRec + egVetCampanaRec + egSueldosCampanaRec;
+  const margenCampanaRec = totalIngresosCampanaRec - totalEgresosCampanaRec;
+
+  h += `<div class="section-label">💰 Margen Bruto Recría — por Campaña — ${campSelecCampanaObjRec ? campSelecCampanaObjRec.nombre : '—'}${esCampanaActivaRecria ? ' (activa)' : ' (cerrada)'}</div>`;
+  h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div class="panel">
+      <div class="panel-title" style="color:var(--green-text)">📈 Ingresos</div>
+      <table class="dt" style="width:100%">
+        <tr><td>💵 Ventas directas</td><td class="tr"><strong>${fnMoneda_(ingVentasCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>➡ Cesión a Terminación</td><td class="tr"><strong>${fnMoneda_(ingCesionEngCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>📦 Existencia Final (EF)</td><td class="tr"><strong>${fnMoneda_(stockValRecriaCampana,moneda)}</strong></td></tr>
+        <tr style="background:var(--green-bg,#e8f3e3);font-weight:800"><td>Total ingresos</td><td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totalIngresosCampanaRec,moneda)}</td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="panel-title" style="color:var(--clay-text,#a33)">📉 Egresos</div>
+      <table class="dt" style="width:100%">
+        <tr><td>📦 Existencia Inicial (EI)</td><td class="tr"><strong>${fnMoneda_(totalEICampanaRec,moneda)}</strong></td></tr>
+        <tr><td>⬅ Cesión desde Cría</td><td class="tr"><strong>${fnMoneda_(egCesionCriaCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>🌾 Alimentación</td><td class="tr"><strong>${fnMoneda_(egAlimCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fnMoneda_(egVetCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>👤 Sueldos</td><td class="tr"><strong>${fnMoneda_(egSueldosCampanaRec,moneda)}</strong></td></tr>
+        <tr style="background:var(--clay-bg,#f6e3e0);font-weight:800"><td>Total egresos</td><td class="tr" style="color:var(--clay-text,#a33);font-size:15px">${fnMoneda_(totalEgresosCampanaRec,moneda)}</td></tr>
+      </table>
+    </div>
+  </div>`;
+  h += `<div class="panel" style="border:2px solid ${margenCampanaRec>=0?'var(--green)':'var(--clay)'};margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="font-weight:800;font-size:15px">MARGEN BRUTO RECRÍA — ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''}</div>
+      <div style="font-size:26px;font-weight:800;color:${margenCampanaRec>=0?'var(--green)':'var(--clay)'}">${fnMoneda_(margenCampanaRec,moneda)}</div>
+    </div>
+  </div>`;
 
   // ── Conciliación de Existencia HISTÓRICA (cabezas) — acumulado a la fecha
   // de corte, sin distinguir campaña. Se deja sin tocar por ahora.
