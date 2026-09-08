@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_191';
+const APP_VERSION = 'index_consolidado_4_6_155_192';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -19066,18 +19066,17 @@ function buildPreciosValPanel_() {
 
     <div style="margin-bottom:16px">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--clay-text);letter-spacing:.04em;margin-bottom:8px">⚖️ Por kg vivo (Recría / Terminación)</div>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Si un rodeo no tiene pesada cargada, se usa la última pesada disponible (aunque sea de mitad de período); si no tiene ninguna, se usa el peso de ingreso y, en su defecto, el precio por cabeza como último respaldo.</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Si un rodeo no tiene pesada cargada, se usa la última pesada disponible (aunque sea de mitad de período); si no tiene ninguna, se usa el peso de ingreso.</div>
       <div class="fgrid">
         ${[
-          ['ternero',          'pv-ternero',          'pv-ternero-cab',          '🐮 Ternero macho',    p.ternero,          p.ternero_cab,          '($/cab sin pesada)'],
-          ['ternera',          'pv-ternera',          'pv-ternera-cab',          '🐮 Ternera hembra',   p.ternera,          p.ternera_cab,          '($/cab sin pesada)'],
-          ['vaquillona_venta', 'pv-vaquillona-venta', 'pv-vaquillona-venta-cab', '🐄 Vaquillona venta', p.vaquillona_venta, p.vaquillona_venta_cab, '($/cab sin pesada)'],
-          ['novillito',        'pv-novillito',        'pv-novillito-cab',        '🐂 Novillito',        p.novillito,        p.novillito_cab,        '($/cab sin pesada)'],
-          ['novillo',          'pv-novillo',          'pv-novillo-cab',          '🥩 Novillo',          p.novillo,          p.novillo_cab,          '($/cab sin pesada)'],
-          ['vaca_venta',       'pv-vaca-venta',       'pv-vaca-venta-cab',       '🐄 Vaca venta',       p.vaca_venta,       p.vaca_venta_cab,       '($/cab sin pesada)'],
-        ].map(([,idKg,idCab,label,valKg,valCab,labelCab])=>`
-          <div class="fg"><label>${label} ($/kg)</label><input type="number" id="${idKg}" value="${valKg||''}" placeholder="Ej: 3200" min="0" step="10"></div>
-          <div class="fg"><label>${label} ${labelCab}</label><input type="number" id="${idCab}" value="${valCab||''}" placeholder="Ej: 450000" min="0" step="1000"></div>
+          ['ternero',          'pv-ternero',          '🐮 Ternero macho'],
+          ['ternera',          'pv-ternera',          '🐮 Ternera hembra'],
+          ['vaquillona_venta', 'pv-vaquillona-venta', '🐄 Vaquillona venta'],
+          ['novillito',        'pv-novillito',        '🐂 Novillito'],
+          ['novillo',          'pv-novillo',          '🥩 Novillo'],
+          ['vaca_venta',       'pv-vaca-venta',       '🐄 Vaca venta'],
+        ].map(([key,idKg,label])=>`
+          <div class="fg"><label>${label} ($/kg)</label><input type="number" id="${idKg}" value="${p[key]||''}" placeholder="Ej: 3200" min="0" step="10"></div>
         `).join('')}
         <div class="fg"><label>🐄 Vaquillona — en engorde, Recría ($/kg)</label><input type="number" id="pv-vaquillona" value="${p.vaquillona||''}" placeholder="Ej: 3200" min="0" step="10"></div>
       </div>
@@ -19101,16 +19100,25 @@ function attachPreciosValEvents() {
     const btn = document.getElementById('pv-guardar-btn');
     const msg = document.getElementById('pv-msg');
     const resetBtn = () => { if(btn) { btn.disabled=false; btn.textContent='💾 Guardar precios del mes'; } };
+    // Estos 6 campos de respaldo ($/cab para categorías que van por kg) ya no
+    // se muestran en el formulario — casi nunca hace falta tocarlos, y tenerlos
+    // a la vista confundía. Pero el dato sigue existiendo por dentro (para el
+    // caso raro de un rodeo sin pesada NI peso de ingreso): se hereda del
+    // registro vigente a la fecha que se está guardando, en vez de mandarse en
+    // 0 — así guardar un mes nuevo nunca borra en silencio el respaldo viejo.
+    const vigenteOculto = preciosValGet_(fecha + '-01') || {};
+    const gOculto = key => Number(vigenteOculto[key]) || 0;
     const data = {
       fecha: fecha + '-01',
       vaca: g('pv-vaca'), toro: g('pv-toro'), torito: g('pv-torito'),
       ternero: g('pv-ternero'), ternera: g('pv-ternera'),
       vaquillona: g('pv-vaquillona'), vaquillona_venta: g('pv-vaquillona-venta'),
       novillito: g('pv-novillito'), novillo: g('pv-novillo'), vaca_venta: g('pv-vaca-venta'),
-      ternero_cab: g('pv-ternero-cab'), ternera_cab: g('pv-ternera-cab'),
-      vaquillona_cab: g('pv-vaquillona-cab'), vaquillona_venta_cab: g('pv-vaquillona-venta-cab'),
-      novillito_cab: g('pv-novillito-cab'), novillo_cab: g('pv-novillo-cab'),
-      vaca_venta_cab: g('pv-vaca-venta-cab'),
+      vaquillona_cab: g('pv-vaquillona-cab'),
+      ternero_cab: gOculto('ternero_cab'), ternera_cab: gOculto('ternera_cab'),
+      vaquillona_venta_cab: gOculto('vaquillona_venta_cab'),
+      novillito_cab: gOculto('novillito_cab'), novillo_cab: gOculto('novillo_cab'),
+      vaca_venta_cab: gOculto('vaca_venta_cab'),
     };
     try {
       const lista = (S.catalogs && S.catalogs.precios_valorizacion) || [];
