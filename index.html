@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_199';
+const APP_VERSION = 'index_consolidado_4_6_155_200';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10581,6 +10581,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // histórico completo sin importar qué campaña estuviera seleccionada arriba.
   const campanaCatalogEng_ = (S.cache.campanas||[]).find(c => c.nombre === campSelec);
   const esCampanaActivaEng_ = !!(campanaCatalogEng_ && (campanaCatalogEng_.activa===true || String(campanaCatalogEng_.activa).toUpperCase()==='TRUE'));
+  const campanaIdEngActual_ = campanaCatalogEng_ ? campanaCatalogEng_.campana_id : null;
   const filtroCampanaEng_ = (fecha, campanaId) => {
     // Si no se puede resolver la campaña elegida contra el catálogo real (caso
     // borde: nombres que no coinciden entre los dos sistemas), se cae al
@@ -10607,20 +10608,41 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // S._resultEng tiene que ser previsible sin importar eso.
   const totalVentasARS = ventasEng.reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0),0);
 
-  // Stock valorizado a la fecha de corte (antes: egStock_, que siempre lee S.stock a "hoy")
-  // Ítem de BALANCE — se convierte una sola vez, a la cotización del corte.
+  // Existencia Final (EF) — AHORA por campaña recursiva, mismo tratamiento
+  // completo que Recría: valorizada al precio del cierre si la campaña ya
+  // cerró, o al de la fecha de corte si es la activa; con peso de ingreso
+  // como respaldo cuando falta pesada propia, y aviso visible si no hay
+  // ningún dato de peso. Antes esto SIEMPRE era "el stock de HOY" sin
+  // importar la campaña elegida — por eso "Stock inicial" de 2026/2027 daba
+  // $0 (no había Saldo Inicial nuevo cargado) mientras el EF de 2025/2026 no
+  // se veía reflejado como la EI heredada de la campaña siguiente.
   const pesadas = S.cache.pesadas || [];
+  const fechaValorEFTerm_ = (esCampanaActivaEng_ || !campanaCatalogEng_) ? corteEng : (campanaCatalogEng_.fecha_fin || corteEng);
   let stockValEngARS = 0;
   const stockDetalleRows = [];
-  rodeosEngFilt.forEach(r => {
-    const stock = Math.max(0, stockACorteEng[String(r.rodeo_id)]||0);
-    if (!stock) return;
-    const pesoP = ultimaPesadaACorte_(r.rodeo_id, corteEng);
-    const val = valorizarRodeo_(r, stock, pesoP);
-    stockValEngARS += val;
-    stockDetalleRows.push({ rodeo: r, stock, pesoP, val });
-  });
-  const stockValEng = convertirAMoneda_(stockValEngARS, corteEng, moneda);
+  if (campanaIdEngActual_) {
+    const efPorRodeoTerm_ = efTerminacionCampanaStockPorRodeo_(campanaIdEngActual_);
+    rodeosEngFilt.forEach(r => {
+      const stock = Math.max(0, efPorRodeoTerm_[String(r.rodeo_id)]||0);
+      if (!stock) return;
+      const val = valorizarRodeoAFecha_(r, stock, fechaValorEFTerm_);
+      stockValEngARS += val;
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, fechaValorEFTerm_) || pesoIngresoRodeoAFecha_(r.rodeo_id, fechaValorEFTerm_).peso;
+      stockDetalleRows.push({ rodeo: r, stock, pesoP, metodo: metodoValorizacionAFecha_(r, fechaValorEFTerm_), val });
+    });
+  } else {
+    // Sin campaña resuelta: cae al cálculo viejo (stock de hoy) para no
+    // romper la pantalla.
+    rodeosEngFilt.forEach(r => {
+      const stock = Math.max(0, stockACorteEng[String(r.rodeo_id)]||0);
+      if (!stock) return;
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, corteEng);
+      const val = valorizarRodeo_(r, stock, pesoP);
+      stockValEngARS += val;
+      stockDetalleRows.push({ rodeo: r, stock, pesoP, metodo: metodoValorizacionAFecha_(r, corteEng), val });
+    });
+  }
+  const stockValEng = convertirAMoneda_(stockValEngARS, fechaValorEFTerm_, moneda);
 
   let totalIngresos = totalVentas + stockValEng;
   let totalIngresosARS = totalVentasARS + stockValEngARS;
@@ -10661,9 +10683,33 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     );
     return !tieneTrasladoReal;
   });
-  // Cotización DEL DÍA DE CADA Saldo inicial, no la del corte.
-  const totalSaldoIni = saldosIni.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda),0);
-  const totalSaldoIniARS = saldosIni.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
+
+  // Existencia Inicial (EI) — heredada del cierre de la campaña anterior
+  // (valorizada a SU fecha_fin, fija) + Saldos Iniciales propios de esta
+  // campaña (cada uno a su propia fecha). Antes "Stock inicial" solo sumaba
+  // los Saldo Inicial propios, perdiendo por completo lo heredado — por eso
+  // una campaña sin altas nuevas (como 2026/2027, que solo recibe cesiones y
+  // traslados) mostraba $0 en vez del valor real de lo que tenía al arrancar.
+  const campAnteriorTerm_ = campanaIdEngActual_ ? campanaAnteriorA_(campanaIdEngActual_) : null;
+  const heredadoStockTerm_ = campAnteriorTerm_ ? efTerminacionCampanaStockPorRodeo_(campAnteriorTerm_.campana_id) : {};
+  const eiHeredadoDetalleTerm_ = [];
+  let eiHeredadoARSTerm_ = 0;
+  if (campAnteriorTerm_) {
+    rodeosEngFilt.forEach(r => {
+      const cant = heredadoStockTerm_[String(r.rodeo_id)]||0;
+      if (!cant) return;
+      const val = valorizarRodeoAFecha_(r, cant, campAnteriorTerm_.fecha_fin);
+      eiHeredadoARSTerm_ += val;
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, campAnteriorTerm_.fecha_fin) || pesoIngresoRodeoAFecha_(r.rodeo_id, campAnteriorTerm_.fecha_fin).peso;
+      eiHeredadoDetalleTerm_.push({ rodeo: r, cant, pesoP, metodo: metodoValorizacionAFecha_(r, campAnteriorTerm_.fecha_fin), valConv: convertirAMoneda_(val, campAnteriorTerm_.fecha_fin, moneda) });
+    });
+  }
+  const propiosEITerm_ = campanaIdEngActual_ ? eiTerminacionCampana_(campanaIdEngActual_).propios : [];
+  // Cotización DEL DÍA DE CADA Saldo inicial propio; lo heredado ya viene
+  // valorizado a la fecha de cierre de la campaña anterior (fija).
+  const totalSaldoIni = convertirAMoneda_(eiHeredadoARSTerm_, campAnteriorTerm_ ? campAnteriorTerm_.fecha_fin : corteEng, moneda)
+    + propiosEITerm_.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
+  const totalSaldoIniARS = eiHeredadoARSTerm_ + propiosEITerm_.reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
   // Traslados INTERNOS entre corrales de la MISMA Terminación (los que arriba
   // se excluyen de "cesionesRecTrasla" porque se cancelan solos en el agregado).
   // Antes esto quedaba totalmente invisible en el Dashboard — no aparecía como
@@ -10895,7 +10941,6 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // campaña" contra "todo el stock actual, incluida la campaña siguiente".
   // Si no se puede resolver la campaña contra el catálogo real, se cae al
   // cálculo viejo (mejor eso que romper la pantalla).
-  const campanaIdEngActual_ = campanaCatalogEng_ ? campanaCatalogEng_.campana_id : null;
   const eiCabEng = campanaIdEngActual_
     ? Array.from(rodeosEngIds).reduce((s,rid) => s + (eiTerminacionCampana_(campanaIdEngActual_).stockPorRodeo[rid]||0), 0)
     : saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
@@ -10934,7 +10979,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
           <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(totalVentas,moneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
-          <div><div style="font-weight:600">📦 Stock valorizado actual</div><div style="font-size:11px;color:var(--text3)">${stockDetalleRows.length} corrales</div></div>
+          <div><div style="font-weight:600">📦 Existencia Final (EF)</div><div style="font-size:11px;color:var(--text3)">${stockDetalleRows.length} corrales</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--green)">${fnMoneda_(stockValEng, moneda)}</div>
         </div>
         ${totalCesionInterna>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
@@ -10952,7 +10997,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       <div class="panel-title" style="color:var(--clay-text)">📉 Egresos — ${campSelec}${campoLabel}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-          <div><div style="font-weight:600">🐄 Stock inicial</div><div style="font-size:11px;color:var(--text3)">${saldosIni.length} rodeos × precio/cab</div></div>
+          <div><div style="font-weight:600">🐄 Existencia Inicial (EI)</div><div style="font-size:11px;color:var(--text3)">${eiHeredadoDetalleTerm_.length} heredados + ${propiosEITerm_.length} propios de esta campaña</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSaldoIni,moneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -11022,62 +11067,85 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   }
 
   // ── EXISTENCIA INICIAL ─────────────────────────────────────────────
-  // Reusa "movs" (ya filtrado por campaña más arriba) — antes esta tabla
-  // usaba "movs2", una variable propia sin ningún filtro de campaña ni de
-  // fecha, por eso no coincidía con "Stock inicial" del resumen de arriba.
-  const saldosEngIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
-  if (saldosEngIni.length) {
+  // Heredada del cierre de la campaña anterior + Saldos Iniciales propios de
+  // esta campaña — mismo desglose de dos tablas que ya usan Cría y Recría.
+  if (eiHeredadoDetalleTerm_.length || propiosEITerm_.length) {
     h += `<div class="panel">
-      <div class="panel-title">📥 Existencia Inicial</div>
-      <div class="tw"><table class="dt"><thead><tr>
-        <th>Rodeo</th><th>Campo</th><th>Categoría</th>
-        <th class="tc">Cabezas</th><th class="tr">Precio</th><th class="tr">Valor</th>
-      </tr></thead><tbody>`;
-    let totCabIni=0, totValIni=0;
-    saldosEngIni.forEach(m => {
-      const rod = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
-      const cant = Number(m.cantidad)||0;
-      const { total, precioLabel } = valorMovimientoEntrada_(m);
-      // OJO: "total" ya viene en ARS crudo (valorMovimientoEntrada_ no convierte
-      // moneda). NO usar convertirAMoneda_ acá — fm() más abajo YA hace la
-      // conversión ARS→USD al mostrarlo. Antes esto convertía DOS VECES (acá y
-      // en fm()), dividiendo por la cotización al cuadrado y mostrando valores
-      // ~1300 veces más chicos de lo real (ej: "U$S 1" en vez de "U$S 1.077").
-      totCabIni += cant; totValIni += total;
-      h += `<tr>
-        <td>${rod?.nombre||'—'}</td>
-        <td>${campoNombre(rod?.campo_id)}</td>
-        <td>${rod?.categoria||'—'}</td>
-        <td class="tc">${fn(cant)}</td>
-        <td class="tr">${precioLabel || '—'}</td>
-        <td class="tr"><strong>${fm(total)}</strong></td>
-      </tr>`;
-    });
-    h += `<tr class="total-row"><td colspan="3"><strong>Total</strong></td>
-      <td class="tc"><strong>${fn(totCabIni)}</strong></td><td></td>
-      <td class="tr"><strong>${fm(totValIni)}</strong></td></tr>`;
-    h += '</tbody></table></div></div>';
+      <div class="panel-title">📥 Existencia Inicial — ${campanaCatalogEng_?campanaCatalogEng_.nombre:campSelec}</div>`;
+    if (eiHeredadoDetalleTerm_.length) {
+      h += `<p class="helper-text">Heredada del cierre de la campaña anterior (calculada, no es un Movimiento cargado) — valorizada al precio vigente al ${fd(campAnteriorTerm_.fecha_fin)}:</p>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Rodeo</th><th>Campo</th><th>Categoría</th>
+          <th class="tc">Cabezas</th><th class="tr">Peso prom.</th><th class="tr">Método</th><th class="tr">Valor</th>
+        </tr></thead><tbody>`;
+      let totCabHer=0, totValHer=0;
+      eiHeredadoDetalleTerm_.forEach(row => {
+        totCabHer += row.cant; totValHer += row.valConv;
+        h += `<tr>
+          <td><strong>${row.rodeo.nombre}</strong></td>
+          <td>${campoNombre(row.rodeo.campo_id)}</td>
+          <td>${row.rodeo.categoria||'—'}</td>
+          <td class="tc">${fn(row.cant)}</td>
+          <td class="tr">${row.pesoP?fn(row.pesoP)+' kg':'—'}</td>
+          <td class="tr" style="font-size:11px;color:${row.metodo.startsWith('⚠')?'var(--gold-text,#a67c00)':'var(--text3)'}">${row.metodo}</td>
+          <td class="tr"><strong>${fnMoneda_(row.valConv,moneda)}</strong></td>
+        </tr>`;
+      });
+      h += `<tr class="total-row"><td colspan="3"><strong>Total heredado</strong></td>
+        <td class="tc"><strong>${fn(totCabHer)}</strong></td><td></td><td></td>
+        <td class="tr"><strong>${fnMoneda_(totValHer,moneda)}</strong></td></tr>`;
+      h += `</tbody></table></div>`;
+    }
+    if (propiosEITerm_.length) {
+      h += `<p class="helper-text" style="margin-top:${eiHeredadoDetalleTerm_.length?'14px':'0'}">Saldos Iniciales cargados directamente en esta campaña:</p>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Rodeo</th><th>Campo</th><th>Categoría</th>
+          <th class="tc">Cabezas</th><th class="tr">Precio</th><th class="tr">Valor</th>
+        </tr></thead><tbody>`;
+      let totCabIni=0, totValIni=0;
+      propiosEITerm_.forEach(m => {
+        const rod = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
+        const cant = Number(m.cantidad)||0;
+        const { total, precioLabel } = valorMovimientoEntrada_(m);
+        const totalConv = convertirAMoneda_(total, m.fecha, moneda);
+        totCabIni += cant; totValIni += totalConv;
+        h += `<tr>
+          <td>${rod?.nombre||'—'}</td>
+          <td>${campoNombre(rod?.campo_id)}</td>
+          <td>${rod?.categoria||'—'}</td>
+          <td class="tc">${fn(cant)}</td>
+          <td class="tr">${precioLabel || '<span style="color:var(--gold-text);font-size:11px">⚠ sin precio</span>'}</td>
+          <td class="tr"><strong>${total?fnMoneda_(totalConv,moneda):'—'}</strong></td>
+        </tr>`;
+      });
+      h += `<tr class="total-row"><td colspan="3"><strong>Total propio</strong></td>
+        <td class="tc"><strong>${fn(totCabIni)}</strong></td><td></td>
+        <td class="tr"><strong>${fnMoneda_(totValIni,moneda)}</strong></td></tr>`;
+      h += `</tbody></table></div>`;
+    }
+    h += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-weight:800">
+      <span>TOTAL EI</span><span>${fnMoneda_(totalSaldoIni,moneda)}</span>
+    </div></div>`;
   }
 
   // ── EXISTENCIA FINAL ───────────────────────────────────────────────
   if (stockDetalleRows.length) {
     h += `<div class="panel">
-      <div class="panel-title">📦 Existencia Final — Stock valorizado actual</div>
+      <div class="panel-title">📦 Existencia Final (EF) — ${campanaCatalogEng_?campanaCatalogEng_.nombre:campSelec}</div>
+      <p class="helper-text">Valorizada al ${esCampanaActivaEng_?'precio vigente a la fecha de corte ('+fd(fechaValorEFTerm_)+')':'precio vigente al cierre de la campaña ('+fd(fechaValorEFTerm_)+')'}.</p>
       <div class="tw"><table class="dt"><thead><tr>
         <th>Rodeo</th><th>Campo</th><th>Categoría</th>
         <th class="tc">Stock</th><th class="tr">Peso prom.</th>
         <th class="tr">Método</th><th class="tr">Valor</th>
       </tr></thead><tbody>`;
     stockDetalleRows.forEach(row => {
-      const cat = (row.rodeo.categoria||'').toLowerCase().trim();
-      const metodo = esPorCabezaSegunActividad_(cat, row.rodeo) ? 'por cabeza' : (row.pesoP ? 'por kg' : (cat === 'vaquillona' ? 'por cabeza (sin pesada)' : '⚠ SIN PRECIO (sin pesada)'));
       h += `<tr>
         <td><strong>${row.rodeo.nombre}</strong></td>
         <td>${campoNombre(row.rodeo.campo_id)}</td>
         <td>${row.rodeo.categoria||'—'}</td>
         <td class="tc">${fn(row.stock)}</td>
         <td class="tr">${row.pesoP ? fn(row.pesoP)+' kg' : '—'}</td>
-        <td class="tr" style="font-size:11px;color:var(--text3)">${metodo}</td>
+        <td class="tr" style="font-size:11px;color:${row.metodo.startsWith('⚠')?'var(--gold-text,#a67c00)':'var(--text3)'}">${row.metodo}</td>
         <td class="tr"><strong>${fm(row.val)}</strong></td>
       </tr>`;
     });
