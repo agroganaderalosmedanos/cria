@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_194';
+const APP_VERSION = 'index_consolidado_4_6_155_195';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10526,7 +10526,25 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   let totalIngresosARS = totalVentasARS + stockValEngARS;
 
   // Stock inicial / Cesiones recibidas de Recría
-  const movs = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corteEng);
+  // Puente entre el selector de campaña de Terminación (texto suelto "campana",
+  // el mismo sistema viejo que usan Compras Hacienda/Ventas) y el catálogo real
+  // de Campañas que usan los Movimientos (campana_id + fechas de inicio/fin).
+  // Movimientos NUNCA tuvo el campo de texto "campana", así que este filtro
+  // antes ignoraba por completo la campaña elegida y solo miraba la fecha de
+  // corte — contaminando tanto "Cesiones de Recría" como "Stock inicial" (las
+  // dos salen de esta misma variable) con el histórico completo, sin importar
+  // qué campaña estuviera seleccionada arriba.
+  const campanaCatalogEng_ = (S.cache.campanas||[]).find(c => c.nombre === campSelec);
+  const esCampanaActivaEng_ = !!(campanaCatalogEng_ && (campanaCatalogEng_.activa===true || String(campanaCatalogEng_.activa).toUpperCase()==='TRUE'));
+  const movs = (S.cache.movimientos || []).filter(m => {
+    // Si no se puede resolver la campaña elegida contra el catálogo real (caso
+    // borde: nombres que no coinciden entre los dos sistemas), se cae al
+    // comportamiento viejo — sin filtrar por campaña — en vez de mostrar todo
+    // vacío por un simple desajuste de texto.
+    if (!campanaCatalogEng_) return (m.fecha||'') <= corteEng;
+    if (esCampanaActivaEng_ && (m.fecha||'') > corteEng) return false;
+    return campanaEfectiva_(m.fecha, m.campana_id) === String(campanaCatalogEng_.campana_id);
+  });
   const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
   // Traslados reales a corrales de engorde — esta es ahora la ÚNICA fuente de verdad
   // para el costo de cesiones recibidas (antes del fix, "Cesiones Recría→Terminación"
