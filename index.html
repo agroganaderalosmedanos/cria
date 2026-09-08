@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_198';
+const APP_VERSION = 'index_consolidado_4_6_155_199';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10644,7 +10644,13 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // (cesiones cargadas ANTES de este fix, cuando el módulo no generaba el movimiento real).
   // Se identifican por no tener match de fecha+cantidad+rodeo en ningún Traslado — evita
   // sumar dos veces las cesiones nuevas, que sí están en ambos lados.
-  const egresosRecRaw = (S.cache.egresos_recria || []).filter(e => (e.fecha||'') <= corteEng);
+  // OJO — bug encontrado: antes egresosRecRaw solo filtraba por fecha de corte,
+  // sin campaña. Como cesionesRecTrasla (de arriba) SÍ quedó bien acotado a la
+  // campaña elegida, cualquier cesión de OTRA campaña dejaba de encontrar su
+  // Traslado real acá (porque ese Traslado ya no estaba en el set filtrado) y
+  // se colaba como si fuera "legacy sin traslado" — sumándose igual, sin
+  // importar la campaña. Ahora se filtra con el mismo criterio.
+  const egresosRecRaw = (S.cache.egresos_recria || []).filter(e => filtroCampanaEng_(e.fecha, e.campana_id));
   const cesionesRec = egresosRecRaw.filter(e => {
     if (e.destino !== 'Engorde' || !rodeosEngIds.has(String(e.rodeo_destino_id||''))) return false;
     const tieneTrasladoReal = cesionesRecTrasla.some(m =>
@@ -10761,8 +10767,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   });
   // Consumos — cotización DEL DÍA DE CADA CONSUMO. Cada renglón de detalle
   // también queda pre-convertido (mismo criterio que Cría/Recría, para que la
-  // tabla de detalle línea por línea coincida con el total de arriba).
-  const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)) && (c.fecha||'')<=corteEng);
+  // tabla de detalle línea por línea coincida con el total de arriba). Antes
+  // solo filtraba por fecha de corte, sin campaña — mismo agujero que ya
+  // encontramos en Cesiones/Ventas/Stock inicial.
+  const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)) && filtroCampanaEng_(c.fecha, c.campana_id));
   let totalAlim=0, totalVeter=0, totalOtros=0;
   let totalAlimARS=0, totalVeterARS=0, totalOtrosARS=0;
   const detalleAlimEng=[], detalleVetEng=[], detalleOtrosEng=[];
@@ -10784,16 +10792,22 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     else                                                { totalOtros+=importe; totalOtrosARS+=importeARS; detalleOtrosEng.push(row); }
   });
 
-  // Sueldos (filtrado por campo si corresponde, y por fecha de corte — ver nota
-  // en Cría sobre el mismo bug: antes sumaba todos los sueldos de cualquier mes/año)
-  // — ahora convertido a la cotización DEL PERÍODO de cada sueldo, no la del corte.
+  // Sueldos (filtrado por campo si corresponde, y por el RANGO real de la
+  // campaña — piso y techo, mismo bug ya corregido en Cría/Recría: antes solo
+  // tenía techo, sin piso, así que sumaba TODOS los sueldos desde el
+  // principio de los tiempos hasta el corte, sin importar la campaña elegida)
+  // — convertido a la cotización DEL PERÍODO de cada sueldo, no la del corte.
+  const fechaDesdeSueldosEng_ = campanaCatalogEng_ && campanaCatalogEng_.fecha_inicio ? campanaCatalogEng_.fecha_inicio : '0000-01-01';
+  const fechaHastaSueldosEng_ = (esCampanaActivaEng_ || !campanaCatalogEng_) ? corteEng : (campanaCatalogEng_.fecha_fin || corteEng);
   const totalSueldosEng = sueldoTotalActividad_('engorde', s =>
     (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
-    String(s.periodo).slice(0,7) <= corteEng.slice(0,7)
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
   , moneda);
   const totalSueldosEngARS = sueldoTotalActividad_('engorde', s =>
     (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
-    String(s.periodo).slice(0,7) <= corteEng.slice(0,7)
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
   );
 
   const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
@@ -10865,7 +10879,8 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   });
   const totalSueldosEngUSD = sueldoTotalActividad_('engorde', s =>
     (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
-    String(s.periodo).slice(0,7) <= corteEng.slice(0,7)
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
   , 'USD');
   const totalEgresosUSD = totalSaldoIniUSD + totalCesionesUSD + totalCesionInternaUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalOtrosUSD + totalSueldosEngUSD;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
@@ -11007,8 +11022,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   }
 
   // ── EXISTENCIA INICIAL ─────────────────────────────────────────────
-  const movs2 = S.cache.movimientos || [];
-  const saldosEngIni = movs2.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  // Reusa "movs" (ya filtrado por campaña más arriba) — antes esta tabla
+  // usaba "movs2", una variable propia sin ningún filtro de campaña ni de
+  // fecha, por eso no coincidía con "Stock inicial" del resumen de arriba.
+  const saldosEngIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
   if (saldosEngIni.length) {
     h += `<div class="panel">
       <div class="panel-title">📥 Existencia Inicial</div>
