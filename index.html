@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_192';
+const APP_VERSION = 'index_consolidado_4_6_155_193';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2362,11 +2362,13 @@ function valorizarRodeoAFecha_(rodeo, stock, fecha) {
     : cat === 'novillito' ? (p.novillito||0) : cat === 'novillo' ? (p.novillo||0)
     : cat === 'vaca venta' ? (p.vaca_venta||0) : 0;
   if (pesoP && precioPorKg) return cant * pesoP * precioPorKg;
-  const precioCab = cat === 'ternero' ? (p.ternero_cab||0) : cat === 'ternera' ? (p.ternera_cab||0)
-    : cat === 'vaquillona' ? (p.vaquillona_cab||0) : cat === 'vaquillona venta' ? (p.vaquillona_venta_cab||0)
-    : cat === 'novillito' ? (p.novillito_cab||0) : cat === 'novillo' ? (p.novillo_cab||0)
-    : cat === 'vaca venta' ? (p.vaca_venta_cab||0) : 0;
-  return cant * precioCab;
+  // Sin pesada propia NI peso de ingreso: preferible mostrar $0 (salta a la
+  // vista que falta un dato) antes que un precio "por cabeza" escondido, sin
+  // campo visible en la pantalla de Precios, que podría quedar viejo sin que
+  // nadie lo note. Única excepción: "vaquillona" cae al precio de plantel de
+  // Cría (vaquillona_cab) — ese SÍ es un campo visible arriba, no está oculto.
+  if (cat === 'vaquillona') return cant * (p.vaquillona_cab||0);
+  return 0;
 }
 // EI heredada: se valoriza al precio VIGENTE AL CIERRE de la campaña
 // anterior (fecha fija), no al de hoy — mismo espíritu que un Saldo Inicial
@@ -2402,11 +2404,15 @@ function metodoValorizacionAFecha_(rodeo, fecha) {
     : cat === 'vaquillona' ? p.vaquillona : cat === 'vaquillona venta' ? p.vaquillona_venta
     : cat === 'novillito' ? p.novillito : cat === 'novillo' ? p.novillo
     : cat === 'vaca venta' ? p.vaca_venta : 0;
-  if (!precioPorKg) return 'por cabeza (sin pesada)';
+  // "vaquillona" es la única categoría de este grupo con un respaldo visible
+  // (vaquillona_cab, campo de Cría) — el resto ya no tiene ningún respaldo
+  // oculto: si falta el dato, se prefiere mostrar $0 antes que un número que
+  // no se puede auditar desde la pantalla de Precios.
+  if (!precioPorKg) return cat === 'vaquillona' ? 'por cabeza (falta $/kg de Recría)' : '⚠ SIN PRECIO ($/kg no cargado)';
   if (kgPropio) return 'por kg (pesada propia)';
   const ingreso = pesoIngresoRodeoAFecha_(rodeo.rodeo_id, fecha);
   if (ingreso.peso) return '⚠ por kg (peso de ingreso ' + fd(ingreso.fecha) + ' — sin pesada propia, no refleja engorde)';
-  return 'por cabeza (sin pesada ni peso de ingreso)';
+  return cat === 'vaquillona' ? 'por cabeza (sin pesada ni peso de ingreso)' : '⚠ SIN PRECIO (sin pesada ni peso de ingreso)';
 }
 
 // ── EXISTENCIA INICIAL RECURSIVA (Recría) ────────────────────────────────
@@ -10921,7 +10927,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
       </tr></thead><tbody>`;
     stockDetalleRows.forEach(row => {
       const cat = (row.rodeo.categoria||'').toLowerCase().trim();
-      const metodo = esPorCabezaSegunActividad_(cat, row.rodeo) ? 'por cabeza' : (row.pesoP ? 'por kg' : 'por cab. (sin pesada)');
+      const metodo = esPorCabezaSegunActividad_(cat, row.rodeo) ? 'por cabeza' : (row.pesoP ? 'por kg' : (cat === 'vaquillona' ? 'por cabeza (sin pesada)' : '⚠ SIN PRECIO (sin pesada)'));
       h += `<tr>
         <td><strong>${row.rodeo.nombre}</strong></td>
         <td>${campoNombre(row.rodeo.campo_id)}</td>
@@ -18926,16 +18932,12 @@ function valorizarRodeo_(rodeo, stock, pesadaProm) {
                     : 0;
   if (kg && precioPorKg) return cant * kg * precioPorKg;
 
-  // Fallback: precio por cabeza si no hay pesada
-  const precioCab = cat === 'ternero'          ? (p.ternero_cab          || 0)
-                  : cat === 'ternera'          ? (p.ternera_cab          || 0)
-                  : cat === 'vaquillona'       ? (p.vaquillona_cab       || 0)
-                  : cat === 'vaquillona venta' ? (p.vaquillona_venta_cab || 0)
-                  : cat === 'novillito'        ? (p.novillito_cab        || 0)
-                  : cat === 'novillo'          ? (p.novillo_cab          || 0)
-                  : cat === 'vaca venta'       ? (p.vaca_venta_cab       || 0)
-                  : 0;
-  return cant * precioCab;
+  // Sin pesada y sin peso de ingreso: $0 visible en vez de un precio "por
+  // cabeza" oculto (sin campo en pantalla) que podría quedar viejo sin que
+  // nadie lo note. Única excepción: "vaquillona" cae al precio de plantel de
+  // Cría (vaquillona_cab), que sí es un campo visible.
+  if (cat === 'vaquillona') return cant * (p.vaquillona_cab || 0);
+  return 0;
 }
 
 // Retorna el método de valorización usado para mostrar en tabla
@@ -18949,7 +18951,7 @@ function metodoValorizacion_(rodeo, pesadaProm) {
     : cat === 'novillito' ? p.novillito : cat === 'novillo' ? p.novillo
     : cat === 'vaca venta' ? p.vaca_venta : 0;
   if (kg && precioPorKg) return 'por kg';
-  return 'por cabeza (sin pesada)';
+  return cat === 'vaquillona' ? 'por cabeza (sin pesada)' : '⚠ SIN PRECIO (sin pesada)';
 }
 
 function buildPreciosValPage() {
