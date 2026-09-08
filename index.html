@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_202';
+const APP_VERSION = 'index_consolidado_4_6_155_203';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -9873,8 +9873,14 @@ function egKgIngresados_(rodeoId) {
   const cfg = egConfig_(rodeoId);
   return (Number(cfg.stockInicial)||0) * (Number(cfg.kgIngreso)||0);
 }
-function egCostoCompra_(rodeoId, ignorarOverride, monedaOverride) {
-  const movs = S.cache.movimientos || [];
+function egCostoCompra_(rodeoId, ignorarOverride, monedaOverride, hastaFecha) {
+  // hastaFecha es OPCIONAL — si no se pasa, se comporta exactamente igual que
+  // antes (todo el historial, sin filtrar). Se agrega para poder acotarla al
+  // mismo corte que ya usa egIngresoCesionEnviada_() — antes, "Cesión interna
+  // recibida" (acá) y "Cesión enviada" (la contracara, en el otro corral) no
+  // tenían el mismo tope de fecha, así que un traslado posterior al corte
+  // podía sumar de un lado y no del otro para el MISMO movimiento.
+  const movs = (S.cache.movimientos || []).filter(m => !hastaFecha || (m.fecha||'') <= hastaFecha);
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
   const moneda = monedaOverride || S.engordeMoneda || 'ARS';
   // OJO — cotización DEL DÍA DE CADA MOVIMIENTO, no la de hoy: un Saldo inicial
@@ -9947,8 +9953,8 @@ function egCostoCompra_(rodeoId, ignorarOverride, monedaOverride) {
 // esto solo lo separa para que Comparación/Excel puedan reconciliar directo
 // contra el Dashboard sin tener que restar "Cesión enviada" a mano — antes,
 // "Costo de compra" mezclaba las dos cosas en una sola columna sin avisar.
-function egCostoCompraDesglose_(rodeoId, ignorarOverride, monedaOverride) {
-  const total = egCostoCompra_(rodeoId, ignorarOverride, monedaOverride);
+function egCostoCompraDesglose_(rodeoId, ignorarOverride, monedaOverride, hastaFecha) {
+  const total = egCostoCompra_(rodeoId, ignorarOverride, monedaOverride, hastaFecha);
   const cfg = egConfig_(rodeoId);
   if (!ignorarOverride && Number(cfg.precioCompra) > 0) {
     // Con excepción manual activa no hay forma de saber qué parte del total
@@ -9956,7 +9962,7 @@ function egCostoCompraDesglose_(rodeoId, ignorarOverride, monedaOverride) {
     // ya que la excepción reemplaza al detalle real de todos modos.
     return { externo: total, interno: 0 };
   }
-  const movs = S.cache.movimientos || [];
+  const movs = (S.cache.movimientos || []).filter(m => !hastaFecha || (m.fecha||'') <= hastaFecha);
   const rodeosTodosMap = Object.fromEntries(rodeosTodos().map(r=>[String(r.rodeo_id),r]));
   const rodeosEngIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
   const moneda = monedaOverride || S.engordeMoneda || 'ARS';
@@ -12115,8 +12121,8 @@ function calcDetalleCorralEng_(r, corteComp, rodeosEngTodos) {
   // del corte) para mostrar estos valores — todavía no está migrada a
   // conversión por transacción como Dashboard/Costos.
   const ca = egCostoAlim_(rid, corteComp, null, 'ARS');
-  const cc = egCostoCompra_(rid, false, 'ARS');
-  const ccDesg = egCostoCompraDesglose_(rid, false, 'ARS');
+  const cc = egCostoCompra_(rid, false, 'ARS', corteComp);
+  const ccDesg = egCostoCompraDesglose_(rid, false, 'ARS', corteComp);
   const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
     .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
   const fi = egFechaIngreso_(rid);
