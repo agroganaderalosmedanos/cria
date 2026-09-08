@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_201';
+const APP_VERSION = 'index_consolidado_4_6_155_202';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -12092,6 +12092,58 @@ async function exportarComparacionEngordeExcel_() {
   }
 }
 
+// Calcula el detalle económico/productivo completo de UN corral, a una fecha
+// de corte dada. Extraído de buildEngordeComparacion_ para poder reusarlo
+// también en el detalle expandible de Historial (ver buildEngordeHistorial_)
+// sin duplicar la lógica — así los dos lugares quedan siempre sincronizados:
+// si se corrige un dato viejo (precio, pesada, etc.), el detalle de un lote
+// ya archivado se recalcula solo la próxima vez que se despliega, en vez de
+// quedar congelado con el valor del día que se guardó.
+function calcDetalleCorralEng_(r, corteComp, rodeosEngTodos) {
+  const rid = r.rodeo_id;
+  const stockACorteComp = stockPorRodeoACorte_(corteComp);
+  const stk = Math.max(0, stockACorteComp[String(rid)]||0);
+  const cantIng = egCantIngresada_(rid);
+  const kgI = egKgIngresados_(rid);
+  const kgV = egKgVend_(rid);
+  // Kg cedidos a otro corral (traslado interno) — se separan de "Kg vendidos"
+  // porque no es lo mismo, aunque ambos sean kilos que dejaron este corral.
+  const kgCedido = egIngresoCesionEnviada_(rid, corteComp).kg;
+  const kgG = egKgGanadosHastaPesada_(rid, corteComp, stk);
+  const kgStk = egKgStockEstimado_(rid, corteComp, stk);
+  // OJO — se fuerza 'ARS' acá: se usa fm() (conversión única a la cotización
+  // del corte) para mostrar estos valores — todavía no está migrada a
+  // conversión por transacción como Dashboard/Costos.
+  const ca = egCostoAlim_(rid, corteComp, null, 'ARS');
+  const cc = egCostoCompra_(rid, false, 'ARS');
+  const ccDesg = egCostoCompraDesglose_(rid, false, 'ARS');
+  const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
+    .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
+  const fi = egFechaIngreso_(rid);
+  const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp);
+  const ultima = pes.length ? pes[pes.length-1] : null;
+  const gd = egGanDiaria_(rid);
+  const kgIng = egKgIngreso_(rid);
+  const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha, null, 'ARS') - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria', 'ARS')) / kgG : null;
+  const ccXkg = kgG > 0 ? cc / kgG : null;
+  const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
+  const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
+  // Cesión enviada a otro corral (ej: se cerró consolidando en otro) — sin
+  // esto, un corral cerrado por traslado interno mostraba pérdida falsa.
+  const cesEnv = egIngresoCesionEnviada_(rid, corteComp, 'ARS').total;
+  const sueldoEngCampo = sueldoTotalActividad_('engorde', s =>
+    String(s.campo_id) === String(r.campo_id) &&
+    String(s.periodo).slice(0,7) <= String(corteComp).slice(0,7)
+  );
+  const corralesMismoCampo = rodeosEngTodos.filter(rr => String(rr.campo_id) === String(r.campo_id));
+  const totalAnimCampo = corralesMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
+  const sueldoProrr = totalAnimCampo > 0 ? sueldoEngCampo * (cantIng / totalAnimCampo) : 0;
+  const util = iv + ivStock + cesEnv - ca - cc - sueldoProrr;
+  const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
+  const cerrado = stk === 0;
+  return { r, rid, stk, cantIng, kgI, kgV, kgCedido, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, fi, kgIng, ultima, cerrado };
+}
+
 function buildEngordeComparacion_(rodeosEngTodos, fm) {
   if (!rodeosEngTodos.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde.</div></div>';
   const moneda = S.engordeMoneda || 'ARS';
@@ -12106,73 +12158,16 @@ function buildEngordeComparacion_(rodeosEngTodos, fm) {
   // en 6 pantallas distintas, así que preferí no apurarlo sin revisarlas todas.
   const corteComp = S._corteEng || today();
   const stockACorteComp = stockPorRodeoACorte_(corteComp);
-  // ANTES: se excluían acá los corrales en stock 0 ("no aportan nada a esta
-  // comparación, van al Historial"). Pero un corral cerrado es justo el caso
-  // más útil para comparar — "¿cuál corral rindió mejor, el que ya cerré o
-  // el que sigue activo?" — y todas las funciones de cálculo (costo, alim.,
-  // GDP, ventas) son lecturas históricas que funcionan igual con stock 0. Se
-  // cambia el filtro a "tuvo animales alguna vez" en vez de "tiene ahora".
-  const rodeosEng = rodeosEngTodos.filter(r => egCantIngresada_(r.rodeo_id) > 0);
+  // Se excluyen los corrales que YA tienen su lote guardado en Historial
+  // (egLotes_) — ese es justamente el archivo permanente para lo cerrado;
+  // sin esto, Comparación se iba a ir llenando de columnas para siempre a
+  // medida que se acumulan corrales cerrados a lo largo de los meses. Un
+  // corral en stock 0 que TODAVÍA no se guardó en Historial sigue apareciendo
+  // acá (para no perderlo de vista antes de archivarlo).
+  const rodeoIdsEnHistorial_ = new Set(egLotes_().map(l => l.rodeoId));
+  const rodeosEng = rodeosEngTodos.filter(r => egCantIngresada_(r.rodeo_id) > 0 && !rodeoIdsEnHistorial_.has(String(r.rodeo_id)));
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Todavía no hay corrales con movimiento para comparar.</div></div>';
-  // BUG CORREGIDO DE RAÍZ (en egCostoCompra_ misma, ver su comentario): antes
-  // devolvía el costo ya convertido a `moneda`, y acá abajo se mostraba con
-  // fm(), que vuelve a convertir — doble conversión en modo U$S. Ahora
-  // egCostoCompra_() siempre devuelve pesos ARS crudos, así que ya no hace
-  // falta ningún parche acá: fm() hace la única conversión al mostrar, igual
-  // que Ingreso ventas y Costo alimentación, que nunca tuvieron este problema.
-  const rows = rodeosEng.map(r => {
-    const rid = r.rodeo_id;
-    const stk = Math.max(0, stockACorteComp[String(rid)]||0);
-    const cantIng = egCantIngresada_(rid);
-    const kgI = egKgIngresados_(rid);
-    const kgV = egKgVend_(rid);
-    // Kg cedidos a otro corral (traslado interno) — se separan de "Kg vendidos"
-    // porque no es lo mismo, aunque ambos sean kilos que dejaron este corral.
-    const kgCedido = egIngresoCesionEnviada_(rid, corteComp).kg;
-    const kgG = egKgGanadosHastaPesada_(rid, corteComp, stk);
-    // Antes esto se calculaba acá mismo con la lógica vieja (stock × un solo
-    // peso) en vez de reusar egKgStockEstimado_ ya corregida.
-    const kgStk = egKgStockEstimado_(rid, corteComp, stk);
-    // OJO — se fuerza 'ARS' acá: esta pantalla usa fm() (conversión única a la
-    // cotización del corte) para mostrar estos valores — todavía no está
-    // migrada a conversión por transacción como Dashboard/Costos. Queda
-    // pendiente migrarla en la próxima pasada.
-    const ca = egCostoAlim_(rid, corteComp, null, 'ARS');
-    const cc = egCostoCompra_(rid, false, 'ARS');
-    const ccDesg = egCostoCompraDesglose_(rid, false, 'ARS');
-    const iv = (S.cache.ventas||[]).filter(v=>String(v.rodeo_id)===String(rid)&&(v.fecha_salida||'')<=corteComp)
-      .reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||0))||0),0);
-    const fi = egFechaIngreso_(rid);
-    const pes = egPesadas_(rid).filter(p=>(p.fecha||'')<=corteComp);
-    const ultima = pes.length ? pes[pes.length-1] : null;
-    const gd = egGanDiaria_(rid);
-    const kgIng = egKgIngreso_(rid);
-    const caXkg = kgG > 0 ? (egCostoAlim_(rid, ultima?.fecha, null, 'ARS') - egCostoAlim_(rid, ultima?.fecha, 'Veterinaria', 'ARS')) / kgG : null;
-    const ccXkg = kgG > 0 ? cc / kgG : null;
-    const pesoUltimaC = ultima ? Number(ultima.peso_prom_kg)||0 : 0;
-    const ivStock = valorizarRodeo_(r, stk, pesoUltimaC);
-    // Cesión enviada a otro corral (ej: se cerró consolidando en otro) — sin
-    // esto, un corral cerrado por traslado interno mostraba pérdida falsa acá
-    // igual que ya corregimos en Costos y en las tarjetas del Dashboard.
-    const cesEnv = egIngresoCesionEnviada_(rid, corteComp, 'ARS').total;
-    // Antes faltaba acá el sueldo prorrateado (Costos individual sí lo resta) —
-    // por eso la Utilidad total de Comparación quedaba sistemáticamente más alta
-    // que la del Dashboard, justo por el monto de sueldos. Mismo criterio de
-    // prorrateo que usa la ficha individual de cada corral en Costos.
-    const sueldoEngCampo = sueldoTotalActividad_('engorde', s =>
-      String(s.campo_id) === String(r.campo_id) &&
-      String(s.periodo).slice(0,7) <= String(corteComp).slice(0,7)
-    );
-    const corralesMismoCampo = rodeosEngTodos.filter(rr => String(rr.campo_id) === String(r.campo_id));
-    const totalAnimCampo = corralesMismoCampo.reduce((s, rr) => s + egCantIngresada_(rr.rodeo_id), 0);
-    const sueldoProrr = totalAnimCampo > 0 ? sueldoEngCampo * (cantIng / totalAnimCampo) : 0;
-    const util = iv + ivStock + cesEnv - ca - cc - sueldoProrr;
-    // Días: hasta la última pesada (no "hoy") — si todavía no hay pesada, no se puede
-    // saber el crecimiento real, así que no tiene sentido mostrar días transcurridos.
-    const dias = (fi && ultima) ? Math.round((new Date(ultima.fecha)-new Date(fi))/86400000) : null;
-    const cerrado = stk === 0;
-    return { r, rid, stk, cantIng, kgI, kgV, kgCedido, kgG, kgStk, ca, cc, ccExterno: ccDesg.externo, ccInterno: ccDesg.interno, sueldoProrr, iv, ivStock, cesEnv, util, gd, caXkg, ccXkg, dias, fi, kgIng, ultima, cerrado };
-  });
+  const rows = rodeosEng.map(r => calcDetalleCorralEng_(r, corteComp, rodeosEngTodos));
 
   const best = (fn, low=false) => { const vs=rows.map(fn).filter(v=>v!==null&&v>0); if(!vs.length)return null; return low?Math.min(...vs):Math.max(...vs); };
   const tag = (v, b, low=false) => (v!==null&&b!==null&&v===b)?` style="color:var(--green);font-weight:700"`:'' ;
@@ -12678,7 +12673,7 @@ function buildEngordeHistorial_(rodeosEng, fm) {
     h += '<div class="empty-state"><span class="ico">📋</span><div class="msg">No hay lotes cerrados. Cuando un corral llegue a stock 0 podés guardarlo acá.</div></div>';
     return h;
   }
-  h += '<div class="tw"><table class="dt"><thead><tr><th>Corral</th><th class="tc">Apertura</th><th class="tc">Cierre</th><th class="tc">Días</th><th class="tc">Animales</th><th class="tc">Kg ganados</th><th class="tc">GDP</th><th class="tc">Conversión (MS)</th><th class="tc">Costo alim.</th><th class="tc">Ingreso</th><th class="tc">Utilidad</th><th></th></tr></thead><tbody>';
+  h += '<div class="tw"><table class="dt"><thead><tr><th></th><th>Corral</th><th class="tc">Apertura</th><th class="tc">Cierre</th><th class="tc">Días</th><th class="tc">Animales</th><th class="tc">Kg ganados</th><th class="tc">GDP</th><th class="tc">Conversión (MS)</th><th class="tc">Costo alim.</th><th class="tc">Ingreso</th><th class="tc">Utilidad</th><th></th></tr></thead><tbody>';
   lotes.forEach(l => {
     const dias = Math.round((new Date(l.fechaCierre)-new Date(l.fechaApertura))/86400000);
     // Ingreso total del lote = ventas reales + cesión interna enviada a otro corral
@@ -12688,6 +12683,7 @@ function buildEngordeHistorial_(rodeosEng, fm) {
     const ingTotalLote = l.ingVentas + (l.ingCesEnviada||0);
     const util = ingTotalLote - l.costoCompra - l.costoAlim;
     h += `<tr>
+      <td><button class="btn-ghost btn-sm" style="font-size:12px" onclick="const d=document.getElementById('hist-det-${l.id}');d.style.display=d.style.display==='none'?'table-row':'none';this.textContent=d.style.display==='none'?'▶':'▼'">▶</button></td>
       <td><strong>${l.nombre}</strong></td>
       <td class="tc">${fd(l.fechaApertura)}</td>
       <td class="tc">${fd(l.fechaCierre)}</td>
@@ -12701,6 +12697,35 @@ function buildEngordeHistorial_(rodeosEng, fm) {
       <td class="tc" style="font-weight:700;color:${util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(util)}</td>
       <td><button class="btn-del" data-del-lote="${l.id}">🗑</button></td>
     </tr>`;
+    // Detalle expandible — calculado EN VIVO con calcDetalleCorralEng_ (los
+    // mismos datos crudos que usa Comparación), no con las columnas
+    // congeladas de la hoja Engorde Lotes. Así, si más adelante se corrige
+    // algo viejo (un precio, una pesada, un costo mal cargado), el detalle
+    // de un lote ya archivado se actualiza solo al desplegarlo — no queda
+    // pegado al valor del día que se guardó en Historial.
+    const rodeoLote = rodeosTodos().find(r => String(r.rodeo_id) === l.rodeoId);
+    h += `<tr id="hist-det-${l.id}" style="display:none;background:var(--bg2)"><td colspan="13" style="padding:14px 16px">`;
+    if (!rodeoLote) {
+      h += `<div style="font-size:12px;color:var(--text3)">Este rodeo ya no existe en el catálogo de Rodeos — no se puede recalcular el detalle en vivo.</div>`;
+    } else {
+      const d = calcDetalleCorralEng_(rodeoLote, today(), rodeosEng);
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 20px;font-size:12.5px">
+        <div><span style="color:var(--text3)">Animales ingresados</span><br><strong>${fn(d.cantIng,0)} cab.</strong></div>
+        <div><span style="color:var(--text3)">Kg ingresados</span><br><strong>${fn(d.kgI,0)} kg</strong></div>
+        <div><span style="color:var(--text3)">Kg vendidos</span><br><strong>${fn(d.kgV,0)} kg</strong></div>
+        ${d.kgCedido>0?`<div><span style="color:var(--text3)">Kg cedidos (a otro corral)</span><br><strong>${fn(d.kgCedido,0)} kg</strong></div>`:''}
+        <div><span style="color:var(--text3)">Kg ganados</span><br><strong>${fn(d.kgG,0)} kg</strong></div>
+        <div><span style="color:var(--text3)">Cesión/compra externa</span><br><strong>${fm(d.ccExterno)}</strong></div>
+        ${d.ccInterno>0?`<div><span style="color:var(--text3)">Cesión interna recibida</span><br><strong>${fm(d.ccInterno)}</strong></div>`:''}
+        <div><span style="color:var(--text3)">Costo alimentación</span><br><strong>${fm(d.ca)}</strong></div>
+        <div><span style="color:var(--text3)">Sueldos (prorrateado)</span><br><strong>${fm(d.sueldoProrr)}</strong></div>
+        <div><span style="color:var(--text3)">Ingreso ventas</span><br><strong>${fm(d.iv)}</strong></div>
+        ${d.cesEnv>0?`<div><span style="color:var(--text3)">Cesión enviada (a otro corral)</span><br><strong>${fm(d.cesEnv)}</strong></div>`:''}
+        <div><span style="color:var(--text3)">Alim. / kg ganado</span><br><strong>${d.caXkg!==null?fm(d.caXkg):'—'}</strong></div>
+        <div><span style="color:var(--text3)">Utilidad (recalculada hoy)</span><br><strong style="color:${d.util>=0?'var(--green-text)':'var(--clay-text)'}">${fm(d.util)}</strong></div>
+      </div>`;
+    }
+    h += `</td></tr>`;
   });
   h += '</tbody></table></div>';
   if (lotes.length>1) {
