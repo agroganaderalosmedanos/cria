@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_200';
+const APP_VERSION = 'index_consolidado_4_6_155_201';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -14183,16 +14183,553 @@ function buildVerificacionValuacion_(titulo, detalle, fmFn, idPrefix) {
   return h;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CÁLCULO DE MARGEN BRUTO POR CAMPAÑA — versiones "puras" para el consolidado
+// ─────────────────────────────────────────────────────────────────────────
+// Las tres funciones de acá abajo (calcMargenCriaCampana_/calcMargenRecriaCampana_/
+// calcMargenTerminacionCampana_) son una COPIA FIEL de la lógica que ya vive y
+// está probada adentro de buildDashboard() (Cría), buildRecriaDashboard() (bloque
+// "MARGEN BRUTO RECRÍA — POR CAMPAÑA") y buildEngordeDashboard_() (Terminación) —
+// misma fórmula, mismo criterio de valorización, mismos 3 niveles de precio en
+// cesiones, etc. No se tocó ni una línea de esos tres dashboards: se agregaron
+// estas funciones nuevas, separadas, para que el consolidado (buildMargenBruto)
+// pueda pedir el margen de UNA campaña puntual sin depender de qué campaña
+// tenga elegida cada dashboard en su propio selector (S._dashCampana,
+// S.rcDashCampana, S._dashEngCampana) — que es justo lo que hacía que el
+// consolidado no cerrara: cada actividad podía estar mostrando una campaña
+// distinta sin ningún aviso.
+// Reciben SIEMPRE un campana_id real (del catálogo de Campañas) y una fecha de
+// corte — nunca un filtro de Campo (el consolidado siempre suma TODOS los
+// campos de cada actividad). Devuelven el mismo shape de objeto que ya usan
+// S._resultCria/_resultRecria/_resultEng, así el resto de buildMargenBruto
+// (tablas de detalle, Excel, etc.) no necesita ningún cambio.
+
+function calcMargenCriaCampana_(campanaId, corte) {
+  const corteCria = corte || today();
+  const campanasCat = S.cache.campanas || [];
+  const campSelecObj = campanasCat.find(c => String(c.campana_id) === String(campanaId));
+  const esCampanaActivaCria = !!(campSelecObj && (campSelecObj.activa===true || String(campSelecObj.activa).toUpperCase()==='TRUE'));
+  const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+  const productos = S.cache.productos || [];
+  const pesadas = (S.cache.pesadas || []).filter(p => (p.fecha||'') <= corteCria);
+  const rodeosPorId = Object.fromEntries(rodeos.map(r=>[String(r.rodeo_id),r]));
+  const rodeosCria = rodeos.filter(r => normAct_(r.actividad)==='cria');
+  const rodeosCriaIds = new Set(rodeosCria.map(r=>String(r.rodeo_id)));
+  const prodPorId = Object.fromEntries((productos||[]).map(p=>[String(p.producto_id),p]));
+
+  const movs     = (S.cache.movimientos || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campanaId));
+  const ventas   = (S.cache.ventas || []).filter(v => (!esCampanaActivaCria || (v.fecha_salida||'') <= corteCria) && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campanaId));
+  const consumos = (S.cache.consumos_insumos || []).filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campanaId));
+  const comprasH = comprasHacGetAll_().filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campanaId));
+  const mortandadCria = (S.cache.mortandad || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campanaId));
+
+  const ventasCria = ventas.filter(v => rodeosCriaIds.has(String(v.rodeo_id)));
+  const cesiones = movs.filter(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+    const origen  = rodeosPorId[String(m.rodeo_origen_id)];
+    const destino = rodeosPorId[String(m.rodeo_destino_id)];
+    return origen && normAct_(origen.actividad)==='cria' &&
+           destino && (normAct_(destino.actividad)==='recria'||normAct_(destino.actividad)==='engorde'||normAct_(destino.actividad)==='terminacion');
+  });
+  const reposicionVientres = movs.filter(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return false;
+    const origen  = rodeosPorId[String(m.rodeo_origen_id)];
+    const destino = rodeosPorId[String(m.rodeo_destino_id)];
+    return origen && normAct_(origen.actividad)==='recria' &&
+           destino && normAct_(destino.actividad)==='cria' &&
+           rodeosCriaIds.has(String(m.rodeo_destino_id));
+  });
+
+  const stockPorRodeo = Object.assign({}, eiCriaCampana_(campanaId).stockPorRodeo);
+  movs.forEach(m => {
+    const cant = Number(m.cantidad)||0;
+    if (m.tipo==='Saldo inicial') {
+      if (esAltaPorParicion_(m)) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
+      if (m.rodeo_origen_id)  stockPorRodeo[String(m.rodeo_origen_id)]  = (stockPorRodeo[String(m.rodeo_origen_id)] ||0) - cant;
+      if (m.rodeo_destino_id) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    }
+  });
+  ventas.forEach(v => { stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
+  mortandadCria.forEach(m => { stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
+
+  const fechaValoracionCampSelec = !esCampanaActivaCria && campSelecObj && campSelecObj.fecha_fin ? campSelecObj.fecha_fin : corteCria;
+  let stockValCriaARS = 0;
+  const stockDetalleRows = [];
+  rodeosCria.forEach(r => {
+    const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
+    if (!stock) return;
+    const val = valorizarRodeoAFecha_(r, stock, fechaValoracionCampSelec);
+    stockValCriaARS += val;
+    stockDetalleRows.push({ rodeo: r, stock, val });
+  });
+
+  const saldosIniciales = movs.filter(m => m.tipo === 'Saldo inicial' && !esAltaPorParicion_(m) && rodeosCriaIds.has(String(m.rodeo_destino_id)));
+  const campAnteriorObj = campanaAnteriorA_(campanaId);
+  const eiHeredadoStockPorRodeo = campAnteriorObj ? efCriaCampanaStockPorRodeo_(campAnteriorObj.campana_id) : {};
+  const eiHeredadoARS = campAnteriorObj ? valorizarStockPorRodeoAFecha_(eiHeredadoStockPorRodeo, rodeosCria, campAnteriorObj.fecha_fin) : 0;
+
+  const altasParicionCria = movs.filter(m => esAltaPorParicion_(m) && rodeosCriaIds.has(String(m.rodeo_destino_id)));
+  const nacCabCria = altasParicionCria.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+
+  const eiCabCria = rodeosCria.reduce((s,r) => s+(eiHeredadoStockPorRodeo[String(r.rodeo_id)]||0), 0) + saldosIniciales.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const efCabCria = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
+  const clasCria = clasificarTrasladosActividad_(rodeosCriaIds, movs);
+  const ventasCabCria = ventasCria.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
+  const mortCabCria = mortandadCria.filter(m => rodeosCriaIds.has(String(m.rodeo_id))).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+  const fechaDesdeSueldosCria = campSelecObj && campSelecObj.fecha_inicio ? campSelecObj.fecha_inicio : '0000-01-01';
+
+  function calcEnMoneda(moneda) {
+    const totalVentas = ventasCria.reduce((s,v) => s + convertirAMoneda_(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0, v.fecha_salida, moneda), 0);
+    const totalCesiones = cesiones.reduce((s,m) => {
+      const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+      const precioKg = Number(m.precio_kg)||0, precioCabeza = Number(m.precio_cabeza)||0;
+      let importeARS;
+      if (precioCabeza > 0) importeARS = cant * precioCabeza;
+      else if (precioKg && peso) importeARS = cant * peso * precioKg;
+      else if (precioKg && !peso) {
+        const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = cant * (pr[0]?Number(pr[0].peso_prom_kg)||0:0) * precioKg;
+      } else {
+        const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+        const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = valorizarRodeo_(rodeo||{categoria:(rodeo?.categoria||'').toLowerCase()}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+      }
+      return s + convertirAMoneda_(importeARS, m.fecha, moneda);
+    }, 0);
+    const totalReposicionVientres = reposicionVientres.reduce((s,m) => {
+      const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+      const precioKg = Number(m.precio_kg)||0, precioCabeza = Number(m.precio_cabeza)||0;
+      let importeARS;
+      if (precioCabeza > 0) importeARS = cant * precioCabeza;
+      else if (precioKg && peso) importeARS = cant * peso * precioKg;
+      else if (precioKg && !peso) {
+        const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = cant * (pr[0]?Number(pr[0].peso_prom_kg)||0:0) * precioKg;
+      } else {
+        const rodeo = rodeosPorId[String(m.rodeo_origen_id)];
+        const pr = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = valorizarRodeo_(rodeo||{categoria:'vaquillona'}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+      }
+      return s + convertirAMoneda_(importeARS, m.fecha, moneda);
+    }, 0);
+    const stockValCria = convertirAMoneda_(stockValCriaARS, fechaValoracionCampSelec, moneda);
+    const totalIngresos = totalVentas + totalCesiones + stockValCria;
+
+    const totalSaldoInicial = convertirAMoneda_(eiHeredadoARS, campAnteriorObj ? campAnteriorObj.fecha_fin : corteCria, moneda) + saldosIniciales.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
+    const nacImpCria = altasParicionCria.reduce((s,m) => {
+      const rodeoDest = rodeosPorId[String(m.rodeo_destino_id)];
+      if (!rodeoDest) return s;
+      const pd = pesadas.filter(p=>String(p.rodeo_id)===String(rodeoDest.rodeo_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      const importeARS = valorizarRodeo_(rodeoDest, Number(m.cantidad)||0, pd[0]?Number(pd[0].peso_prom_kg)||0:0);
+      return s + convertirAMoneda_(importeARS, m.fecha, moneda);
+    }, 0);
+    const totalCompras = comprasH.reduce((s,c) => s + convertirAMoneda_(Number(c.importe_total)||0, c.fecha, moneda), 0);
+    let totalAlim = 0, totalVeter = 0;
+    const consumosCria = consumos.filter(c => rodeosCriaIds.has(String(c.rodeo_id)));
+    consumosCria.forEach(c => {
+      const prod = prodPorId[String(c.producto_id)];
+      const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const costoARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+      const costo = convertirAMoneda_(costoARS, c.fecha, moneda);
+      if (cat.includes('veterin')||cat.includes('sanid')) totalVeter += costo; else totalAlim += costo;
+    });
+    const totalSueldosCria = sueldoTotalActividad_('cria', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+    , moneda);
+    const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria;
+    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria, ei: totalSaldoInicial, compras: totalCompras, reposicionVientres: totalReposicionVientres, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria, nacImp: nacImpCria };
+  }
+
+  const ars = calcEnMoneda('ARS');
+  const usd = calcEnMoneda('USD');
+
+  return {
+    ing: ars.ing, eg: ars.eg, margen: ars.margen, ingUSD: usd.ing, egUSD: usd.eg, margenUSD: usd.margen,
+    ingVentas: ars.ingVentas, ingCesiones: ars.ingCesiones, ef: ars.ef,
+    ei: ars.ei, compras: ars.compras, reposicionVientres: ars.reposicionVientres, egAlim: ars.egAlim, egVet: ars.egVet, egSueldos: ars.egSueldos,
+    cantVentas: ventasCria.length,
+    eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: ars.nacImp,
+    comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
+    ventasCab: ventasCabCria, mortCab: mortCabCria,
+  };
+}
+
+function calcMargenRecriaCampana_(campanaId, corte) {
+  const corteRecria = corte || today();
+  const campanasCat = S.cache.campanas || [];
+  const campSelecObj = campanasCat.find(c => String(c.campana_id) === String(campanaId));
+  const esCampanaActivaRecria = !!(campSelecObj && (campSelecObj.activa===true || String(campSelecObj.activa).toUpperCase()==='TRUE'));
+  const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
+  const rodeosAllMap = Object.fromEntries(rodeosAll.map(r=>[String(r.rodeo_id),r]));
+  const productos  = (S.catalogs&&S.catalogs.productos)||[];
+  const rodeosRecArr = rodeosAll.filter(r => normAct_(r.actividad)==='recria');
+  const rodeosRecSet = new Set(rodeosRecArr.map(r=>String(r.rodeo_id)));
+
+  const movsCampana = (S.cache.movimientos||[]).filter(m =>
+    (!esCampanaActivaRecria || (m.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId) &&
+    (rodeosRecSet.has(String(m.rodeo_destino_id)) || rodeosRecSet.has(String(m.rodeo_origen_id)))
+  );
+  const ventasCampana = (S.cache.ventas||[]).filter(v =>
+    (!esCampanaActivaRecria || (v.fecha_salida||'') <= corteRecria) &&
+    campanaEfectiva_(v.fecha_salida, v.campana_id) === String(campanaId) &&
+    rodeosRecSet.has(String(v.rodeo_id))
+  );
+  const egresosCampana = (S.cache.egresos_recria||[]).filter(e =>
+    (!esCampanaActivaRecria || (e.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(e.fecha, e.campana_id) === String(campanaId) &&
+    rodeosRecSet.has(String(e.rodeo_id))
+  );
+  const consumosCampana = (S.cache.consumos_insumos||[]).filter(c =>
+    (!esCampanaActivaRecria || (c.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(c.fecha, c.campana_id) === String(campanaId) &&
+    rodeosRecSet.has(String(c.rodeo_id))
+  );
+  const mortandadCampana = (S.cache.mortandad||[]).filter(m =>
+    (!esCampanaActivaRecria || (m.fecha||'') <= corteRecria) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId) &&
+    rodeosRecSet.has(String(m.rodeo_id))
+  );
+
+  const eiStockPorRodeo = eiRecriaCampana_(campanaId).stockPorRodeo;
+  const stockPorRodeo = Object.assign({}, eiStockPorRodeo);
+  movsCampana.forEach(m => {
+    if (m.tipo === 'Saldo inicial') return;
+    const cant = Number(m.cantidad)||0;
+    if (rodeosRecSet.has(String(m.rodeo_destino_id))) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    if (rodeosRecSet.has(String(m.rodeo_origen_id))) stockPorRodeo[String(m.rodeo_origen_id)] = (stockPorRodeo[String(m.rodeo_origen_id)]||0) - cant;
+  });
+  ventasCampana.forEach(v => { stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
+  mortandadCampana.forEach(m => { stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
+
+  const fechaValorEF = !esCampanaActivaRecria && campSelecObj && campSelecObj.fecha_fin ? campSelecObj.fecha_fin : corteRecria;
+  const campAnteriorObj = campanaAnteriorA_(campanaId);
+  const heredadoStockPorRodeo = campAnteriorObj ? efRecriaCampanaStockPorRodeo_(campAnteriorObj.campana_id) : {};
+  const propiosEI = eiRecriaCampana_(campanaId).propios;
+  let eiHeredadoARS = 0;
+  if (campAnteriorObj) {
+    rodeosRecArr.forEach(r => {
+      const cant = heredadoStockPorRodeo[String(r.rodeo_id)]||0;
+      if (!cant) return;
+      eiHeredadoARS += valorizarRodeoAFecha_(r, cant, campAnteriorObj.fecha_fin);
+    });
+  }
+  const fechaDesdeSueldos = campSelecObj && campSelecObj.fecha_inicio ? campSelecObj.fecha_inicio : '0000-01-01';
+  const clasRec = clasificarTrasladosActividad_(rodeosRecSet, movsCampana);
+  const ventasCab = ventasCampana.reduce((s,v)=>s+(Number(v.cant_animales)||0),0);
+  const mortCab = mortandadCampana.reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+  const eiCab = Array.from(rodeosRecSet).reduce((s,rid) => s + (eiStockPorRodeo[rid]||0), 0);
+  const efCab = Array.from(rodeosRecSet).reduce((s,rid) => s + Math.max(0, stockPorRodeo[rid]||0), 0);
+
+  function calcEnMoneda(moneda) {
+    let ingVentas = 0;
+    ventasCampana.forEach(v => {
+      const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
+      ingVentas += convertirAMoneda_(imp, v.fecha_salida, moneda);
+    });
+    let ingCesionEng = 0;
+    egresosCampana.filter(e=>e.destino==='Engorde').forEach(e=>{
+      const cant=Number(e.cant_animales)||0; let peso=Number(e.peso_prom_kg)||0;
+      const precioKg=Number(e.precio_kg_cesion)||0, precioCabeza=Number(e.precio_cabeza_cesion)||0;
+      let imp=0;
+      if (precioCabeza>0) imp = cant*precioCabeza;
+      else if (precioKg&&peso) imp = cant*peso*precioKg;
+      else if (precioKg&&!peso) {
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        imp = cant*peso*precioKg;
+      } else {
+        const origen = rodeosAllMap[String(e.rodeo_id)];
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(e.rodeo_id)&&String(p.fecha)<=String(e.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        peso=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        imp = valorizarRodeo_(origen||{categoria:'novillito'}, cant, peso);
+      }
+      ingCesionEng += convertirAMoneda_(imp, e.fecha, moneda);
+    });
+    let ingReposicionACria = 0;
+    movsCampana.filter(m=>{
+      if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+      const or = rodeosAllMap[String(m.rodeo_origen_id)];
+      const de = rodeosAllMap[String(m.rodeo_destino_id)];
+      return or&&normAct_(or.actividad)==='recria'&&de&&normAct_(de.actividad)==='cria'&&rodeosRecSet.has(String(m.rodeo_origen_id));
+    }).forEach(m=>{
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+      const precioCabeza=Number(m.precio_cabeza)||0, precioKg=Number(m.precio_kg)||0;
+      let total=0, pesoUsado=peso;
+      if (precioCabeza>0) total=cant*precioCabeza;
+      else if (precioKg&&peso) total=cant*peso*precioKg;
+      else if (precioKg&&!peso) {
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=cant*pesoUsado*precioKg;
+      } else {
+        const or=rodeosAllMap[String(m.rodeo_origen_id)];
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=valorizarRodeo_(or||{categoria:'vaquillona'},cant,pesoUsado);
+      }
+      ingReposicionACria += convertirAMoneda_(total, m.fecha, moneda);
+    });
+    let stockValRecria = 0;
+    rodeosRecArr.forEach(r=>{
+      const stock = Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0);
+      if (!stock) return;
+      stockValRecria += convertirAMoneda_(valorizarRodeoAFecha_(r, stock, fechaValorEF), fechaValorEF, moneda);
+    });
+    const totalIngresos = ingVentas + ingCesionEng + ingReposicionACria + stockValRecria;
+
+    const totalEI = convertirAMoneda_(eiHeredadoARS, campAnteriorObj ? campAnteriorObj.fecha_fin : corteRecria, moneda)
+      + propiosEI.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
+    let egCesionCria = 0;
+    movsCampana.filter(m=>{
+      if(m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+      const or = rodeosAllMap[String(m.rodeo_origen_id)];
+      const de = rodeosAllMap[String(m.rodeo_destino_id)];
+      return or&&normAct_(or.actividad)==='cria'&&de&&normAct_(de.actividad)==='recria'&&rodeosRecSet.has(String(m.rodeo_destino_id));
+    }).forEach(m=>{
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
+      const precioCabeza=Number(m.precio_cabeza)||0, precioKg=Number(m.precio_kg)||0;
+      let total=0, pesoUsado=peso;
+      if (precioCabeza>0) total=cant*precioCabeza;
+      else if (precioKg&&peso) total=cant*peso*precioKg;
+      else if (precioKg&&!peso) {
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=cant*pesoUsado*precioKg;
+      } else {
+        const or=rodeosAllMap[String(m.rodeo_origen_id)];
+        const pp=(S.cache.pesadas||[]).filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        pesoUsado=pp[0]?Number(pp[0].peso_prom_kg)||0:0;
+        total=valorizarRodeo_(or||{},cant,pesoUsado);
+      }
+      egCesionCria += convertirAMoneda_(total, m.fecha, moneda);
+    });
+    // Compra externa directa a un rodeo de Recría (Movimiento que no es Saldo
+    // inicial ni Traslado — ej. una compra cargada a mano) — el panel "por
+    // campaña" de Recría no tenía este término (a diferencia del acumulado
+    // histórico viejo), así que quedaba afuera del margen. Se agrega acá.
+    const egCompraExt = movsCampana.filter(m=>rodeosRecSet.has(String(m.rodeo_destino_id))&&m.tipo!=='Saldo inicial'&&m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual')
+      .reduce((s,m)=>s+convertirAMoneda_((Number(m.cantidad)||0)*(Number(m.precio_cabeza)||0), m.fecha, moneda), 0);
+    let egAlim = 0, egVet = 0;
+    consumosCampana.forEach(c=>{
+      const prod = productos.find(p=>String(p.producto_id)===String(c.producto_id));
+      const costoARS = (Number(c.cantidad)||0)*egPrecioVigenteProducto_(c.producto_id, c.fecha);
+      const costo = convertirAMoneda_(costoARS, c.fecha, moneda);
+      if (prod&&prod.categoria==='Veterinaria') egVet += costo; else egAlim += costo;
+    });
+    const egSueldos = sueldoTotalActividad_('recria', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldos.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaValorEF.slice(0,7)
+    , moneda);
+    const totalEgresos = totalEI + egCesionCria + egCompraExt + egAlim + egVet + egSueldos;
+    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas, ingCesEng: ingCesionEng, ingReposicionACria, ef: stockValRecria, ei: totalEI, egCesionCria, egCompraExt, egAlim, egVet, egSueldos };
+  }
+
+  const ars = calcEnMoneda('ARS');
+  const usd = calcEnMoneda('USD');
+
+  return {
+    ing: ars.ing, eg: ars.eg, margen: ars.margen, ingUSD: usd.ing, egUSD: usd.eg, margenUSD: usd.margen,
+    ingVentas: ars.ingVentas, ingCesEng: ars.ingCesEng, ingReposicionACria: ars.ingReposicionACria, ef: ars.ef,
+    ei: ars.ei, egCesionCria: ars.egCesionCria, egCompraExt: ars.egCompraExt, egAlim: ars.egAlim, egVet: ars.egVet, egSueldos: ars.egSueldos,
+    eiCab: eiCab, efCab: efCab, nacCab: 0, nacImp: 0,
+    comprasCab: clasRec.compras, cesRecCab: clasRec.cesionesRecibidas, cesEnvCab: clasRec.cesionesEnviadas,
+    ventasCab: ventasCab, mortCab: mortCab,
+  };
+}
+
+function calcMargenTerminacionCampana_(campanaId, corte) {
+  const corteEng = corte || today();
+  const campanasCat = S.cache.campanas || [];
+  const campanaObj = campanasCat.find(c => String(c.campana_id) === String(campanaId));
+  const esCampanaActivaEng = !!(campanaObj && (campanaObj.activa===true || String(campanaObj.activa).toUpperCase()==='TRUE'));
+  const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+  const pesadas = S.cache.pesadas || [];
+  const productosAll = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+  const prodPorId = Object.fromEntries(productosAll.map(p=>[String(p.producto_id),p]));
+  const rodeosEng = rodeosEngordeValidos_();
+  const rodeosEngIds = new Set(rodeosEng.map(r=>String(r.rodeo_id)));
+
+  // Filtro por campaña — igual que filtroCampanaEng_, pero recibiendo el
+  // campana_id directo (acá no hace falta el puente por nombre que usa
+  // buildEngordeDashboard_, porque ya partimos del catálogo real).
+  const filtroCampana = (fecha, campanaIdGuardado) => {
+    if (!campanaObj) return (fecha||'') <= corteEng;
+    if (esCampanaActivaEng && (fecha||'') > corteEng) return false;
+    return campanaEfectiva_(fecha, campanaIdGuardado) === String(campanaObj.campana_id);
+  };
+
+  const ventasEng = (S.cache.ventas||[]).filter(v => rodeosEngIds.has(String(v.rodeo_id)) && filtroCampana(v.fecha_salida, v.campana_id));
+  const fechaValorEFTerm = (esCampanaActivaEng || !campanaObj) ? corteEng : (campanaObj.fecha_fin || corteEng);
+  const stockDetalleRows = [];
+  let stockValEngARS = 0;
+  if (campanaObj) {
+    const efPorRodeoTerm = efTerminacionCampanaStockPorRodeo_(campanaObj.campana_id);
+    rodeosEng.forEach(r => {
+      const stock = Math.max(0, efPorRodeoTerm[String(r.rodeo_id)]||0);
+      if (!stock) return;
+      const val = valorizarRodeoAFecha_(r, stock, fechaValorEFTerm);
+      stockValEngARS += val;
+      stockDetalleRows.push({ rodeo: r, stock, val });
+    });
+  } else {
+    const stockACorteEng = stockPorRodeoACorte_(corteEng);
+    rodeosEng.forEach(r => {
+      const stock = Math.max(0, stockACorteEng[String(r.rodeo_id)]||0);
+      if (!stock) return;
+      const pesoP = ultimaPesadaACorte_(r.rodeo_id, corteEng);
+      const val = valorizarRodeo_(r, stock, pesoP);
+      stockValEngARS += val;
+      stockDetalleRows.push({ rodeo: r, stock, val });
+    });
+  }
+
+  const movs = (S.cache.movimientos || []).filter(m => filtroCampana(m.fecha, m.campana_id));
+  const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
+  const cesionesRecTrasla = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)) && !rodeosEngIds.has(String(m.rodeo_origen_id)));
+  const egresosRecRaw = (S.cache.egresos_recria || []).filter(e => filtroCampana(e.fecha, e.campana_id));
+  const cesionesRec = egresosRecRaw.filter(e => {
+    if (e.destino !== 'Engorde' || !rodeosEngIds.has(String(e.rodeo_destino_id||''))) return false;
+    const tieneTrasladoReal = cesionesRecTrasla.some(m =>
+      String(m.fecha) === String(e.fecha) && String(m.rodeo_origen_id) === String(e.rodeo_id) &&
+      String(m.rodeo_destino_id) === String(e.rodeo_destino_id) && Number(m.cantidad) === Number(e.cant_animales)
+    );
+    return !tieneTrasladoReal;
+  });
+
+  const campAnteriorTerm = campanaObj ? campanaAnteriorA_(campanaObj.campana_id) : null;
+  const heredadoStockTerm = campAnteriorTerm ? efTerminacionCampanaStockPorRodeo_(campAnteriorTerm.campana_id) : {};
+  let eiHeredadoARSTerm = 0;
+  if (campAnteriorTerm) {
+    rodeosEng.forEach(r => {
+      const cant = heredadoStockTerm[String(r.rodeo_id)]||0;
+      if (!cant) return;
+      eiHeredadoARSTerm += valorizarRodeoAFecha_(r, cant, campAnteriorTerm.fecha_fin);
+    });
+  }
+  const propiosEITerm = campanaObj ? eiTerminacionCampana_(campanaObj.campana_id).propios : [];
+  const cesionesInternas = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && rodeosEngIds.has(String(m.rodeo_destino_id)) && rodeosEngIds.has(String(m.rodeo_origen_id)));
+  const comprasEng = comprasHacGetAll_().filter(c => filtroCampana(c.fecha, c.campana_id));
+  const consumos = (S.cache.consumos_insumos||[]).filter(c=>rodeosEngIds.has(String(c.rodeo_id)) && filtroCampana(c.fecha, c.campana_id));
+  const fechaDesdeSueldosEng = campanaObj && campanaObj.fecha_inicio ? campanaObj.fecha_inicio : '0000-01-01';
+  const fechaHastaSueldosEng = fechaValorEFTerm;
+
+  const eiCabEng = campanaObj
+    ? Array.from(rodeosEngIds).reduce((s,rid) => s + (eiTerminacionCampana_(campanaObj.campana_id).stockPorRodeo[rid]||0), 0)
+    : saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const efCabEng = campanaObj
+    ? Array.from(rodeosEngIds).reduce((s,rid) => s + Math.max(0, efTerminacionCampanaStockPorRodeo_(campanaObj.campana_id)[rid]||0), 0)
+    : stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
+  const clasEng = clasificarTrasladosActividad_(rodeosEngIds, movs);
+  const ventasCabEng = ventasEng.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
+  const mortCabEng = (S.cache.mortandad||[]).filter(m => rodeosEngIds.has(String(m.rodeo_id)) && filtroCampana(m.fecha, m.campana_id)).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+
+  function calcEnMoneda(moneda) {
+    const totalVentas = ventasEng.reduce((s,v)=>s+convertirAMoneda_(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0, v.fecha_salida, moneda),0);
+    const stockValEng = convertirAMoneda_(stockValEngARS, fechaValorEFTerm, moneda);
+    let totalIngresos = totalVentas + stockValEng;
+
+    const totalSaldoIni = convertirAMoneda_(eiHeredadoARSTerm, campAnteriorTerm ? campAnteriorTerm.fecha_fin : corteEng, moneda)
+      + propiosEITerm.reduce((s,m) => s + convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
+
+    const totalCesionInterna = cesionesInternas.reduce((s,m)=>{
+      const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+      const cant = Number(m.cantidad)||0, peso = Number(m.peso_prom_kg)||0;
+      const precioCabeza = Number(m.precio_cabeza)||0, precioKg = Number(m.precio_kg)||0;
+      let importeARS;
+      if (precioCabeza > 0) importeARS = cant*precioCabeza;
+      else if (precioKg && peso) importeARS = cant*peso*precioKg;
+      else {
+        const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        importeARS = valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesadasO[0]?Number(pesadasO[0].peso_prom_kg)||0:0);
+      }
+      return s + convertirAMoneda_(importeARS, m.fecha, moneda);
+    },0);
+    totalIngresos += totalCesionInterna;
+
+    const totalCesiones = cesionesRec.reduce((s,e)=>{
+      const cantE = Number(e.cant_animales)||0;
+      const precioCabezaE = Number(e.precio_cabeza_cesion)||0;
+      const importeARS = precioCabezaE > 0 ? cantE*precioCabezaE : cantE*(Number(e.peso_prom_kg)||0)*(Number(e.precio_kg_cesion)||0);
+      return s + convertirAMoneda_(importeARS, e.fecha, moneda);
+    },0) + cesionesRecTrasla.reduce((s,m)=>{
+      const rodeoOrig = rodeos.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
+      const cant = Number(m.cantidad)||0;
+      const precioCabeza = Number(m.precio_cabeza)||0, precioKg = Number(m.precio_kg)||0, peso = Number(m.peso_prom_kg)||0;
+      let importeARS;
+      if (precioCabeza > 0) importeARS = cant*precioCabeza;
+      else if (precioKg && peso) importeARS = cant*peso*precioKg;
+      else {
+        const pesadasO = pesadas.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+        const pesoO = pesadasO[0] ? Number(pesadasO[0].peso_prom_kg)||0 : 0;
+        importeARS = valorizarRodeo_(rodeoOrig||{categoria:'novillo'}, cant, pesoO);
+      }
+      return s + convertirAMoneda_(importeARS, m.fecha, moneda);
+    },0);
+
+    const totalCompras = comprasEng.reduce((s,c)=>s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, moneda),0);
+
+    let totalAlim=0, totalVeter=0, totalOtros=0;
+    consumos.forEach(c => {
+      const pid = String(c.producto_id);
+      const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
+      const importe = convertirAMoneda_(importeARS, c.fecha, moneda);
+      const cat = (prodPorId[pid]?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      if (cat.includes('veterin')||cat.includes('sanid')) totalVeter+=importe;
+      else if (cat.includes('aliment')) totalAlim+=importe;
+      else totalOtros+=importe;
+    });
+
+    const totalSueldosEng = sueldoTotalActividad_('engorde', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaHastaSueldosEng.slice(0,7)
+    , moneda);
+
+    const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
+    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ef: stockValEng, ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng };
+  }
+
+  const ars = calcEnMoneda('ARS');
+  const usd = calcEnMoneda('USD');
+
+  return {
+    ing: ars.ing, eg: ars.eg, margen: ars.margen, ingUSD: usd.ing, egUSD: usd.eg, margenUSD: usd.margen,
+    ingVentas: ars.ingVentas, ef: ars.ef,
+    ei: ars.ei, egCesiones: ars.egCesiones, egCompras: ars.egCompras,
+    egAlim: ars.egAlim, egVet: ars.egVet, egOtros: ars.egOtros, egSueldos: ars.egSueldos,
+    eiCab: eiCabEng, efCab: efCabEng, nacCab: 0, nacImp: 0,
+    comprasCab: clasEng.compras, cesRecCab: clasEng.cesionesRecibidas, cesEnvCab: clasEng.cesionesEnviadas,
+    ventasCab: ventasCabEng, mortCab: mortCabEng,
+  };
+}
+
 function buildMargenBruto() {
   const tabMB   = S.mbTab   || 'reporte';
   const moneda  = S.margenBrutoMoneda || 'ARS';
 
   // Fecha de corte GLOBAL: se propaga a Cría, Recría y Terminación para que el
   // consolidado sea coherente — las tres actividades cierran a la misma fecha.
-  // Antes acá había un filtro de "Campaña" y otro de "Período desde/hasta" que
-  // en realidad no se usaban en ningún cálculo (quedaron de una versión anterior) —
-  // se sacaron para no mostrar controles que no hacen nada.
+  // Solo importa cuando la campaña elegida abajo está EN CURSO: si ya cerró,
+  // cada actividad se muestra siempre completa (mismo criterio que ya usan los
+  // 3 dashboards individuales).
   const corteGlobal = S._corteGlobal || today();
+
+  // ── Selector de Campaña — ÚNICO para las 3 actividades ──────────────────
+  // Antes el consolidado no tenía selector propio: llamaba a buildDashboard(),
+  // buildRecriaDashboard() y buildEngordeDashboard_() solo para leer lo que
+  // cada uno hubiera dejado guardado en S._resultCria/_resultRecria/_resultEng
+  // — es decir, dependía de que el usuario hubiera dejado la MISMA campaña
+  // elegida a mano en las 3 pantallas por separado. Si no, el consolidado
+  // sumaba campañas distintas sin ningún aviso (el origen del descuadre).
+  // Ahora se elige UNA campaña acá y se le pide a cada actividad su margen
+  // para ESA campaña puntual, con calcMargenCriaCampana_/RecriaCampana_/
+  // TerminacionCampana_ (ver definición más arriba).
+  const campanasCatMB = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  const campanaActivaMB = campanasCatMB.find(c => c.activa===true || String(c.activa).toUpperCase()==='TRUE');
+  const campSelecMB = S._mbCampana || (campanaActivaMB ? campanaActivaMB.campana_id : (campanasCatMB[0]?.campana_id || ''));
+  const campSelecObjMB = campanasCatMB.find(c => String(c.campana_id) === String(campSelecMB));
 
   function fmMB(v) {
     if (moneda==='USD') return 'U$D '+fn(convertirAMoneda_(v,corteGlobal,'USD'),2);
@@ -14213,16 +14750,25 @@ function buildMargenBruto() {
     💵 ${moneda==='USD'?'Ver en ARS':'Ver en U$S'}
   </button></div>`;
 
-  // Filtro: fecha de corte global (única, funcional)
+  // Filtros: Campaña (única, para las 3 actividades) + fecha de corte
   h += `<div class="panel no-print" style="padding:14px 16px;margin-bottom:16px">
-    <div class="fgrid" style="margin:0;align-items:flex-end">
+    <div class="fgrid" style="margin:0;align-items:flex-end;gap:16px;flex-wrap:wrap;display:flex">
+      <div class="fg" style="max-width:240px;min-width:0;flex:0 0 auto">
+        <label>Campaña <span style="font-size:11px;color:var(--text3)">(Cría + Recría + Terminación)</span></label>
+        ${campanasCatMB.length
+          ? `<select style="max-width:240px" onchange="S._mbCampana=this.value;render()">
+              ${campanasCatMB.map(c=>`<option value="${c.campana_id}" ${String(c.campana_id)===String(campSelecMB)?'selected':''}>${c.nombre}${!c.fecha_fin?' (en curso)':''}</option>`).join('')}
+            </select>`
+          : '<span style="font-size:13px;color:var(--text3)">Sin campañas cargadas</span>'
+        }
+      </div>
       <div class="fg" style="max-width:220px;min-width:0;flex:0 0 auto">
-        <label>Fecha de corte <span style="font-size:11px;color:var(--text3)">(aplica a Cría, Recría y Terminación por igual)</span></label>
+        <label>Fecha de corte <span style="font-size:11px;color:var(--text3)">(solo aplica si la campaña está en curso)</span></label>
         <input type="date" id="mb-corte" value="${corteGlobal}" style="max-width:220px"
-          onchange="S._corteGlobal=this.value;S._corteCria=this.value;S._corteRecria=this.value;S._corteEng=this.value;render()">
+          onchange="S._corteGlobal=this.value;render()">
       </div>
       ${corteGlobal!==today()?`<div class="fg" style="flex:0 0 auto"><button class="btn btn-ghost btn-sm"
-          onclick="S._corteGlobal=null;S._corteCria=null;S._corteRecria=null;S._corteEng=null;render()">↺ Volver a hoy</button></div>`:''}
+          onclick="S._corteGlobal=null;render()">↺ Volver a hoy</button></div>`:''}
     </div>
   </div>`;
 
@@ -14231,33 +14777,23 @@ function buildMargenBruto() {
     return h;
   }
 
-  // Recalcular las tres actividades con la fecha de corte global. Antes había que
-  // visitar cada dashboard a mano para que calculara S._resultCria/_resultRecria/
-  // _resultEng; ahora se llaman directamente acá (solo por su efecto de guardar esos
-  // resultados) y se descarta el HTML que devuelven — no hace falta navegar a cada uno.
-  buildDashboard();
-  buildRecriaDashboard();
-  buildEngordeDashboard_(rodeosEngordeValidos_(), p => egFmon_(p, S.engordeMoneda||'ARS'));
-
-  // Si igual falta alguno (ej. Cría sin ninguna campaña cargada todavía), avisamos.
-  if (!S._resultCria || !S._resultRecria || !S._resultEng) {
-    h += `<div class="panel" style="border:2px solid var(--gold);background:var(--gold-bg);padding:16px">
-      <div style="font-weight:700;font-size:15px;color:var(--gold-text);margin-bottom:8px">⚠ Datos pendientes de cálculo</div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:12px">
-        Faltan datos para calcular alguna actividad a esta fecha de corte:
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${!S._resultCria?`<button class="btn btn-primary" onclick="goto('dashboard')">🐄 Ir a Dashboard Cría</button>`:'<span style="color:var(--green-text)">✓ Cría</span>'}
-        ${!S._resultRecria?`<button class="btn btn-primary" onclick="goto('recria_dashboard')">🌱 Ir a Dashboard Recría</button>`:'<span style="color:var(--green-text)">✓ Recría</span>'}
-        ${!S._resultEng?`<button class="btn btn-primary" onclick="goto('engorde')">🏭 Ir a Dashboard Terminación</button>`:'<span style="color:var(--green-text)">✓ Terminación</span>'}
-      </div>
-    </div>`;
+  if (!campSelecMB) {
+    h += `<div class="empty-state"><span class="ico">📊</span><div class="msg">Cargá al menos una Campaña en el catálogo de Campañas para ver el Margen Bruto consolidado.</div></div>`;
     return h;
   }
 
-  const rCria = { ing: S._resultCria.ing, eg: S._resultCria.eg, margen: S._resultCria.margen, ingUSD: S._resultCria.ingUSD, egUSD: S._resultCria.egUSD, margenUSD: S._resultCria.margenUSD, detalle: S._resultCria };
-  const rRec  = { ing: S._resultRecria.ing, eg: S._resultRecria.eg, margen: S._resultRecria.margen, ingUSD: S._resultRecria.ingUSD, egUSD: S._resultRecria.egUSD, margenUSD: S._resultRecria.margenUSD, detalle: S._resultRecria };
-  const rEng  = { ing: S._resultEng.ing, eg: S._resultEng.eg, margen: S._resultEng.margen, ingUSD: S._resultEng.ingUSD, egUSD: S._resultEng.egUSD, margenUSD: S._resultEng.margenUSD, detalle: S._resultEng };
+  h += `<div style="font-size:12px;color:var(--text2);margin:-8px 0 16px">Campaña: <strong>${campSelecObjMB?campSelecObjMB.nombre:'—'}</strong>${(campSelecObjMB&&(campSelecObjMB.activa===true||String(campSelecObjMB.activa).toUpperCase()==='TRUE'))?' (en curso — hasta la fecha de corte)':' (cerrada — total completo)'}</div>`;
+
+  // Calcular las 3 actividades para la campaña elegida — cada una con su
+  // propia función "pura" (ver definición antes de buildMargenBruto), sin
+  // depender de qué campaña tenga puesta cada dashboard individual.
+  const resultCriaMB = calcMargenCriaCampana_(campSelecMB, corteGlobal);
+  const resultRecMB  = calcMargenRecriaCampana_(campSelecMB, corteGlobal);
+  const resultEngMB  = calcMargenTerminacionCampana_(campSelecMB, corteGlobal);
+
+  const rCria = { ing: resultCriaMB.ing, eg: resultCriaMB.eg, margen: resultCriaMB.margen, ingUSD: resultCriaMB.ingUSD, egUSD: resultCriaMB.egUSD, margenUSD: resultCriaMB.margenUSD, detalle: resultCriaMB };
+  const rRec  = { ing: resultRecMB.ing, eg: resultRecMB.eg, margen: resultRecMB.margen, ingUSD: resultRecMB.ingUSD, egUSD: resultRecMB.egUSD, margenUSD: resultRecMB.margenUSD, detalle: resultRecMB };
+  const rEng  = { ing: resultEngMB.ing, eg: resultEngMB.eg, margen: resultEngMB.margen, ingUSD: resultEngMB.ingUSD, egUSD: resultEngMB.egUSD, margenUSD: resultEngMB.margenUSD, detalle: resultEngMB };
 
   const ingTotal = rCria.ing+rRec.ing+rEng.ing;
   const egTotal  = rCria.eg+rRec.eg+rEng.eg;
