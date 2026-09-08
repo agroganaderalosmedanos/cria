@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_197';
+const APP_VERSION = 'index_consolidado_4_6_155_198';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1112,7 +1112,7 @@ async function goto(page) {
   // Normalmente ya está cargado por el paquete inicial (initBundle), esto es
   // solo una red de seguridad para el caso de entrar a la página antes de que
   // ese paquete termine.
-  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'recria_dashboard') && !S.cache.campanas) {
+  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'recria_dashboard' || page === 'engorde' || page === 'engorde_costos' || page === 'engorde_comparacion' || page === 'engorde_proyeccion' || page === 'engorde_cierre' || page === 'engorde_historial') && !S.cache.campanas) {
     try { await loadEntity('campanas'); } catch (err) { /* silencioso */ }
   }
   // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
@@ -2482,6 +2482,64 @@ function efRecriaCampanaStockPorRodeo_(campanaId) {
   ventasC.forEach(v => { stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
   const mortandadC = (S.cache.mortandad || []).filter(m => rodeosRecIds.has(String(m.rodeo_id)) && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId));
   mortandadC.forEach(m => { stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
+  return stockPorRodeo;
+}
+
+// ── EXISTENCIA INICIAL RECURSIVA (Terminación) ───────────────────────────
+// Mismo mecanismo que Recría, aplicado a los corrales de Terminación/Engorde.
+// Reusa rodeosEngordeValidos_() (ya excluye categorías que nunca deberían
+// estar en un corral, ej. terneros) en vez de un normAct_ simple, para
+// heredar esa misma protección acá. Tampoco hace falta el caso especial de
+// parición — ningún [pid:...] apunta jamás a un corral de Terminación.
+function rodeosTerminacionIds_() {
+  return new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
+}
+let _memoEiTerminacionCampana_ = {};
+function eiTerminacionCampana_(campanaId) {
+  if (!campanaId) return { stockPorRodeo: {}, propios: [] };
+  if (_memoEiTerminacionCampana_[campanaId]) return _memoEiTerminacionCampana_[campanaId];
+  const anterior = campanaAnteriorA_(campanaId);
+  const base = anterior ? efTerminacionCampanaStockPorRodeo_(anterior.campana_id) : {};
+
+  const rodeosIds = rodeosTerminacionIds_();
+  const propios = (S.cache.movimientos || []).filter(m =>
+    m.tipo === 'Saldo inicial' && rodeosIds.has(String(m.rodeo_destino_id)) &&
+    campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)
+  );
+  const stockPorRodeo = Object.assign({}, base);
+  propios.forEach(m => {
+    stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + (Number(m.cantidad)||0);
+  });
+
+  const resultado = { stockPorRodeo, propios };
+  _memoEiTerminacionCampana_[campanaId] = resultado;
+  return resultado;
+}
+// efTerminacionCampanaStockPorRodeo_(campanaId): EI + Movimientos (cesión
+// recibida de Recría, traslados internos entre corrales propios, que se
+// cancelan solos al mirar la actividad en conjunto) + Ventas + Mortandad.
+// Los Egresos Recría (destino Engorde) NO se usan acá — son el registro
+// CONTABLE de la cesión (precio), pero el Movimiento vinculado ya mueve el
+// stock real; usar los dos sumaría la entrada dos veces. Mismo criterio que
+// ya usa Recría con Cesión desde Cría.
+function efTerminacionCampanaStockPorRodeo_(campanaId) {
+  const ei = eiTerminacionCampana_(campanaId);
+  const stockPorRodeo = Object.assign({}, ei.stockPorRodeo);
+  const rodeosIds = rodeosTerminacionIds_();
+
+  const movsC = (S.cache.movimientos || []).filter(m =>
+    m.tipo !== 'Saldo inicial' && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId) &&
+    (rodeosIds.has(String(m.rodeo_destino_id)) || rodeosIds.has(String(m.rodeo_origen_id)))
+  );
+  movsC.forEach(m => {
+    const cant = Number(m.cantidad) || 0;
+    if (rodeosIds.has(String(m.rodeo_destino_id))) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    if (rodeosIds.has(String(m.rodeo_origen_id))) stockPorRodeo[String(m.rodeo_origen_id)] = (stockPorRodeo[String(m.rodeo_origen_id)]||0) - cant;
+  });
+  const ventasC = (S.cache.ventas || []).filter(v => rodeosIds.has(String(v.rodeo_id)) && campanaEfectiva_(v.fecha_salida, v.campana_id) === String(campanaId));
+  ventasC.forEach(v => { stockPorRodeo[String(v.rodeo_id)] = (stockPorRodeo[String(v.rodeo_id)]||0) - (Number(v.cant_animales)||0); });
+  const mortandadTC = (S.cache.mortandad || []).filter(m => rodeosIds.has(String(m.rodeo_id)) && campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId));
+  mortandadTC.forEach(m => { stockPorRodeo[String(m.rodeo_id)] = (stockPorRodeo[String(m.rodeo_id)]||0) - (Number(m.cantidad)||1); });
   return stockPorRodeo;
 }
 
@@ -10513,11 +10571,32 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   fm = p => fmonACorte_(p, moneda, corteEng);
   const stockACorteEng = stockPorRodeoACorte_(corteEng);
 
+  // Puente entre el selector de campaña de Terminación (texto suelto "campana",
+  // el mismo sistema viejo que usan Compras Hacienda/Ventas) y el catálogo real
+  // de Campañas que usan los Movimientos (campana_id + fechas de inicio/fin) —
+  // Movimientos NUNCA tuvo el campo de texto "campana". Se resuelve ACÁ ARRIBA
+  // (antes de ventasEng) porque ese mismo agujero también afectaba a Ventas —
+  // antes solo se filtraba por fecha de corte, nunca por campaña, contaminando
+  // "Ventas de hacienda" del resumen y "Conciliación de Existencia" con el
+  // histórico completo sin importar qué campaña estuviera seleccionada arriba.
+  const campanaCatalogEng_ = (S.cache.campanas||[]).find(c => c.nombre === campSelec);
+  const esCampanaActivaEng_ = !!(campanaCatalogEng_ && (campanaCatalogEng_.activa===true || String(campanaCatalogEng_.activa).toUpperCase()==='TRUE'));
+  const filtroCampanaEng_ = (fecha, campanaId) => {
+    // Si no se puede resolver la campaña elegida contra el catálogo real (caso
+    // borde: nombres que no coinciden entre los dos sistemas), se cae al
+    // comportamiento viejo — sin filtrar por campaña — en vez de mostrar todo
+    // vacío por un simple desajuste de texto.
+    if (!campanaCatalogEng_) return (fecha||'') <= corteEng;
+    if (esCampanaActivaEng_ && (fecha||'') > corteEng) return false;
+    return campanaEfectiva_(fecha, campanaId) === String(campanaCatalogEng_.campana_id);
+  };
+
   // Ventas engorde campaña — cotización DEL DÍA DE CADA VENTA, no la del corte
   // (antes esta pantalla en particular se había quedado sin migrar, mientras
   // Costos, las tarjetas del Dashboard y el Excel de auditoría sí ya usaban
-  // este criterio — por eso esta pantalla no coincidía con esas otras).
-  const ventasEng = (S.cache.ventas||[]).filter(v => rodeosEngIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corteEng);
+  // este criterio — por eso esta pantalla no coincidía con esas otras). Y
+  // ahora también filtrada por campaña, no solo por fecha de corte.
+  const ventasEng = (S.cache.ventas||[]).filter(v => rodeosEngIds.has(String(v.rodeo_id)) && filtroCampanaEng_(v.fecha_salida, v.campana_id));
   const totalVentas = ventasEng.reduce((s,v)=>{
     const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
     return s + convertirAMoneda_(importeARS, v.fecha_salida, moneda);
@@ -10546,26 +10625,9 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   let totalIngresos = totalVentas + stockValEng;
   let totalIngresosARS = totalVentasARS + stockValEngARS;
 
-  // Stock inicial / Cesiones recibidas de Recría
-  // Puente entre el selector de campaña de Terminación (texto suelto "campana",
-  // el mismo sistema viejo que usan Compras Hacienda/Ventas) y el catálogo real
-  // de Campañas que usan los Movimientos (campana_id + fechas de inicio/fin).
-  // Movimientos NUNCA tuvo el campo de texto "campana", así que este filtro
-  // antes ignoraba por completo la campaña elegida y solo miraba la fecha de
-  // corte — contaminando tanto "Cesiones de Recría" como "Stock inicial" (las
-  // dos salen de esta misma variable) con el histórico completo, sin importar
-  // qué campaña estuviera seleccionada arriba.
-  const campanaCatalogEng_ = (S.cache.campanas||[]).find(c => c.nombre === campSelec);
-  const esCampanaActivaEng_ = !!(campanaCatalogEng_ && (campanaCatalogEng_.activa===true || String(campanaCatalogEng_.activa).toUpperCase()==='TRUE'));
-  const movs = (S.cache.movimientos || []).filter(m => {
-    // Si no se puede resolver la campaña elegida contra el catálogo real (caso
-    // borde: nombres que no coinciden entre los dos sistemas), se cae al
-    // comportamiento viejo — sin filtrar por campaña — en vez de mostrar todo
-    // vacío por un simple desajuste de texto.
-    if (!campanaCatalogEng_) return (m.fecha||'') <= corteEng;
-    if (esCampanaActivaEng_ && (m.fecha||'') > corteEng) return false;
-    return campanaEfectiva_(m.fecha, m.campana_id) === String(campanaCatalogEng_.campana_id);
-  });
+  // Stock inicial / Cesiones recibidas de Recría — mismo puente de campaña
+  // ya resuelto arriba (filtroCampanaEng_).
+  const movs = (S.cache.movimientos || []).filter(m => filtroCampanaEng_(m.fecha, m.campana_id));
   const saldosIni = movs.filter(m => m.tipo==='Saldo inicial' && rodeosEngIds.has(String(m.rodeo_destino_id)));
   // Traslados reales a corrales de engorde — esta es ahora la ÚNICA fuente de verdad
   // para el costo de cesiones recibidas (antes del fix, "Cesiones Recría→Terminación"
@@ -10808,13 +10870,27 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   const totalEgresosUSD = totalSaldoIniUSD + totalCesionesUSD + totalCesionInternaUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalOtrosUSD + totalSueldosEngUSD;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
 
-  // Cabezas de EI (saldos iniciales) y EF (stock final) — para el Reporte Directorio.
-  const eiCabEng = saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
-  const efCabEng = stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
+  // Cabezas de EI y EF — AHORA por campaña recursiva (EI = EF de la campaña
+  // anterior), igual que Cría y Recría. Antes, eiCabEng solo sumaba los Saldo
+  // Inicial cargados DENTRO de esta campaña (sin heredar nada de la anterior,
+  // el mismo enfoque "plano" que ya habíamos descartado para Cría/Recría) y
+  // efCabEng era directamente el stock de HOY (stockDetalleRows), sin importar
+  // qué campaña estuviera seleccionada — por eso la Conciliación de más abajo
+  // nunca cerraba para una campaña cerrada: comparaba "lo que pasó en esta
+  // campaña" contra "todo el stock actual, incluida la campaña siguiente".
+  // Si no se puede resolver la campaña contra el catálogo real, se cae al
+  // cálculo viejo (mejor eso que romper la pantalla).
+  const campanaIdEngActual_ = campanaCatalogEng_ ? campanaCatalogEng_.campana_id : null;
+  const eiCabEng = campanaIdEngActual_
+    ? Array.from(rodeosEngIds).reduce((s,rid) => s + (eiTerminacionCampana_(campanaIdEngActual_).stockPorRodeo[rid]||0), 0)
+    : saldosIni.reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+  const efCabEng = campanaIdEngActual_
+    ? Array.from(rodeosEngIds).reduce((s,rid) => s + Math.max(0, efTerminacionCampanaStockPorRodeo_(campanaIdEngActual_)[rid]||0), 0)
+    : stockDetalleRows.reduce((s,r) => s+(Number(r.stock)||0), 0);
 
   const clasEng = clasificarTrasladosActividad_(rodeosEngIds, movs);
   const ventasCabEng = ventasEng.reduce((s,v) => s + (Number(v.cant_animales)||0), 0);
-  const mortCabEng = (S.cache.mortandad||[]).filter(m => rodeosEngIds.has(String(m.rodeo_id)) && (m.fecha||'') <= corteEng).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
+  const mortCabEng = (S.cache.mortandad||[]).filter(m => rodeosEngIds.has(String(m.rodeo_id)) && filtroCampanaEng_(m.fecha, m.campana_id)).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
   // Guardar resultados para Resultados Económicos — SIEMPRE EN ARS.
   S._resultEng = {
@@ -11008,15 +11084,23 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   // entrada real para el corral que recibe y una salida real para el que envía,
   // aunque no afecte el total de la actividad.
   if (efCabEng !== eiCabEng + clasEng.compras + clasEng.cesionesRecibidas - clasEng.cesionesEnviadas - ventasCabEng - mortCabEng) {
+    const eiPorRodeoEngCampana_ = campanaIdEngActual_ ? eiTerminacionCampana_(campanaIdEngActual_).stockPorRodeo : {};
+    const efPorRodeoEngCampana_ = campanaIdEngActual_ ? efTerminacionCampanaStockPorRodeo_(campanaIdEngActual_) : {};
     const filasPorCorral = rodeosEngFilt.map(r => {
       const rid = String(r.rodeo_id);
-      const eiR = saldosIni.filter(m => String(m.rodeo_destino_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
+      // EI = heredado de la campaña anterior + Saldo Inicial propio de esta
+      // campaña para ESTE corral puntual — antes solo miraba el Saldo Inicial
+      // propio, perdiendo lo heredado (mismo bug que en el total de arriba).
+      const eiR = campanaIdEngActual_ ? (eiPorRodeoEngCampana_[rid]||0) : saldosIni.filter(m => String(m.rodeo_destino_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
       const entradasR = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_destino_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
       const salidasR = movs.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id) === rid).reduce((s,m) => s+(Number(m.cantidad)||0), 0);
       const ventasR = ventasEng.filter(v => String(v.rodeo_id) === rid).reduce((s,v) => s+(Number(v.cant_animales)||0), 0);
-      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id) === rid && (m.fecha||'')<=corteEng).reduce((s,m) => s+(Number(m.cantidad)||1), 0);
+      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id) === rid && filtroCampanaEng_(m.fecha, m.campana_id)).reduce((s,m) => s+(Number(m.cantidad)||1), 0);
       const efCalcR = eiR + entradasR - salidasR - ventasR - mortR;
-      const efRealR = Math.max(0, stockACorteEng[rid]||0);
+      // EF real = stock calculado recursivamente al cierre de ESTA campaña —
+      // antes usaba el stock de HOY (stockACorteEng), que para una campaña
+      // cerrada ya incluye todo lo que pasó en la campaña siguiente.
+      const efRealR = campanaIdEngActual_ ? Math.max(0, efPorRodeoEngCampana_[rid]||0) : Math.max(0, stockACorteEng[rid]||0);
       return { nombre: r.nombre, eiR, entradasR, salidasR, ventasR, mortR, efCalcR, efRealR, diff: efRealR - efCalcR };
     }).filter(f => f.eiR || f.entradasR || f.salidasR || f.ventasR || f.mortR || f.efRealR)
       .sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff));
