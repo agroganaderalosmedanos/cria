@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_195';
+const APP_VERSION = 'index_consolidado_4_6_155_196';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10278,12 +10278,31 @@ function buildEngorde() {
   if (page === 'engorde') {
     const rodeosAllEng = (S.catalogs&&S.catalogs.rodeos)||[];
     const rodeosAllMap_ = Object.fromEntries(rodeosAllEng.map(r=>[String(r.rodeo_id),r]));
-    const movsAll = S.cache.movimientos||[];
+    // Mismo puente campaña-texto → catálogo real que se usa en
+    // buildEngordeDashboard_ — esta tabla de detalle vive en una función
+    // DISTINTA (buildEngorde, no buildEngordeDashboard_), así que antes no
+    // tenía ningún filtro de campaña propio (ni siquiera de fecha de corte):
+    // mostraba TODO el histórico siempre, sin importar qué campaña estuviera
+    // elegida en el Dashboard de arriba.
+    const corteEngDet_ = S._corteEng || today();
+    const campanasDet_ = [...new Set([
+      ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
+      ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
+    ].filter(esCampanaValida_))].sort((a,b)=>b.localeCompare(a));
+    const campSelecDet_ = S._dashEngCampana || campanasDet_[0] || '';
+    const campanaCatalogDet_ = (S.cache.campanas||[]).find(c => c.nombre === campSelecDet_);
+    const esCampanaActivaDet_ = !!(campanaCatalogDet_ && (campanaCatalogDet_.activa===true || String(campanaCatalogDet_.activa).toUpperCase()==='TRUE'));
+    const filtroCampanaDet_ = (fecha, campanaId) => {
+      if (!campanaCatalogDet_) return (fecha||'') <= corteEngDet_;
+      if (esCampanaActivaDet_ && (fecha||'') > corteEngDet_) return false;
+      return campanaEfectiva_(fecha, campanaId) === String(campanaCatalogDet_.campana_id);
+    };
+    const movsAll = (S.cache.movimientos||[]).filter(m => filtroCampanaDet_(m.fecha, m.campana_id));
     const pesadasAll = S.cache.pesadas||[];
 
     // ── Detalle Cesiones recibidas de Recría ──────────────────────────────
     // Combina traslados reales + egresos_recria legacy (sin traslado real)
-    const egresosRecAll = (S.cache.egresos_recria||[]).filter(e=>e.destino==='Engorde'&&rodeosEng.some(r=>String(r.rodeo_id)===String(e.rodeo_destino_id)));
+    const egresosRecAll = (S.cache.egresos_recria||[]).filter(e=>e.destino==='Engorde'&&rodeosEng.some(r=>String(r.rodeo_id)===String(e.rodeo_destino_id))&&filtroCampanaDet_(e.fecha, e.campana_id));
     // OJO — bug encontrado: antes solo chequeaba que el DESTINO fuera un
     // corral de Terminación, sin chequear el ORIGEN — así que cualquier
     // traslado interno de Terminación (corral→corral) se colaba acá como si
@@ -10351,7 +10370,9 @@ function buildEngorde() {
     }
 
     // ── Detalle Ventas ────────────────────────────────────────────────────
-    const ventasEng = (S.cache.ventas||[]).filter(v=>rodeosEng.some(r=>String(r.rodeo_id)===String(v.rodeo_id)))
+    // Mismo problema que las Cesiones: sin filtro de campaña ni de fecha,
+    // traía siempre TODAS las ventas históricas de Terminación.
+    const ventasEng = (S.cache.ventas||[]).filter(v=>rodeosEng.some(r=>String(r.rodeo_id)===String(v.rodeo_id))&&filtroCampanaDet_(v.fecha_salida, v.campana_id))
       .sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||'')));
     if (ventasEng.length) {
       h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle</div>
