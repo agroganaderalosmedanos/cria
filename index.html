@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_193';
+const APP_VERSION = 'index_consolidado_4_6_155_194';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10284,7 +10284,18 @@ function buildEngorde() {
     // ── Detalle Cesiones recibidas de Recría ──────────────────────────────
     // Combina traslados reales + egresos_recria legacy (sin traslado real)
     const egresosRecAll = (S.cache.egresos_recria||[]).filter(e=>e.destino==='Engorde'&&rodeosEng.some(r=>String(r.rodeo_id)===String(e.rodeo_destino_id)));
-    const cesionesRecTrasla_ = movsAll.filter(m=>(m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual')&&rodeosEng.some(r=>String(r.rodeo_id)===String(m.rodeo_destino_id)));
+    // OJO — bug encontrado: antes solo chequeaba que el DESTINO fuera un
+    // corral de Terminación, sin chequear el ORIGEN — así que cualquier
+    // traslado interno de Terminación (corral→corral) se colaba acá como si
+    // fuera una cesión recibida de Recría. Ahora exige además que el rodeo de
+    // origen sea de actividad Recría, igual criterio que ya se usa en el
+    // resto de las cesiones entre actividades.
+    const cesionesRecTrasla_ = movsAll.filter(m=>{
+      if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
+      if (!rodeosEng.some(r=>String(r.rodeo_id)===String(m.rodeo_destino_id))) return false;
+      const origen = rodeosAllMap_[String(m.rodeo_origen_id)];
+      return origen && normAct_(origen.actividad)==='recria';
+    });
     const cesionesRecLegacy_ = egresosRecAll.filter(e=>!cesionesRecTrasla_.some(m=>
       String(m.fecha)===String(e.fecha)&&String(m.rodeo_origen_id)===String(e.rodeo_id)&&
       String(m.rodeo_destino_id)===String(e.rodeo_destino_id)&&Number(m.cantidad)===Number(e.cant_animales)
