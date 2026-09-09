@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_211';
+const APP_VERSION = 'index_consolidado_4_6_155_212';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10527,7 +10527,7 @@ function buildEngorde() {
   // Formulario pesada y historial de pesadas → MOVIDOS a la pestaña Pesadas
   // (no se muestran en el Dashboard de Terminación)
 
-  if (page === 'engorde') {
+  if (page === 'engorde' || page === 'engorde_costos') {
     const rodeosAllEng = (S.catalogs&&S.catalogs.rodeos)||[];
     const rodeosAllMap_ = Object.fromEntries(rodeosAllEng.map(r=>[String(r.rodeo_id),r]));
     // Mismo puente campaña-texto → catálogo real que se usa en
@@ -10596,7 +10596,7 @@ function buildEngorde() {
       })),
     ].sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
 
-    if (todasCesRec.length) {
+    if (page === 'engorde_costos' && todasCesRec.length) {
       h += `<div class="panel"><div class="panel-title">⬇ Cesiones recibidas de Recría — detalle</div>
         <div class="tw"><table class="dt"><thead><tr>
           <th>Fecha</th><th>Rodeo origen</th><th>Rodeo destino</th>
@@ -10626,30 +10626,70 @@ function buildEngorde() {
     // traía siempre TODAS las ventas históricas de Terminación.
     const ventasEng = (S.cache.ventas||[]).filter(v=>rodeosEng.some(r=>String(r.rodeo_id)===String(v.rodeo_id))&&filtroCampanaDet_(v.fecha_salida, v.campana_id))
       .sort((a,b)=>String(a.fecha_salida||'').localeCompare(String(b.fecha_salida||'')));
-    if (ventasEng.length) {
-      h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle</div>
-        <div class="tw"><table class="dt"><thead><tr>
-          <th>Fecha</th><th>Corral</th><th class="tc">Cab.</th>
-          <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Total</th>
-        </tr></thead><tbody>`;
-      let totVent=0;
-      ventasEng.forEach(v=>{
-        const cant=Number(v.cant_animales)||0, kg=Number(v.peso_campo_kg)||0;
-        const pPact=Number(v.precio_pactado)||0, imLiq=Number(v.importe_liq)||0;
-        const total=imLiq||(pPact*kg)||0;
-        totVent+=total;
-        h += `<tr${!imLiq?' style="background:rgba(200,150,40,0.04)"':''}>
-          <td>${fd(v.fecha_salida)}</td><td><strong>${rodeoNombre(v.rodeo_id)}</strong></td>
-          <td class="tc">${fn(cant)}</td>
-          <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
-          <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
-          <td class="tr">${imLiq?fm(imLiq):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
-          <td class="tr"><strong>${total?fm(total):'—'}</strong></td>
+    if (page === 'engorde_costos') {
+      if (ventasEng.length) {
+        h += `<div class="panel"><div class="panel-title">💰 Ventas — detalle</div>
+          <div class="tw"><table class="dt"><thead><tr>
+            <th>Fecha</th><th>Corral</th><th class="tc">Cab.</th>
+            <th class="tr">Kg campo</th><th class="tr">Precio pactado</th><th class="tr">Importe liq.</th><th class="tr">Total</th>
+          </tr></thead><tbody>`;
+        let totVent=0;
+        ventasEng.forEach(v=>{
+          const cant=Number(v.cant_animales)||0, kg=Number(v.peso_campo_kg)||0;
+          const pPact=Number(v.precio_pactado)||0, imLiq=Number(v.importe_liq)||0;
+          const total=imLiq||(pPact*kg)||0;
+          totVent+=total;
+          h += `<tr${!imLiq?' style="background:rgba(200,150,40,0.04)"':''}>
+            <td>${fd(v.fecha_salida)}</td><td><strong>${rodeoNombre(v.rodeo_id)}</strong></td>
+            <td class="tc">${fn(cant)}</td>
+            <td class="tr">${kg?fn(kg)+' kg':'—'}</td>
+            <td class="tr">${pPact?'$ '+fn(pPact)+'/kg':'—'}</td>
+            <td class="tr">${imLiq?fm(imLiq):'<span style="color:var(--gold-text);font-size:11px">pendiente</span>'}</td>
+            <td class="tr"><strong>${total?fm(total):'—'}</strong></td>
+          </tr>`;
+        });
+        h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL ventas</td>
+          <td class="tr" style="color:var(--green-text);font-size:15px">${fm(totVent)}</td></tr>`;
+        h += `</tbody></table></div></div>`;
+      }
+    } else if (page === 'engorde') {
+      // ── Resumen de Ventas por categoría de corral — reemplaza el detalle
+      // línea por línea (que se movió a Costos), mismo patrón que Cría/Recría.
+      if (ventasEng.length) {
+        const porCategoriaVentaEng = {};
+        ventasEng.forEach(v => {
+          const rodeo = rodeosAllMap_[String(v.rodeo_id)];
+          const cat = rodeo?.categoria || 'sin categoría';
+          const kg = Number(v.peso_campo_kg)||0;
+          const total = Number(v.importe_liq) || (Number(v.precio_pactado)*kg) || 0;
+          if (!porCategoriaVentaEng[cat]) porCategoriaVentaEng[cat] = { cant: 0, cab: 0, kg: 0, total: 0 };
+          porCategoriaVentaEng[cat].cant += 1;
+          porCategoriaVentaEng[cat].cab += Number(v.cant_animales) || 0;
+          porCategoriaVentaEng[cat].kg += kg;
+          porCategoriaVentaEng[cat].total += total;
+        });
+        let totCabVentaEng=0, totKgVentaEng=0, totValVentaEng=0;
+        h += `<div class="panel">
+          <div class="panel-title">💰 Ventas — resumen por categoría</div>
+          <div class="tw"><table class="dt"><thead><tr>
+            <th>Categoría</th><th class="tc">Ventas</th><th class="tc">Cab.</th><th class="tr">Kg campo</th><th class="tr">Total</th>
+          </tr></thead><tbody>`;
+        Object.keys(porCategoriaVentaEng).sort().forEach(cat => {
+          const d = porCategoriaVentaEng[cat];
+          totCabVentaEng += d.cab; totKgVentaEng += d.kg; totValVentaEng += d.total;
+          const catLabel = cat.charAt(0).toUpperCase() + cat.slice(1);
+          h += `<tr><td><strong>${catLabel}</strong></td><td class="tc">${fn(d.cant)}</td><td class="tc">${fn(d.cab)}</td>
+            <td class="tr">${d.kg?fn(d.kg)+' kg':'—'}</td><td class="tr"><strong>${fm(d.total)}</strong></td></tr>`;
+        });
+        h += `<tr style="background:var(--bg2);font-weight:800">
+          <td class="tr">TOTAL ventas</td><td class="tc">${fn(ventasEng.length)}</td><td class="tc">${fn(totCabVentaEng)}</td>
+          <td class="tr">${totKgVentaEng?fn(totKgVentaEng)+' kg':'—'}</td>
+          <td class="tr" style="color:var(--green-text);font-size:15px">${fm(totValVentaEng)}</td>
         </tr>`;
-      });
-      h += `<tr style="background:var(--bg2);font-weight:800"><td colspan="6" class="tr">TOTAL ventas</td>
-        <td class="tr" style="color:var(--green-text);font-size:15px">${fm(totVent)}</td></tr>`;
-      h += `</tbody></table></div></div>`;
+        h += `</tbody></table></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px 4px">Detalle fecha por fecha en <a href="javascript:void(0)" onclick="goto('engorde_costos')">💲 Costos</a>.</div>
+        </div>`;
+      }
     }
 
     // 5) Detalle por corral + KPIs productivos — SACADO DE ACÁ. Convivía mal
@@ -10665,11 +10705,11 @@ function buildEngorde() {
     const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
     const corteEngLocal = S._corteEng || today();
 
-    // 6) Mortandad — al final
+    // 6) Mortandad — al final (solo Dashboard, no se repite en Costos)
     const rodeosEngIdsLocal = new Set(rodeosEngFiltLocal.map(r=>String(r.rodeo_id)));
     const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIdsLocal.has(String(m.rodeo_id)) && filtroCampanaDet_(m.fecha, m.campana_id));
     const mortEngTotal = mortandadEngFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
-    if (mortEngTotal > 0) {
+    if (page === 'engorde' && mortEngTotal > 0) {
       const mortEngPorRodeo = {};
       mortandadEngFilt.forEach(m => { mortEngPorRodeo[m.rodeo_id] = (mortEngPorRodeo[m.rodeo_id] || 0) + (Number(m.cantidad) || 1); });
       h += `<div class="panel" style="border:2px solid var(--red);background:rgba(200,50,50,0.06);margin-bottom:16px">
