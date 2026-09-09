@@ -20,7 +20,7 @@
   --bg: #faf8f4; --bg2: #f3efe6; --bg3: #ece5d6;
   --text: #2b261f; --text2: #6b6357; --text3: #a39a89;
   --border: rgba(43,38,31,0.1); --border2: rgba(43,38,31,0.18);
-  --green: #2f6b3f; --green-dark: #1f4d2b; --green-bg: #e6efe3; --green-text: #1f4d2b;a
+  --green: #2f6b3f; --green-dark: #1f4d2b; --green-bg: #e6efe3; --green-text: #1f4d2b;
   --clay: #a8512f; --clay-bg: #f6e8e0; --clay-text: #7a3a20;
   --gold: #b8860b; --gold-bg: #f5edd8; --gold-text: #8a6508;
   --red: #b3261e; --red-bg: #fbeae8; --red-text: #8c1d17;
@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_214';
+const APP_VERSION = 'index_consolidado_4_6_155_215';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10467,6 +10467,37 @@ function buildEngorde() {
     </div>
   </div>`;
 
+  // Selector de Campaña + Campo (Costos) — MISMO estado que usa el Dashboard
+  // (S._dashEngCampana / S._dashEngCampo), no una copia aparte: cambiás uno
+  // y el otro queda sincronizado apenas cambiás de pestaña.
+  if (page === 'engorde_costos') {
+    const campanasCostosSel_ = [...new Set(
+      (S.cache.campanas||[]).map(c=>c.nombre).filter(Boolean).filter(esCampanaValida_)
+    )].sort((a,b)=>b.localeCompare(a));
+    const campSelecCostosSel_ = S._dashEngCampana || campanasCostosSel_[0] || '';
+    const camposCostosSel_ = (S.catalogs && S.catalogs.campos) || [];
+    h += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:13px;font-weight:600;white-space:nowrap">Campaña:</label>
+        ${campanasCostosSel_.length
+          ? `<select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:140px"
+              onchange="S._dashEngCampana=this.value;render()">
+              ${campanasCostosSel_.map(c=>`<option value="${c}" ${c===campSelecCostosSel_?'selected':''}>${c}</option>`).join('')}
+            </select>`
+          : '<span style="font-size:13px;color:var(--text3)">Sin campañas</span>'
+        }
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:13px;font-weight:600;white-space:nowrap">Campo:</label>
+        <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:160px"
+          onchange="S._dashEngCampo=this.value;render()">
+          <option value="">Todos los campos</option>
+          ${camposCostosSel_.map(c=>`<option value="${c.campo_id}" ${String(c.campo_id)===String(S._dashEngCampo||'')?'selected':''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+  }
+
   // Selector de corral (Proyección de Salidas y Proyección de Costos siguen
   // siendo por corral puntual — Costos ya no, desde que pasó a compartir el
   // mismo resumen por campaña que Dashboard; ver buildEngordeDashboard_).
@@ -10510,7 +10541,10 @@ function buildEngorde() {
   }
 
   if (page === 'engorde') h += buildEngordeDashboard_(rodeosEng, fm);
-  else if (page === 'engorde_costos') h += buildEngordeDashboard_(rodeosEng, fm, true);
+  // engorde_costos ya no llama a buildEngordeDashboard_ — mostraba el mismo
+  // panel de Ingresos/Egresos/Margen que Dashboard, redundante ahí. Costos
+  // arma su propio selector (Campaña + Campo) y contenido más abajo, en el
+  // bloque compartido if (page === 'engorde' || page === 'engorde_costos').
   else if (page === 'engorde_comparacion') h += buildEngordeComparacion_(rodeosEng, fm);
   else if (page === 'engorde_proyeccion') h += buildEngordeProyeccion_(egGetCorralId(), fm);
   else if (page === 'engorde_cierre') h += buildEngordeCierre_(egGetCorralId(), fm);
@@ -10714,10 +10748,39 @@ function buildEngorde() {
       consumosC.forEach(c => {
         const pid = String(c.producto_id);
         const importe = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
-        const row = {fecha:c.fecha, prod:prodPorIdC[pid]?.nombre||'—', cant:Number(c.cantidad)||0, rodeo:rodeoNombre(c.rodeo_id), costo:importe};
+        const row = {fecha:c.fecha, prod:prodPorIdC[pid]?.nombre||'—', unidad:prodPorIdC[pid]?.unidad||'', cant:Number(c.cantidad)||0, rodeo:rodeoNombre(c.rodeo_id), costo:importe};
         if (prodPorIdC[pid]?.categoria === 'Veterinaria') detalleVetC.push(row);
         else detalleAlimC.push(row);
       });
+      // ── Resumen por producto — Maíz X kg, Concentrado X kg, etc. ────────
+      // Agrupa el mismo detalle de abajo por producto, sumando cantidad
+      // (en la unidad propia de cada insumo) y costo — para tener de un
+      // vistazo cuánto se gastó en cada cosa, sin bajar al detalle.
+      const buildResumenInsumoEng_ = (filas, titulo, icono) => {
+        if (!filas.length) return '';
+        const porProd = {};
+        filas.forEach(d => {
+          if (!porProd[d.prod]) porProd[d.prod] = { cant: 0, costo: 0, unidad: d.unidad };
+          porProd[d.prod].cant += d.cant;
+          porProd[d.prod].costo += d.costo;
+        });
+        let tot = 0;
+        let t = `<div class="panel"><div class="panel-title">${icono} ${titulo} — resumen por producto</div>
+          <div class="tw"><table class="dt"><thead><tr>
+            <th>Producto</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+          </tr></thead><tbody>`;
+        Object.keys(porProd).sort((a,b)=>porProd[b].costo-porProd[a].costo).forEach(prod => {
+          const d = porProd[prod];
+          tot += d.costo;
+          t += `<tr><td>${prod}</td><td class="tc">${fn(d.cant)} ${d.unidad||''}</td><td class="tr"><strong>${fm(d.costo)}</strong></td></tr>`;
+        });
+        t += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2" class="tr">TOTAL</td>
+          <td class="tr" style="color:var(--clay-text);font-size:15px">${fm(tot)}</td></tr>`;
+        t += `</tbody></table></div></div>`;
+        return t;
+      };
+      h += buildResumenInsumoEng_(detalleAlimC, 'Alimentación e insumos', '🌾');
+      h += buildResumenInsumoEng_(detalleVetC, 'Veterinaria', '💉');
       h += buildDetalleInsumosFiltrable_(detalleAlimC, '🌾 Alimentación — detalle', fm, true, 'engorde-costos-alim');
       h += buildDetalleInsumosFiltrable_(detalleVetC,  '💉 Veterinaria — detalle', fm, true, 'engorde-costos-vet');
     }
