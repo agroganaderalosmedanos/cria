@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_208';
+const APP_VERSION = 'index_consolidado_4_6_155_209';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2547,6 +2547,11 @@ function efTerminacionCampanaStockPorRodeo_(campanaId) {
 }
 
 function buildDashboard() {
+  // page distingue 'dashboard' (resumen, tamaño acotado) de 'dashboard_costos'
+  // (detalle línea por línea que crece sin límite) — mismo patrón que ya usa
+  // buildEngorde() para separar 'engorde' de 'engorde_costos'. Ningún cálculo
+  // cambia entre una y otra: es solo qué bloques se imprimen al final.
+  const page = S.page;
   // Mostrar loader mientras cargan los datos
   if (!S.cache.movimientos || !S.cache.ventas || !S.cache.campanas) {
     return '<div class="loader"><div class="spinner"></div>Cargando datos del dashboard…</div>';
@@ -3424,6 +3429,13 @@ function buildDashboard() {
     h += '</div>';
   }
 
+  // ── Detalle (Cesiones, Ventas, Alimentación, Veterinaria) ──────────────
+  // En el Dashboard va el resumen (tamaño acotado); el detalle línea por
+  // línea (que crece sin límite con el correr de los meses) vive en la
+  // pestaña "Costos". Ningún total cambia entre una y otra — es el mismo
+  // dato ya calculado arriba, solo agrupado distinto. Mismo patrón que ya
+  // usa Terminación para separar 'engorde' de 'engorde_costos'.
+  if (page === 'dashboard_costos') {
   // ── Detalle Cesiones enviadas a Recría ─────────────────────────────────────────
   if (cesiones.length) {
     h += `<div class="panel">
@@ -3589,6 +3601,73 @@ function buildDashboard() {
   };
   if (detalleAlimCria.length) h += buildInsumoTableCria_(detalleAlimCria, '🌿 Alimentación e insumos — detalle');
   if (detalleVetCria.length)  h += buildInsumoTableCria_(detalleVetCria,  '💉 Veterinaria — detalle');
+  } else {
+    // ── Resumen de Ventas por categoría de rodeo ──────────────────────
+    if (ventasCria.length) {
+      const porCategoriaVenta = {};
+      ventasCria.forEach(v => {
+        const rodeo = rodeosPorId[String(v.rodeo_id)];
+        const cat = rodeo?.categoria || 'sin categoría';
+        const total = Number(v.importe_liq) || (Number(v.precio_pactado) * (Number(v.peso_campo_kg) || Number(v.cant_animales))) || 0;
+        const totalConv = convertirAMoneda_(total, v.fecha_salida, _criaMoneda);
+        if (!porCategoriaVenta[cat]) porCategoriaVenta[cat] = { cant: 0, cab: 0, kg: 0, total: 0 };
+        porCategoriaVenta[cat].cant += 1;
+        porCategoriaVenta[cat].cab += Number(v.cant_animales) || 0;
+        porCategoriaVenta[cat].kg += Number(v.peso_campo_kg) || 0;
+        porCategoriaVenta[cat].total += totalConv;
+      });
+      let totCabVenta = 0, totKgVenta = 0, totValVenta = 0;
+      h += `<div class="panel">
+        <div class="panel-title">💰 Ventas — resumen por categoría</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Categoría</th><th class="tc">Ventas</th><th class="tc">Cab.</th><th class="tr">Kg campo</th><th class="tr">Total</th>
+        </tr></thead><tbody>`;
+      Object.keys(porCategoriaVenta).sort().forEach(cat => {
+        const d = porCategoriaVenta[cat];
+        totCabVenta += d.cab; totKgVenta += d.kg; totValVenta += d.total;
+        const catLabel = cat.charAt(0).toUpperCase() + cat.slice(1);
+        h += `<tr><td><strong>${catLabel}</strong></td><td class="tc">${fn(d.cant)}</td><td class="tc">${fn(d.cab)}</td>
+          <td class="tr">${d.kg?fn(d.kg)+' kg':'—'}</td><td class="tr"><strong>${fnMoneda_(d.total,_criaMoneda)}</strong></td></tr>`;
+      });
+      h += `<tr style="background:var(--bg2);font-weight:800">
+        <td class="tr">TOTAL ventas</td><td class="tc">${fn(ventasCria.length)}</td><td class="tc">${fn(totCabVenta)}</td>
+        <td class="tr">${totKgVenta?fn(totKgVenta)+' kg':'—'}</td>
+        <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totValVenta,_criaMoneda)}</td>
+      </tr>`;
+      h += `</tbody></table></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px 4px">Detalle fecha por fecha en <a href="javascript:void(0)" onclick="goto('dashboard_costos')">💲 Costos</a>.</div>
+      </div>`;
+    }
+
+    // ── Resumen de Alimentación y Veterinaria por producto ────────────
+    const buildResumenInsumoCria_ = (filas, titulo, icono) => {
+      if (!filas.length) return '';
+      const porProd = {};
+      filas.forEach(d => {
+        if (!porProd[d.prod]) porProd[d.prod] = { cant: 0, costo: 0 };
+        porProd[d.prod].cant += d.cant;
+        porProd[d.prod].costo += d.costo;
+      });
+      let tot = 0;
+      let t = `<div class="panel"><div class="panel-title">${icono} ${titulo} — resumen por producto</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Producto</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+        </tr></thead><tbody>`;
+      Object.keys(porProd).sort((a,b)=>porProd[b].costo-porProd[a].costo).forEach(prod => {
+        const d = porProd[prod];
+        tot += d.costo;
+        t += `<tr><td>${prod}</td><td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fnMoneda_(d.costo,_criaMoneda)}</strong></td></tr>`;
+      });
+      t += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2" class="tr">TOTAL</td>
+        <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(tot,_criaMoneda)}</td></tr>`;
+      t += `</tbody></table></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px 4px">Detalle consumo por consumo en <a href="javascript:void(0)" onclick="goto('dashboard_costos')">💲 Costos</a>.</div>
+      </div>`;
+      return t;
+    };
+    h += buildResumenInsumoCria_(detalleAlimCria, 'Alimentación e insumos', '🌿');
+    h += buildResumenInsumoCria_(detalleVetCria, 'Veterinaria', '💉');
+  }
 
   // Mortandad y Abortos — en el Dashboard va solo el total con impacto en el
   // stock valorizado; el detalle por rodeo/registro vive en "Análisis de
