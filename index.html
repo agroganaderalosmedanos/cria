@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_209';
+const APP_VERSION = 'index_consolidado_4_6_155_210';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1060,6 +1060,7 @@ const NAV = [
   ]},
   { section: 'Recría', icon: 'ti-arrow-up-circle', defaultPage: 'recria_dashboard', items: [
     { k: 'recria_dashboard', icon: 'ti-chart-bar',  label: 'Dashboard' },
+    { k: 'recria_dashboard_costos', icon: 'ti-coin', label: 'Costos' },
     { k: 'cesiones_recria',  icon: 'ti-arrow-right', label: 'Cesiones' },
   ]},
   { section: 'Terminación', icon: 'ti-meat', defaultPage: 'engorde', items: [
@@ -1113,7 +1114,7 @@ async function goto(page) {
   // Normalmente ya está cargado por el paquete inicial (initBundle), esto es
   // solo una red de seguridad para el caso de entrar a la página antes de que
   // ese paquete termine.
-  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'dashboard_costos' || page === 'recria_dashboard' || page === 'engorde' || page === 'engorde_costos' || page === 'engorde_comparacion' || page === 'engorde_proyeccion' || page === 'engorde_cierre' || page === 'engorde_historial') && !S.cache.campanas) {
+  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'dashboard_costos' || page === 'recria_dashboard' || page === 'recria_dashboard_costos' || page === 'engorde' || page === 'engorde_costos' || page === 'engorde_comparacion' || page === 'engorde_proyeccion' || page === 'engorde_cierre' || page === 'engorde_historial') && !S.cache.campanas) {
     try { await loadEntity('campanas'); } catch (err) { /* silencioso */ }
   }
   // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
@@ -1244,7 +1245,7 @@ async function goto(page) {
     if (!S.cache.pesadas)         { try { await loadEntity('pesadas'); } catch(e){} }
     if (!S.resumenRecria)         { try { S.resumenRecria = await apiCall('resumenRecria'); } catch(e){} }
   }
-  if (page === 'recria_dashboard') {
+  if (page === 'recria_dashboard' || page === 'recria_dashboard_costos') {
     const recLoads = [];
     if (!S.resumenRecria)           recLoads.push(apiCall('resumenRecria').then(d=>{ S.resumenRecria=d; }).catch(()=>{}));
     if (!S.cache.pesadas)           recLoads.push(loadEntity('pesadas').catch(()=>{}));
@@ -1422,7 +1423,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', dashboard_costos: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    home: '', recria_dashboard: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde',
+    home: '', recria_dashboard: 'Dashboard Recría', recria_dashboard_costos: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde',
   };
   return titles[p] || p;
 }
@@ -1463,7 +1464,8 @@ function buildPage(page) {
     case 'ventas':      return buildVentas();
     case 'insumos':     return buildInsumos();
     case 'margenbruto': return buildMargenBruto();
-    case 'recria_dashboard':  return buildRecriaDashboard();
+    case 'recria_dashboard':
+    case 'recria_dashboard_costos':  return buildRecriaDashboard();
     case 'cesiones_cria':     return buildCesionesCria();
     case 'cesiones_recria':   return buildCesionesRecria();
     case 'engorde':
@@ -1560,7 +1562,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, dashboard_costos: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -7345,6 +7347,9 @@ function attachMovimientosEvents() {
 
 // ── RECRÍA ────────────────────────────────────────────────────────────────
 function buildRecriaDashboard() {
+  // page distingue 'recria_dashboard' (resumen) de 'recria_dashboard_costos'
+  // (detalle) — mismo patrón que buildDashboard() (Cría) y buildEngorde().
+  const page = S.page;
   const rodeos    = (S.resumenRecria && S.resumenRecria.rodeos) || [];
   const campos    = (S.catalogs && S.catalogs.campos) || [];
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
@@ -7372,7 +7377,8 @@ function buildRecriaDashboard() {
   let h = `<div class="page-header">
     <div class="page-title">Dashboard Recría</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-      <button class="radio-pill selected" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill${S.page==='recria_dashboard'?' selected':''}" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill${S.page==='recria_dashboard_costos'?' selected':''}" onclick="goto('recria_dashboard_costos')">💲 Costos</button>
       <button class="radio-pill" onclick="goto('cesiones_cria')">⬇ Cesiones de Cría</button>
       <button class="radio-pill" onclick="goto('cesiones_recria')">⬆ Cesiones a Terminación</button>
       <button onclick="S.rcDashMoneda=S.rcDashMoneda==='USD'?'ARS':'USD';render()"
@@ -8238,6 +8244,11 @@ function buildRecriaDashboard() {
   // de más arriba, que ya muestra lo mismo con más contexto: heredado de la
   // campaña anterior + Saldos Iniciales propios de esta campaña.)
 
+  // ── Detalle (Cesiones, Ventas, Alimentación, Veterinaria) ──────────────
+  // Mismo patrón que Cría: en el Dashboard va el resumen (tamaño acotado);
+  // el detalle línea por línea vive en "Costos". Ningún total cambia entre
+  // una y otra, solo dónde se imprime.
+  if (page === 'recria_dashboard_costos') {
   // ── Detalle Cesiones recibidas de Cría — SCOPEADO POR CAMPAÑA (usa
   // movsCampanaRec, ya filtrado por campanaEfectiva_ === campaña elegida,
   // en vez de "movs" que solo filtraba por fecha de corte) ────────────────
@@ -8401,6 +8412,73 @@ function buildRecriaDashboard() {
   };
   if (detalleAlimCampanaRec.length) h += buildInsumoTableRec_(detalleAlimCampanaRec, `🌿 Alimentación e insumos — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})`);
   if (detalleVetCampanaRec.length)  h += buildInsumoTableRec_(detalleVetCampanaRec,  `💉 Veterinaria — detalle (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})`);
+  } else {
+    // ── Resumen de Ventas por categoría de rodeo ──────────────────────
+    if (ventasCampanaRec.length) {
+      const porCategoriaVentaRec = {};
+      ventasCampanaRec.forEach(v => {
+        const rodeo = rodeosAllMap[String(v.rodeo_id)];
+        const cat = rodeo?.categoria || 'sin categoría';
+        const total = Number(v.importe_liq) || (Number(v.precio_pactado) * (Number(v.peso_campo_kg) || Number(v.cant_animales))) || 0;
+        const totalConv = convertirAMoneda_(total, v.fecha_salida, moneda);
+        if (!porCategoriaVentaRec[cat]) porCategoriaVentaRec[cat] = { cant: 0, cab: 0, kg: 0, total: 0 };
+        porCategoriaVentaRec[cat].cant += 1;
+        porCategoriaVentaRec[cat].cab += Number(v.cant_animales) || 0;
+        porCategoriaVentaRec[cat].kg += Number(v.peso_campo_kg) || 0;
+        porCategoriaVentaRec[cat].total += totalConv;
+      });
+      let totCabVentaRec = 0, totKgVentaRec = 0, totValVentaRec = 0;
+      h += `<div class="panel">
+        <div class="panel-title">💰 Ventas — resumen por categoría (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Categoría</th><th class="tc">Ventas</th><th class="tc">Cab.</th><th class="tr">Kg campo</th><th class="tr">Total</th>
+        </tr></thead><tbody>`;
+      Object.keys(porCategoriaVentaRec).sort().forEach(cat => {
+        const d = porCategoriaVentaRec[cat];
+        totCabVentaRec += d.cab; totKgVentaRec += d.kg; totValVentaRec += d.total;
+        const catLabel = cat.charAt(0).toUpperCase() + cat.slice(1);
+        h += `<tr><td><strong>${catLabel}</strong></td><td class="tc">${fn(d.cant)}</td><td class="tc">${fn(d.cab)}</td>
+          <td class="tr">${d.kg?fn(d.kg)+' kg':'—'}</td><td class="tr"><strong>${fnMoneda_(d.total,moneda)}</strong></td></tr>`;
+      });
+      h += `<tr style="background:var(--bg2);font-weight:800">
+        <td class="tr">TOTAL ventas</td><td class="tc">${fn(ventasCampanaRec.length)}</td><td class="tc">${fn(totCabVentaRec)}</td>
+        <td class="tr">${totKgVentaRec?fn(totKgVentaRec)+' kg':'—'}</td>
+        <td class="tr" style="color:var(--green-text);font-size:15px">${fnMoneda_(totValVentaRec,moneda)}</td>
+      </tr>`;
+      h += `</tbody></table></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px 4px">Detalle fecha por fecha en <a href="javascript:void(0)" onclick="goto('recria_dashboard_costos')">💲 Costos</a>.</div>
+      </div>`;
+    }
+
+    // ── Resumen de Alimentación y Veterinaria por producto ────────────
+    const buildResumenInsumoRec_ = (filas, titulo, icono) => {
+      if (!filas.length) return '';
+      const porProd = {};
+      filas.forEach(d => {
+        if (!porProd[d.prod]) porProd[d.prod] = { cant: 0, costo: 0 };
+        porProd[d.prod].cant += d.cant;
+        porProd[d.prod].costo += d.costo;
+      });
+      let tot = 0;
+      let t = `<div class="panel"><div class="panel-title">${icono} ${titulo} — resumen por producto (campaña ${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:''})</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Producto</th><th class="tc">Cantidad</th><th class="tr">Costo</th>
+        </tr></thead><tbody>`;
+      Object.keys(porProd).sort((a,b)=>porProd[b].costo-porProd[a].costo).forEach(prod => {
+        const d = porProd[prod];
+        tot += d.costo;
+        t += `<tr><td>${prod}</td><td class="tc">${fn(d.cant)}</td><td class="tr"><strong>${fnMoneda_(d.costo,moneda)}</strong></td></tr>`;
+      });
+      t += `<tr style="background:var(--bg2);font-weight:800"><td colspan="2" class="tr">TOTAL</td>
+        <td class="tr" style="color:var(--clay-text);font-size:15px">${fnMoneda_(tot,moneda)}</td></tr>`;
+      t += `</tbody></table></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px 4px">Detalle consumo por consumo en <a href="javascript:void(0)" onclick="goto('recria_dashboard_costos')">💲 Costos</a>.</div>
+      </div>`;
+      return t;
+    };
+    h += buildResumenInsumoRec_(detalleAlimCampanaRec, 'Alimentación e insumos', '🌿');
+    h += buildResumenInsumoRec_(detalleVetCampanaRec, 'Veterinaria', '💉');
+  }
 
   // Mortandad — al final del dashboard, destacada en rojo
   if (mortTotal > 0) {
@@ -8463,6 +8541,7 @@ function buildCesionesCria() {
     <div class="page-sub">Registrá el traspaso de animales de Cría a Recría con precio de cesión $/kg</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       <button class="radio-pill" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill" onclick="goto('recria_dashboard_costos')">💲 Costos</button>
       <button class="radio-pill selected" onclick="goto('cesiones_cria')">⬇ Cesiones de Cría</button>
       <button class="radio-pill" onclick="goto('cesiones_recria')">⬆ Cesiones a Terminación</button>
     </div>
@@ -8811,6 +8890,7 @@ function buildCesionesRecria() {
     <div class="page-sub">Registrá el traspaso de animales de Recría a Terminación con precio de cesión $/kg</div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       <button class="radio-pill" onclick="goto('recria_dashboard')">📊 Dashboard</button>
+      <button class="radio-pill" onclick="goto('recria_dashboard_costos')">💲 Costos</button>
       <button class="radio-pill" onclick="goto('cesiones_cria')">⬇ Cesiones de Cría</button>
       <button class="radio-pill selected" onclick="goto('cesiones_recria')">⬆ Cesiones a Terminación</button>
     </div>
