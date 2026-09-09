@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_215';
+const APP_VERSION = 'index_consolidado_4_6_155_216';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -15222,7 +15222,7 @@ function buildMargenBruto() {
 
     // ── Gráfico de barras: Utilidad por actividad (flat, sin sombras) ──────
     const maxAbsMargen = Math.max(1, ...acts.map(a=>Math.abs(a.margen)));
-    const barW = 120, barGap = 60, chartH = 210, baseY = 230, chartW = acts.length*(barW+barGap)+barGap;
+    const barW = 120, barGap = 60, chartH = 180, baseY = 230, chartW = acts.length*(barW+barGap)+barGap;
     let barsSvg = `<svg viewBox="0 0 ${chartW} 290" style="width:100%;height:auto;max-width:480px">`;
     barsSvg += `<defs>`;
     acts.forEach((a,i)=>{
@@ -15246,8 +15246,15 @@ function buildMargenBruto() {
       const h = Math.round(Math.abs(a.margen)/maxAbsMargen*chartH);
       const y = a.margen>=0 ? baseY-h : baseY;
       const fillUrl = a.margen>=0 ? `url(#gradBar${uidCh}${i})` : `url(#gradBarNeg${uidCh})`;
+      // % de aporte a la ganancia TOTAL (no a los ingresos) — solo tiene sentido
+      // mostrarlo cuando el consolidado dio ganancia; si el total es negativo o
+      // cero, el % individual queda engañoso (puede superar 100% o invertirse).
+      const pctAporte = marTotal>0 ? (a.margen/marTotal*100) : null;
       barsSvg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,2)}" rx="6" fill="${fillUrl}" stroke="${a.margen>=0?a.colorHex:'#8c1d17'}" stroke-width="1"/>`;
-      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-11:y+h+24}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMBTotal(Math.abs(a.margen),Math.abs(a.margenUSD))}</text>`;
+      barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?(pctAporte!==null?y-24:y-11):(pctAporte!==null?y+h+41:y+h+24)}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--text)">${a.margen>=0?'':'-'}${fmMBTotal(Math.abs(a.margen),Math.abs(a.margenUSD))}</text>`;
+      if (pctAporte !== null) {
+        barsSvg += `<text x="${x+barW/2}" y="${a.margen>=0?y-9:y+h+24}" text-anchor="middle" font-size="13" font-weight="800" fill="${a.colorHex}">${pctAporte.toFixed(0)}% de la ganancia</text>`;
+      }
       barsSvg += `<text x="${x+barW/2}" y="${baseY+26}" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text2)">${a.emoji} ${a.nombre}</text>`;
     });
     barsSvg += `</svg>`;
@@ -15348,27 +15355,6 @@ function buildMargenBruto() {
       </div>`;
     }
 
-    h += `<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch">
-      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
-        <div class="panel-title">📊 Utilidad por actividad</div>
-        <div style="flex:1;display:flex;align-items:center;justify-content:center;padding-top:8px">${barsSvg}</div>
-      </div>
-      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
-        <div class="panel-title">🥧 Participación en ingresos</div>
-        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding-top:8px">
-          ${donaSvg}
-          <div style="display:flex;flex-direction:column;gap:6px;width:100%">
-            ${acts.map(a=>{ const pct = ingTotal>0?(Math.max(a.ing,0)/totalIngDona*100):0; return `
-            <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
-              <span style="width:10px;height:10px;border-radius:3px;background:${a.colorHex};flex-shrink:0"></span>
-              <span style="color:var(--text2);flex:1">${a.emoji} ${a.nombre}</span>
-              <strong>${pct.toFixed(0)}%</strong>
-            </div>`; }).join('')}
-          </div>
-        </div>
-      </div>
-    </div>`;
-
     h += `<div class="panel">
       <div class="panel-title">📋 Resumen por actividad</div>
       <table class="dt"><thead><tr><th>Actividad</th><th class="tc">Ingresos</th><th class="tc">Egresos</th><th class="tc">Utilidad</th><th class="tc">% Margen</th></tr></thead><tbody>
@@ -15391,6 +15377,27 @@ function buildMargenBruto() {
           <td class="tc" style="color:${mc}">${margenPct.toFixed(1)}%</td>
         </tr>
       </tbody></table>
+    </div>`;
+
+    h += `<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch">
+      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
+        <div class="panel-title">📊 Utilidad por actividad</div>
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;padding-top:8px">${barsSvg}</div>
+      </div>
+      <div class="panel" style="margin-bottom:0;display:flex;flex-direction:column">
+        <div class="panel-title">🥧 Participación en ingresos</div>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding-top:8px">
+          ${donaSvg}
+          <div style="display:flex;flex-direction:column;gap:6px;width:100%">
+            ${acts.map(a=>{ const pct = ingTotal>0?(Math.max(a.ing,0)/totalIngDona*100):0; return `
+            <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+              <span style="width:10px;height:10px;border-radius:3px;background:${a.colorHex};flex-shrink:0"></span>
+              <span style="color:var(--text2);flex:1">${a.emoji} ${a.nombre}</span>
+              <strong>${pct.toFixed(0)}%</strong>
+            </div>`; }).join('')}
+          </div>
+        </div>
+      </div>
     </div>`;
 
     // ── EXISTENCIAS (EI/EF consolidado — cabezas e importe) ────────────────
@@ -15700,7 +15707,9 @@ function buildMargenBruto() {
   }
 
   if (tabMB === 'resultado') {
-    h += buildDetalleIngresosEgresosPorActividad_();
+    // El detalle de Ingresos/Egresos por actividad se sacó de acá — quedaba
+    // duplicado con el mismo detalle que ya muestra "Reporte Directorio"
+    // (que además es la versión pensada para imprimir/PDF). Se deja solo ahí.
 
     h += `<div class="panel" style="background:${mb2};border:2px solid ${mc};margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -15712,20 +15721,12 @@ function buildMargenBruto() {
       </div>
     </div>`;
 
-    // Verificación
-    h += `<div class="panel" style="padding:14px 16px">
-      <div class="panel-title" style="font-size:12px">🔍 Verificación — suma de los 3 márgenes individuales</div>
-      <div class="tw"><table class="dt"><tbody>
-        <tr><td>🐄 Cría</td><td class="tr" style="color:${rCria.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rCria.margen>=0?'':'-'}${fmMBTotal(Math.abs(rCria.margen),Math.abs(rCria.margenUSD))}</td></tr>
-        <tr><td>🌱 Recría</td><td class="tr" style="color:${rRec.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rRec.margen>=0?'':'-'}${fmMBTotal(Math.abs(rRec.margen),Math.abs(rRec.margenUSD))}</td></tr>
-        <tr><td>🏭 Terminación</td><td class="tr" style="color:${rEng.margen>=0?'var(--green)':'var(--red)'};font-weight:600">${rEng.margen>=0?'':'-'}${fmMBTotal(Math.abs(rEng.margen),Math.abs(rEng.margenUSD))}</td></tr>
-        <tr style="background:${mb2}"><td><strong>Suma de los 3</strong></td><td class="tr" style="color:${mc};font-weight:800">${marTotal>=0?'':'-'}${fmMBTotal(Math.abs(marTotal),Math.abs(marTotalUSD))}</td></tr>
-      </tbody></table></div>
-    </div>`;
-
-    h += buildVerificacionValuacion_('🐄 Cría', rCria.detalle, fmMB, 'vv-cria');
-    h += buildVerificacionValuacion_('🌱 Recría', rRec.detalle, fmMB, 'vv-recria');
-    h += buildVerificacionValuacion_('🏭 Terminación', rEng.detalle, fmMB, 'vv-eng');
+    // Los paneles de "Verificación" (suma de los 3 márgenes + detalle de
+    // valuación EI/EF/Cesiones por actividad, con buildVerificacionValuacion_)
+    // se sacaron de acá — eran herramientas de auditoría de cuando se estaba
+    // depurando el consolidado, no le aportan nada al informe ya cerrado.
+    // buildVerificacionValuacion_() queda definida en el archivo por si hace
+    // falta reactivarla puntualmente para auditar algo más adelante.
 
     // Ranking
     const acts = [
