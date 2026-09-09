@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_210';
+const APP_VERSION = 'index_consolidado_4_6_155_211';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3167,6 +3167,12 @@ function buildDashboard() {
   // Campaña — pendiente).
   // esCampanaActivaCria ya se calculó más arriba (hace falta también para
   // Ventas/Movimientos/Consumos/Compras/Mortandad, no solo para este panel).
+  //
+  // Todo este bloque (Estado reproductivo, Ingresos/Egresos, Margen, EF, EI)
+  // es el "resumen" del Dashboard — en Costos no se repite, ahí va solo el
+  // detalle línea por línea. Nada de lo calculado más arriba se recalcula
+  // acá, así que saltear este bloque en Costos no afecta ningún total.
+  if (page === 'dashboard') {
   if (!esCampanaActivaCria) {
     h += `<div class="panel">
       <div class="panel-title">🐮 Estado reproductivo</div>
@@ -3430,6 +3436,7 @@ function buildDashboard() {
     </tr></tbody></table></div>`;
     h += '</div>';
   }
+  } // cierre if (page === 'dashboard') — fin del resumen, no se repite en Costos
 
   // ── Detalle (Cesiones, Ventas, Alimentación, Veterinaria) ──────────────
   // En el Dashboard va el resumen (tamaño acotado); el detalle línea por
@@ -8062,6 +8069,12 @@ function buildRecriaDashboard() {
   const totalEgresosCampanaRec = totalEICampanaRec + egCesionCriaCampanaRec + egAlimCampanaRec + egVetCampanaRec + egSueldosCampanaRec;
   const margenCampanaRec = totalIngresosCampanaRec - totalEgresosCampanaRec;
 
+  // Todo este bloque (Campaña, Ingresos/Egresos, Margen, EF, EI, KPIs,
+  // Conciliación) es el "resumen" del Dashboard — en Costos no se repite,
+  // ahí va solo el detalle línea por línea. Nada de lo calculado más arriba
+  // se recalcula acá (S._resultRecria ya quedó asignado antes), así que
+  // saltear este bloque en Costos no afecta ningún total.
+  if (page === 'recria_dashboard') {
   h += `<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Campaña: <strong>${campSelecCampanaObjRec?campSelecCampanaObjRec.nombre:'—'}</strong>${esCampanaActivaRecria?' (activa — EF a la fecha de corte)':' (cerrada — EF fijo al '+fd(campSelecCampanaObjRec?.fecha_fin)+')'}</div>`;
   h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
 
@@ -8243,6 +8256,7 @@ function buildRecriaDashboard() {
   // duplicada con "Existencia Inicial (EI) valorizada — por rodeo, campaña X"
   // de más arriba, que ya muestra lo mismo con más contexto: heredado de la
   // campaña anterior + Saldos Iniciales propios de esta campaña.)
+  } // cierre if (page === 'recria_dashboard') — fin del resumen, no se repite en Costos
 
   // ── Detalle (Cesiones, Ventas, Alimentación, Veterinaria) ──────────────
   // Mismo patrón que Cría: en el Dashboard va el resumen (tamaño acotado);
