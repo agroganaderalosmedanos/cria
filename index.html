@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_217';
+const APP_VERSION = 'index_consolidado_4_6_155_218';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -15181,8 +15181,26 @@ function buildMargenBruto() {
   const mc  = marTotal>=0?'var(--green)':'var(--red)';
   const mb2 = marTotal>=0?'var(--green-bg)':'rgba(220,50,50,0.08)';
 
-  const mortandad = S.cache.mortandad||[];
-  const abortos   = S.cache.abortos||[];
+  // Criterio de campaña ÚNICO para toda esta pantalla (las 3 pestañas que
+  // comparten estas variables: Reporte Directorio, Resultado económico,
+  // Resultados productivos). campSelecMB ya es un campana_id real, así que
+  // se compara directo con campanaEfectiva_() — no hace falta ningún
+  // "puente" de texto libre como el que sí necesitan los dashboards
+  // individuales de Cría/Recría/Terminación.
+  const esCampanaActivaMB_ = !!(campSelecObjMB && (campSelecObjMB.activa===true || String(campSelecObjMB.activa).toUpperCase()==='TRUE'));
+  const filtroCampanaMB_ = (fecha, campanaId) => {
+    if (esCampanaActivaMB_ && (fecha||'') > corteGlobal) return false;
+    return campanaEfectiva_(fecha, campanaId) === String(campSelecMB);
+  };
+
+  // OJO — bug encontrado y corregido: mortandad/abortos se leían de
+  // S.cache SIN ningún filtro de fecha ni campaña, así que sumaban TODO el
+  // histórico desde que existe el sistema, sin importar qué campaña
+  // estuviera elegida arriba — afectaba a las 3 pestañas por igual, porque
+  // mortCria/mortRec/mortEng/mortTot/abortCria/abortRec/abortTot se calculan
+  // acá una sola vez y las comparten las tres.
+  const mortandad = (S.cache.mortandad||[]).filter(m => filtroCampanaMB_(m.fecha, m.campana_id));
+  const abortos   = (S.cache.abortos||[]).filter(a => filtroCampanaMB_(a.fecha, a.campana_id));
   const rodeosAll = (S.catalogs&&S.catalogs.rodeos)||[];
   const rodeosRec = new Set(((S.resumenRecria&&S.resumenRecria.rodeos)||[]).map(r=>String(r.rodeo_id)));
   const rodeosEng = new Set(rodeosEngordeValidos_().map(r=>String(r.rodeo_id)));
@@ -15766,16 +15784,8 @@ function buildMargenBruto() {
   }
 
   if (tabMB === 'costos') {
-    // Mismo criterio de campaña que el resto de esta pantalla: si la campaña
-    // elegida está en curso, se corta en corteGlobal; si ya cerró, se toma
-    // completa. campSelecMB ya es un campana_id real (no el texto libre que
-    // usan los dashboards individuales), así que acá se puede comparar
-    // directo con campanaEfectiva_() sin necesidad de ningún "puente".
-    const esCampanaActivaMB_ = !!(campSelecObjMB && (campSelecObjMB.activa===true || String(campSelecObjMB.activa).toUpperCase()==='TRUE'));
-    const filtroCampanaMB_ = (fecha, campanaId) => {
-      if (esCampanaActivaMB_ && (fecha||'') > corteGlobal) return false;
-      return campanaEfectiva_(fecha, campanaId) === String(campSelecMB);
-    };
+    // esCampanaActivaMB_ / filtroCampanaMB_ ya están definidas arriba,
+    // compartidas por toda la pantalla — no hace falta repetirlas acá.
     const productosMB_ = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
     const prodPorIdMB_ = Object.fromEntries(productosMB_.map(p=>[String(p.producto_id),p]));
     const consumosMB_ = (S.cache.consumos_insumos||[]).filter(c => filtroCampanaMB_(c.fecha, c.campana_id));
@@ -15964,6 +15974,14 @@ function buildMargenBruto() {
           <tr><td>Destete</td><td class="tc">${pctMB(kpi.destete?.indice_destete)}</td></tr>
         </tbody></table></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">% Parición</div>
+            <div style="font-size:20px;font-weight:800">${pctMB(kpi.paricion?.indice_paricion)}</div>
+          </div>
+          <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">% Destete</div>
+            <div style="font-size:20px;font-weight:800">${pctMB(kpi.destete?.indice_destete)}</div>
+          </div>
           <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
             <div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">Nacidos vivos</div>
             <div style="font-size:20px;font-weight:800">${fn(kpi.paricion?.nacidos_vivos||0)}</div>
