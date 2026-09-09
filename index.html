@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_216';
+const APP_VERSION = 'index_consolidado_4_6_155_217';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -15102,7 +15102,7 @@ function buildMargenBruto() {
     <div class="page-sub">Resultado económico consolidado de las tres actividades</div>
   </div>`;
 
-  const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'productivo', label:'📋 Resultados productivos' }];
+  const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'costos', label:'💲 Costos' }, { k:'productivo', label:'📋 Resultados productivos' }];
   h += `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
   h += `<button class="no-print btn btn-secondary btn-sm" onclick="exportarAuditoriaMargenBrutoExcel_()" style="margin-left:auto" title="Descarga un Excel con el resumen consolidado (ARS y U$S) y el detalle por actividad, para auditar sin pasar de pantalla en pantalla">📊 Exportar a Excel</button>
@@ -15186,6 +15186,7 @@ function buildMargenBruto() {
   const rodeosAll = (S.catalogs&&S.catalogs.rodeos)||[];
   const rodeosRec = new Set(((S.resumenRecria&&S.resumenRecria.rodeos)||[]).map(r=>String(r.rodeo_id)));
   const rodeosEng = new Set(rodeosEngordeValidos_().map(r=>String(r.rodeo_id)));
+  const rodeosCriaMB_ = new Set(rodeosAll.filter(r=>normAct_(r.actividad)==='cria').map(r=>String(r.rodeo_id)));
   const mortCria  = mortandad.filter(m=>{ const r=rodeosAll.find(x=>String(x.rodeo_id)===String(m.rodeo_id)); return r&&normAct_(r.actividad)==='cria'; }).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortRec   = mortandad.filter(m=>rodeosRec.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
   const mortEng   = mortandad.filter(m=>rodeosEng.has(String(m.rodeo_id))).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
@@ -15760,6 +15761,100 @@ function buildMargenBruto() {
           <tr style="background:rgba(200,50,50,0.1)"><td><strong>Total</strong></td><td class="tc" style="color:var(--red);font-weight:800;font-size:16px">${mortTot}</td></tr>
         </tbody></table></div>
         <div style="font-size:12px;color:var(--red);margin-top:8px">⚠ La mortandad no se contabiliza como egreso — su impacto está en el menor stock valorizado.</div>
+      </div>`;
+    }
+  }
+
+  if (tabMB === 'costos') {
+    // Mismo criterio de campaña que el resto de esta pantalla: si la campaña
+    // elegida está en curso, se corta en corteGlobal; si ya cerró, se toma
+    // completa. campSelecMB ya es un campana_id real (no el texto libre que
+    // usan los dashboards individuales), así que acá se puede comparar
+    // directo con campanaEfectiva_() sin necesidad de ningún "puente".
+    const esCampanaActivaMB_ = !!(campSelecObjMB && (campSelecObjMB.activa===true || String(campSelecObjMB.activa).toUpperCase()==='TRUE'));
+    const filtroCampanaMB_ = (fecha, campanaId) => {
+      if (esCampanaActivaMB_ && (fecha||'') > corteGlobal) return false;
+      return campanaEfectiva_(fecha, campanaId) === String(campSelecMB);
+    };
+    const productosMB_ = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+    const prodPorIdMB_ = Object.fromEntries(productosMB_.map(p=>[String(p.producto_id),p]));
+    const consumosMB_ = (S.cache.consumos_insumos||[]).filter(c => filtroCampanaMB_(c.fecha, c.campana_id));
+
+    // Agrupa por producto, separando cantidad/costo por actividad — para que
+    // la tabla final sea un cruce Producto × Actividad con el total de las 3.
+    const porProductoMB_ = {}; // prod -> { unidad, cria:{cant,costo}, recria:{...}, terminacion:{...} }
+    const actividadDe_ = (rodeoId) => {
+      const rid = String(rodeoId);
+      if (rodeosCriaMB_.has(rid)) return 'cria';
+      if (rodeosRec.has(rid)) return 'recria';
+      if (rodeosEng.has(rid)) return 'terminacion';
+      return null;
+    };
+    consumosMB_.forEach(c => {
+      const act = actividadDe_(c.rodeo_id);
+      if (!act) return; // consumo de un rodeo que no pertenece a ninguna de las 3 actividades (p.ej. reproductoras sin categorizar)
+      const pid = String(c.producto_id);
+      const prod = prodPorIdMB_[pid];
+      const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      if (cat.includes('veterin')||cat.includes('sanid')) return; // esta pestaña es de Alimentación — Veterinaria queda para otra vista
+      const nombre = prod?.nombre || ('Producto '+pid);
+      const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
+      const importe = convertirAMoneda_(importeARS, c.fecha, moneda);
+      if (!porProductoMB_[nombre]) porProductoMB_[nombre] = { unidad: prod?.unidad||'', cria:{cant:0,costo:0}, recria:{cant:0,costo:0}, terminacion:{cant:0,costo:0} };
+      porProductoMB_[nombre][act].cant += Number(c.cantidad)||0;
+      porProductoMB_[nombre][act].costo += importe;
+    });
+
+    const productosOrdenados = Object.keys(porProductoMB_).sort((a,b)=>{
+      const totA = porProductoMB_[a].cria.costo+porProductoMB_[a].recria.costo+porProductoMB_[a].terminacion.costo;
+      const totB = porProductoMB_[b].cria.costo+porProductoMB_[b].recria.costo+porProductoMB_[b].terminacion.costo;
+      return totB-totA;
+    });
+    // Los costos de acá arriba ya se convirtieron POR TRANSACCIÓN (fecha de
+    // cada consumo) a `moneda` — no son ARS crudos, así que se formatean
+    // directo, sin volver a pasar por fmMB()/fmMBTotal() (que asumen que
+    // reciben ARS y convierten con una única cotización, la del corte).
+    const fmMBCosto_ = v => moneda==='USD' ? 'U$D '+fn(v,2) : '$ '+fn(Math.round(v||0));
+
+    if (!productosOrdenados.length) {
+      h += '<div class="empty-state"><span class="ico">🌾</span><div class="msg">No hay consumos de Alimentación cargados en esta campaña.</div></div>';
+    } else {
+      let totCriaCant=0, totRecCant=0, totEngCant=0, totCriaCosto=0, totRecCosto=0, totEngCosto=0;
+      h += `<div class="panel">
+        <div class="panel-title">🌾 Alimentación consumida — por producto y actividad</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Campaña ${campSelecObjMB?campSelecObjMB.nombre:'—'}${esCampanaActivaMB_?' (en curso, hasta '+fd(corteGlobal)+')':' (cerrada)'} · unifica los consumos de Cría, Recría y Terminación</div>
+        <div class="tw"><table class="dt"><thead><tr>
+          <th>Producto</th>
+          <th class="tr">🐄 Cría</th><th class="tr">🌱 Recría</th><th class="tr">🏭 Terminación</th>
+          <th class="tr" style="border-left:2px solid var(--border2)">TOTAL cantidad</th><th class="tr">TOTAL costo</th>
+        </tr></thead><tbody>`;
+      productosOrdenados.forEach(nombre => {
+        const d = porProductoMB_[nombre];
+        const totCant = d.cria.cant+d.recria.cant+d.terminacion.cant;
+        const totCosto = d.cria.costo+d.recria.costo+d.terminacion.costo;
+        totCriaCant+=d.cria.cant; totRecCant+=d.recria.cant; totEngCant+=d.terminacion.cant;
+        totCriaCosto+=d.cria.costo; totRecCosto+=d.recria.costo; totEngCosto+=d.terminacion.costo;
+        h += `<tr>
+          <td style="font-weight:600">${nombre}</td>
+          <td class="tr">${d.cria.cant?fn(d.cria.cant)+' '+d.unidad:'—'}</td>
+          <td class="tr">${d.recria.cant?fn(d.recria.cant)+' '+d.unidad:'—'}</td>
+          <td class="tr">${d.terminacion.cant?fn(d.terminacion.cant)+' '+d.unidad:'—'}</td>
+          <td class="tr" style="border-left:2px solid var(--border2);font-weight:700">${fn(totCant)} ${d.unidad}</td>
+          <td class="tr"><strong>${fmMBCosto_(totCosto)}</strong></td>
+        </tr>`;
+      });
+      const totCantGeneral = totCriaCant+totRecCant+totEngCant;
+      const totCostoGeneral = totCriaCosto+totRecCosto+totEngCosto;
+      h += `<tr style="background:var(--bg2);font-weight:800">
+        <td>TOTAL</td>
+        <td class="tr">${fn(totCriaCant)}</td>
+        <td class="tr">${fn(totRecCant)}</td>
+        <td class="tr">${fn(totEngCant)}</td>
+        <td class="tr" style="border-left:2px solid var(--border2)">${fn(totCantGeneral)}</td>
+        <td class="tr" style="color:var(--clay-text);font-size:15px">${fmMBCosto_(totCostoGeneral)}</td>
+      </tr>`;
+      h += `</tbody></table></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px">La columna "TOTAL cantidad" solo suma entre actividades cuando el producto usa la misma unidad en las tres — si un mismo insumo se carga con unidades distintas según la actividad, esa suma no es comparable (revisar el catálogo de Productos).</div>
       </div>`;
     }
   }
