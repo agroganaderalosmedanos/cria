@@ -20,7 +20,7 @@
   --bg: #faf8f4; --bg2: #f3efe6; --bg3: #ece5d6;
   --text: #2b261f; --text2: #6b6357; --text3: #a39a89;
   --border: rgba(43,38,31,0.1); --border2: rgba(43,38,31,0.18);
-  --green: #2f6b3f; --green-dark: #1f4d2b; --green-bg: #e6efe3; --green-text: #1f4d2b;
+  --green: #2f6b3f; --green-dark: #1f4d2b; --green-bg: #e6efe3; --green-text: #1f4d2b;a
   --clay: #a8512f; --clay-bg: #f6e8e0; --clay-text: #7a3a20;
   --gold: #b8860b; --gold-bg: #f5edd8; --gold-text: #8a6508;
   --red: #b3261e; --red-bg: #fbeae8; --red-text: #8c1d17;
@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_213';
+const APP_VERSION = 'index_consolidado_4_6_155_214';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10467,8 +10467,10 @@ function buildEngorde() {
     </div>
   </div>`;
 
-  // Selector de corral (para costos)
-  if (page === 'engorde_costos' || page === 'engorde_proyeccion' || page === 'engorde_cierre') {
+  // Selector de corral (Proyección de Salidas y Proyección de Costos siguen
+  // siendo por corral puntual — Costos ya no, desde que pasó a compartir el
+  // mismo resumen por campaña que Dashboard; ver buildEngordeDashboard_).
+  if (page === 'engorde_proyeccion' || page === 'engorde_cierre') {
     const campos = (S.catalogs && S.catalogs.campos) || [];
     h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:8px">
@@ -10486,22 +10488,12 @@ function buildEngorde() {
           style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px">
           <option value="">— Todos los corrales —</option>
           ${(() => {
-            // Proyección de Salidas y Proyección de Costos/Cierre: un corral cerrado
-            // (stock 0) no tiene nada que proyectar, así que se siguen ocultando ahí.
-            // Costos SÍ debe mostrarlos — es la pantalla donde justamente querés
-            // revisar el detalle de un corral que ya cerró (costo de entrada, cesión
-            // enviada/recibida, alimentación acumulada), no solo la foto resumida
-            // que guarda Historial.
             const corteSel = S._corteEng || today();
             const stockSel = stockPorRodeoACorte_(corteSel);
             let disponibles = rodeosEng.filter(r=>!S._engCampoFiltro||String(r.campo_id)===String(S._engCampoFiltro));
-            if (page !== 'engorde_costos') {
-              disponibles = disponibles.filter(r=>(stockSel[String(r.rodeo_id)]||0) > 0);
-            } else {
-              // Solo se ofrecen los que tuvieron algún movimiento — un rodeo creado
-              // pero nunca usado no aporta nada acá.
-              disponibles = disponibles.filter(r=>egCantIngresada_(r.rodeo_id) > 0);
-            }
+            // Un corral cerrado (stock 0) no tiene nada que proyectar, así que
+            // se oculta acá (Proyección de Salidas / Proyección de Costos).
+            disponibles = disponibles.filter(r=>(stockSel[String(r.rodeo_id)]||0) > 0);
             // Si el corral seleccionado quedó afuera (se vendió del todo, y estamos
             // en una pantalla que sí lo excluye), volvemos a "Todos los corrales".
             if (egGetCorralId() && !disponibles.some(r=>String(r.rodeo_id)===String(egGetCorralId()))) {
@@ -10518,7 +10510,7 @@ function buildEngorde() {
   }
 
   if (page === 'engorde') h += buildEngordeDashboard_(rodeosEng, fm);
-  else if (page === 'engorde_costos') h += buildEngordeCostos_(egGetCorralId(), fm);
+  else if (page === 'engorde_costos') h += buildEngordeDashboard_(rodeosEng, fm, true);
   else if (page === 'engorde_comparacion') h += buildEngordeComparacion_(rodeosEng, fm);
   else if (page === 'engorde_proyeccion') h += buildEngordeProyeccion_(egGetCorralId(), fm);
   else if (page === 'engorde_cierre') h += buildEngordeCierre_(egGetCorralId(), fm);
@@ -10708,8 +10700,29 @@ function buildEngorde() {
     const rodeosEngFiltLocal = _campFiltro ? rodeosEng.filter(r=>String(r.campo_id)===String(_campFiltro)) : rodeosEng;
     const corteEngLocal = S._corteEng || today();
 
-    // 6) Mortandad — al final (solo Dashboard, no se repite en Costos)
+    // 6) Detalle de insumos consumidos (Alimentación/Veterinaria) — vivía en
+    // la vieja buildEngordeCostos_(), scopeado por fecha de corte; se mueve
+    // acá con el resto del detalle de Costos, ahora scopeado por CAMPAÑA
+    // (misma fuente que el resto de esta pantalla) para que no vuelva a
+    // desincronizarse con el resumen de arriba.
     const rodeosEngIdsLocal = new Set(rodeosEngFiltLocal.map(r=>String(r.rodeo_id)));
+    if (page === 'engorde_costos') {
+      const productosAllC = (S.catalogs && S.catalogs.productos) || (S.cache.productos || []);
+      const prodPorIdC = Object.fromEntries(productosAllC.map(p=>[String(p.producto_id),p]));
+      const consumosC = (S.cache.consumos_insumos||[]).filter(c => rodeosEngIdsLocal.has(String(c.rodeo_id)) && filtroCampanaDet_(c.fecha, c.campana_id));
+      const detalleAlimC=[], detalleVetC=[];
+      consumosC.forEach(c => {
+        const pid = String(c.producto_id);
+        const importe = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(pid, c.fecha);
+        const row = {fecha:c.fecha, prod:prodPorIdC[pid]?.nombre||'—', cant:Number(c.cantidad)||0, rodeo:rodeoNombre(c.rodeo_id), costo:importe};
+        if (prodPorIdC[pid]?.categoria === 'Veterinaria') detalleVetC.push(row);
+        else detalleAlimC.push(row);
+      });
+      h += buildDetalleInsumosFiltrable_(detalleAlimC, '🌾 Alimentación — detalle', fm, true, 'engorde-costos-alim');
+      h += buildDetalleInsumosFiltrable_(detalleVetC,  '💉 Veterinaria — detalle', fm, true, 'engorde-costos-vet');
+    }
+
+    // 7) Mortandad — al final (solo Dashboard, no se repite en Costos)
     const mortandadEngFilt = (S.cache.mortandad || []).filter(m => rodeosEngIdsLocal.has(String(m.rodeo_id)) && filtroCampanaDet_(m.fecha, m.campana_id));
     const mortEngTotal = mortandadEngFilt.reduce((s, m) => s + (Number(m.cantidad) || 1), 0);
     if (page === 'engorde' && mortEngTotal > 0) {
@@ -10750,7 +10763,7 @@ function egDiasEngorde_(rodeoId) {
   return Math.floor((new Date(today()) - new Date(fechaEntrada)) / 86400000);
 }
 
-function buildEngordeDashboard_(rodeosEng, fm) {
+function buildEngordeDashboard_(rodeosEng, fm, soloResumen) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde. Creá rodeos con actividad "Engorde" en la hoja Rodeos.</div></div>';
   const moneda = S.engordeMoneda || 'ARS';
 
@@ -11286,6 +11299,14 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     </div>
     <div style="font-size:32px;font-weight:800;color:${margenColor}">${margen>=0?'':'-'}${fnMoneda_(Math.abs(margen),moneda)}</div>
   </div>`;
+
+  // Costos usa este mismo bloque (selectores + Ingresos/Egresos/Margen) para
+  // garantizar que sus números SIEMPRE coincidan con el Dashboard — es
+  // literalmente el mismo cálculo, no una copia aparte. El resto (Alimentos
+  // consumidos, EI, EF, Conciliación) se queda solo en Dashboard; en Costos
+  // esas mismas preguntas se responden con el detalle línea por línea que
+  // se agrega después, en buildEngorde().
+  if (soloResumen) return h;
 
   // ── RESUMEN DE ALIMENTOS CONSUMIDOS EN EL PERÍODO ────────────────────
   // Agrupa los consumos de categoría "Alimentación" por producto (mismo
