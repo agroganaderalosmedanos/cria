@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_218';
+const APP_VERSION = 'index_consolidado_4_6_155_219';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -15192,6 +15192,13 @@ function buildMargenBruto() {
     if (esCampanaActivaMB_ && (fecha||'') > corteGlobal) return false;
     return campanaEfectiva_(fecha, campanaId) === String(campSelecMB);
   };
+  // Fecha a la que se valoriza el STOCK (cabezas) de "Stock actual por
+  // actividad y categoría" — si la campaña elegida ya cerró, el stock que
+  // corresponde es el que había al cierre (fecha_fin), no el de hoy; si
+  // está en curso, respeta corteGlobal (hoy, o lo que se haya tipeado en
+  // "Fecha de corte"). Mismo criterio que ya usa cada calcMargenXCampana_
+  // para valorizar su propia EF.
+  const fechaStockGlobal_ = (!esCampanaActivaMB_ && campSelecObjMB && campSelecObjMB.fecha_fin) ? campSelecObjMB.fecha_fin : corteGlobal;
 
   // OJO — bug encontrado y corregido: mortandad/abortos se leían de
   // S.cache SIN ningún filtro de fecha ni campaña, así que sumaban TODO el
@@ -15870,11 +15877,16 @@ function buildMargenBruto() {
   }
 
   if (tabMB === 'productivo') {
-    const stockTodos = S.stock||[];
+    // Antes usaba S.stock (snapshot SIEMPRE en vivo, "hoy") — por eso este
+    // panel no se movía nunca al cambiar de campaña. Ahora usa
+    // stockPorRodeoACorte_(fechaStockGlobal_): si la campaña elegida está
+    // cerrada, muestra el stock que había al cierre; si está en curso,
+    // respeta corteGlobal (hoy o la fecha de corte tipeada arriba).
+    const stockMapCorte = stockPorRodeoACorte_(fechaStockGlobal_);
     function stockPorAct(actividad) {
       const rods = rodeosAll.filter(r=>normAct_(r.actividad)===normAct_(actividad));
       const cats = {};
-      rods.forEach(r=>{ const stk=stockTodos.find(s=>String(s.rodeo_id)===String(r.rodeo_id)); const cant=stk?stk.stock||0:0; if(cant===0)return; cats[r.categoria]=(cats[r.categoria]||0)+cant; });
+      rods.forEach(r=>{ const cant=Math.max(0, stockMapCorte[String(r.rodeo_id)]||0); if(cant===0)return; cats[r.categoria]=(cats[r.categoria]||0)+cant; });
       return cats;
     }
     function bloqueStock(titulo, cats) {
@@ -15885,7 +15897,7 @@ function buildMargenBruto() {
       return b;
     }
 
-    h += `<div class="panel"><div class="panel-title">📦 Stock actual por actividad y categoría</div>
+    h += `<div class="panel"><div class="panel-title">📦 Stock por actividad y categoría — al ${fd(fechaStockGlobal_)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
         ${bloqueStock('🐄 Cría', stockPorAct('Cría'))}
         ${bloqueStock('🌱 Recría', stockPorAct('Recría'))}
