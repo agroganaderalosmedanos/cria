@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_212';
+const APP_VERSION = 'index_consolidado_4_6_155_213';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -10537,10 +10537,13 @@ function buildEngorde() {
     // mostraba TODO el histórico siempre, sin importar qué campaña estuviera
     // elegida en el Dashboard de arriba.
     const corteEngDet_ = S._corteEng || today();
-    const campanasDet_ = [...new Set([
-      ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
-      ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
-    ].filter(esCampanaValida_))].sort((a,b)=>b.localeCompare(a));
+    // Misma fuente que buildEngordeDashboard_ (catálogo real de Campañas, no
+    // texto libre de Ventas/Compras) — así el "puente" de acá abajo nunca
+    // puede elegir una campaña por defecto distinta a la que muestra el
+    // Dashboard cuando todavía no se tocó el selector.
+    const campanasDet_ = [...new Set(
+      (S.cache.campanas||[]).map(c=>c.nombre).filter(Boolean).filter(esCampanaValida_)
+    )].sort((a,b)=>b.localeCompare(a));
     const campSelecDet_ = S._dashEngCampana || campanasDet_[0] || '';
     const campanaCatalogDet_ = (S.cache.campanas||[]).find(c => c.nombre === campSelecDet_);
     const esCampanaActivaDet_ = !!(campanaCatalogDet_ && (campanaCatalogDet_.activa===true || String(campanaCatalogDet_.activa).toUpperCase()==='TRUE'));
@@ -10751,10 +10754,15 @@ function buildEngordeDashboard_(rodeosEng, fm) {
   if (!rodeosEng.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay corrales de Engorde. Creá rodeos con actividad "Engorde" en la hoja Rodeos.</div></div>';
   const moneda = S.engordeMoneda || 'ARS';
 
-  const campanas = [...new Set([
-    ...(S.cache.ventas||[]).map(v=>v.campana).filter(Boolean),
-    ...comprasHacGetAll_().map(c=>c.campana).filter(Boolean),
-  ].filter(esCampanaValida_))].sort((a,b)=>b.localeCompare(a));
+  // Antes esta lista se armaba escaneando el texto libre "campana" de Ventas
+  // y Compras de Hacienda — una campaña sin ninguna Venta ni Compra cargada
+  // en Terminación (por más que exista en el catálogo real y tenga Cesiones
+  // o Movimientos) directamente no aparecía en el desplegable. Ahora se lee
+  // del catálogo real de Campañas, igual que ya hacen Cría y Recría — así
+  // TODAS las campañas creadas aparecen, tengan o no Ventas/Compras todavía.
+  const campanas = [...new Set(
+    (S.cache.campanas||[]).map(c=>c.nombre).filter(Boolean).filter(esCampanaValida_)
+  )].sort((a,b)=>b.localeCompare(a));
   const campSelec = S._dashEngCampana || campanas[0] || '';
   const campSelecField = S._dashEngCampo || '';
   const campos = (S.catalogs && S.catalogs.campos) || [];
