@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_207';
+const APP_VERSION = 'index_consolidado_4_6_155_208';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1046,6 +1046,7 @@ async function init() {
 const NAV = [
   { section: 'Cría', icon: 'ti-cow', defaultPage: 'dashboard', items: [
     { k: 'dashboard',            icon: 'ti-chart-bar',   label: 'Dashboard' },
+    { k: 'dashboard_costos',     icon: 'ti-coin',        label: 'Costos' },
     { k: 'cesiones_cria',        icon: 'ti-arrow-right', label: 'Cesiones' },
     { k: 'indices_reproduccion', icon: 'ti-activity',    label: 'Índices de reproducción' },
     { k: 'estado_vientres',       icon: 'ti-heartbeat',   label: 'Estado de Vientres' },
@@ -1112,7 +1113,7 @@ async function goto(page) {
   // Normalmente ya está cargado por el paquete inicial (initBundle), esto es
   // solo una red de seguridad para el caso de entrar a la página antes de que
   // ese paquete termine.
-  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'recria_dashboard' || page === 'engorde' || page === 'engorde_costos' || page === 'engorde_comparacion' || page === 'engorde_proyeccion' || page === 'engorde_cierre' || page === 'engorde_historial') && !S.cache.campanas) {
+  if ((page === 'servicios' || page === 'ventas' || page === 'movimientos' || page === 'cesiones_cria' || page === 'cesiones_recria' || page === 'compras_hacienda' || page === 'insumos' || page === 'dashboard' || page === 'dashboard_costos' || page === 'recria_dashboard' || page === 'engorde' || page === 'engorde_costos' || page === 'engorde_comparacion' || page === 'engorde_proyeccion' || page === 'engorde_cierre' || page === 'engorde_historial') && !S.cache.campanas) {
     try { await loadEntity('campanas'); } catch (err) { /* silencioso */ }
   }
   // Destetes necesita la caché de Tactos para filtrar rodeos con vacas preñadas confirmadas.
@@ -1122,7 +1123,7 @@ async function goto(page) {
   }
   // Si el Resumen fue invalidado por un registro reciente (Pariciones/Destetes/Mortandad/Abortos),
   // se recarga automáticamente al volver a visitarlo.
-  if (page === 'dashboard') {
+  if (page === 'dashboard' || page === 'dashboard_costos') {
     const t = setTimeout(() => { if (!S.dashboard) { S.dashboardError = 'La conexión tardó demasiado.'; render(); } }, 15000);
     const loads = [];
     if (!S.cache.movimientos)      loads.push(loadEntity('movimientos').catch(()=>{}));
@@ -1419,7 +1420,7 @@ function buildShell() {
 
 function pageTitle(p) {
   const titles = {
-    dashboard: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
+    dashboard: 'Resultados Económicos Cría', dashboard_costos: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
     home: '', recria_dashboard: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde',
   };
@@ -1448,7 +1449,8 @@ function buildPage(page) {
   if (S.loading) return '<div class="loader"><div class="spinner"></div>Cargando datos…</div>';
   switch (page) {
     case 'home':       return buildHome();
-    case 'dashboard':  return buildDashboard();
+    case 'dashboard':
+    case 'dashboard_costos': return buildDashboard();
     case 'servicios':  return buildServicios();
     case 'tactos':     return buildTactos();
     case 'abortos':    return buildAbortos();
@@ -1556,7 +1558,7 @@ function attachShellEvents() {
 
 function attachPageEvents(page) {
   const fns = {
-    dashboard: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
+    dashboard: attachDashboardEvents, dashboard_costos: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
     destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
   };
@@ -1644,6 +1646,7 @@ function buildIndicesReproduccion() {
   const campos     = (S.catalogs && S.catalogs.campos) || [];
   const criaTabs2 = [
     { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
+    { k: 'dashboard_costos',     icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
@@ -2617,6 +2620,7 @@ function buildDashboard() {
   // ── Header con pestañas ─────────────────────────────────────────────
   const criaTabs = [
     { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
+    { k: 'dashboard_costos',     icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
@@ -3629,6 +3633,7 @@ function buildEstadoVientres() {
   // pantallas queden consistentes entre sí.
   const _criaTabs = [
     { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
+    { k: 'dashboard_costos',     icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres',      icon: '🐮', label: 'Estado de Vientres' },
     { k: 'servicios',            icon: '⚭',  label: 'Servicios' },
@@ -3781,6 +3786,7 @@ function buildEstadoVientres() {
 
 function buildServicios() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
@@ -3996,6 +4002,7 @@ function attachServiciosEvents() {
 
 function buildTactos() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
@@ -4143,6 +4150,7 @@ function attachTactosEvents() {
 
 function buildAbortos() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
@@ -4339,6 +4347,7 @@ function attachAbortosEvents() {
 
 function buildPariciones() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
@@ -5025,6 +5034,7 @@ function inicioSemana_(fechaStr) {
 function buildCurvaNacimientos() {
   const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
@@ -5280,6 +5290,7 @@ function buildCurvaNacimientos() {
 function buildMortandadAnalisis() {
   const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
@@ -5819,6 +5830,7 @@ async function exportarMortandadAnalisisExcel_() {
 
 function buildDestetes() {  const _criaTabs = [
     { k: 'dashboard', icon: '◈', label: 'Dashboard' },
+    { k: 'dashboard_costos', icon: '💲', label: 'Costos' },
     { k: 'indices_reproduccion', icon: '📈', label: 'Índices de Reproducción' },
     { k: 'estado_vientres', icon: '🐮', label: 'Estado de Vientres' },
     { k: 'compras_hacienda', icon: '🛒', label: 'Compras de hacienda' },
