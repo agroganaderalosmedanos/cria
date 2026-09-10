@@ -257,7 +257,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_219';
+const APP_VERSION = 'index_consolidado_4_6_155_221';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -345,8 +345,8 @@ function stockPorRodeoACorte_(corte) {
   movs.forEach(m => {
     const cant = Number(m.cantidad) || 0;
     const fechaOk = (m.fecha || '') <= corte;
-    if (m.tipo === 'Saldo inicial') {
-      // El saldo inicial respeta su propia fecha, igual que el backend.
+    if (m.tipo === 'Saldo inicial' || m.tipo === 'Nacimiento') {
+      // El saldo inicial (y el nacimiento) respetan su propia fecha, igual que el backend.
       if (fechaOk) stockMap[String(m.rodeo_destino_id)] = (stockMap[String(m.rodeo_destino_id)] || 0) + cant;
       return;
     }
@@ -814,7 +814,15 @@ function fnMoneda_(v, moneda) {
   return (moneda === 'USD' ? 'U$D ' : '$ ') + fn(Math.round(v||0));
 }
 function esAltaPorParicion_(m) {
-  if (!m || m.tipo !== 'Saldo inicial') return false;
+  if (!m) return false;
+  // v22 (backend): las Pariciones nuevas crean el Movimiento con tipo
+  // 'Nacimiento' propio, en vez de 'Saldo inicial' + tag en observaciones.
+  // El tipo ya lo dice todo — no hace falta mirar el texto.
+  if (m.tipo === 'Nacimiento') return true;
+  // Pariciones viejas (anteriores a v22): siguen siendo 'Saldo inicial'
+  // con el tag [pid:...] o el texto fijo — se detectan igual que siempre,
+  // sin migrar ni tocar ese dato histórico.
+  if (m.tipo !== 'Saldo inicial') return false;
   const obs = String(m.observaciones || '');
   return /\[pid:\d+\]/.test(obs) || /^Nacimiento\s*—\s*parici[oó]n/i.test(obs);
 }
@@ -1157,9 +1165,23 @@ async function goto(page) {
     if (!S.cache.campanas)    maLoads.push(loadEntity('campanas').catch(()=>{}));
     if (maLoads.length) { S.loading = true; render(); await Promise.all(maLoads); S.loading = false; }
   }
-  if (page === 'indices_reproduccion' && !S.indicesData && !S._indicesLoading) {
-    S._indicesLoading = true;
-    apiCall('dashboard').then(data => { S.indicesData = data; S._indicesLoading = false; render(); }).catch(() => { S._indicesLoading = false; render(); });
+  if (page === 'indices_reproduccion') {
+    // Antes esta pantalla pedía su propio snapshot aparte (S.indicesData, vía
+    // apiCall('dashboard')) — un cálculo plano, siempre "a hoy", sin ninguna
+    // noción de campaña. Ahora se calcula en el frontend a partir de estos
+    // datos crudos, filtrados por la campaña elegida (ver
+    // datosReproduccionCampana_ / calcKpisReproduccionJS_), así queda
+    // consistente con el resto del sistema y permite comparar una campaña
+    // contra otra.
+    const irLoads = [];
+    if (!S.cache.tactos)     irLoads.push(loadEntity('tactos').catch(()=>{}));
+    if (!S.cache.pariciones) irLoads.push(loadEntity('pariciones').catch(()=>{}));
+    if (!S.cache.destetes)   irLoads.push(loadEntity('destetes').catch(()=>{}));
+    if (!S.cache.abortos)    irLoads.push(loadEntity('abortos').catch(()=>{}));
+    if (!S.cache.mortandad)  irLoads.push(loadEntity('mortandad').catch(()=>{}));
+    if (!S.cache.servicios)  irLoads.push(loadEntity('servicios').catch(()=>{}));
+    if (!S.cache.campanas)   irLoads.push(loadEntity('campanas').catch(()=>{}));
+    if (irLoads.length) { S.loading = true; render(); await Promise.all(irLoads); S.loading = false; }
   }
   if (page === 'estado_vientres') {
     // Mismos datos que necesitaba el panel "Vacas — resumen de la campaña" cuando
@@ -1270,6 +1292,9 @@ async function goto(page) {
     if (!S.cache.movimientos)        { try { await loadEntity('movimientos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.sueldos)            { try { await loadEntity('sueldos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.mortandad)          { try { await loadEntity('mortandad'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.abortos)            { try { await loadEntity('abortos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.tactos)             { try { await loadEntity('tactos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.servicios)          { try { await loadEntity('servicios'); } catch (err) { /* silencioso */ } }
     if (!S.cache.pesadas)            { try { await loadEntity('pesadas'); } catch (err) { /* silencioso */ } }
     // OJO — bug corregido acá: a esta pantalla le faltaban tres entidades que
     // SÍ carga cada Dashboard individual (Cría en particular) antes de calcular
@@ -1632,19 +1657,101 @@ function buildKpiRow(k) {
   </div>`;
 }
 
-function buildIndicesReproduccion() {
-  if (!S.indicesData && !S._indicesLoading) {
-    S._indicesLoading = true;
-    apiCall('dashboard').then(data => {
-      S.indicesData = data;
-      S._indicesLoading = false;
-      render();
-    }).catch(() => { S._indicesLoading = false; render(); });
-  }
-  if (!S.indicesData) return '<div class="loader"><div class="spinner"></div>Calculando índices reproductivos…</div>';
+// ── ÍNDICES REPRODUCTIVOS POR CAMPAÑA ───────────────────────────────────────
+// Filtra Tactos/Pariciones/Destetes/Abortos/Mortandad para representar UNA
+// campaña puntual — antes estos índices eran siempre "a hoy" (snapshot plano
+// del backend, sin ninguna noción de campaña), imposible de comparar una
+// campaña contra otra.
+//
+// Tacto NO tiene un campo de campaña propio y confiable (a diferencia de
+// Pariciones/Destetes/Abortos/Mortandad, que sí lo tienen desde v21) — según
+// lo charlado con Crist, en la operatoria real los Tactos siempre caen entre
+// enero y abril, unos meses antes de que arranque la campaña siguiente (ej.
+// un Tacto de 3/2026 corresponde a la campaña 2026/2027, que arranca
+// 1/5/2026) — así que se le atribuye la campaña cuyo AÑO DE INICIO coincide
+// con el año calendario del Tacto. Simple y sin casos raros porque los
+// Tactos nunca caen en diciembre (si algún día empezaran a caer ahí, este
+// criterio dejaría de servir para esos casos puntuales).
+function datosReproduccionCampana_(campanaId) {
+  const campanaObj = (S.cache.campanas||[]).find(c => String(c.campana_id) === String(campanaId));
+  const anioInicioCampana = campanaObj ? String(campanaObj.fecha_inicio||'').slice(0,4) : null;
+  return {
+    servicios: (S.cache.servicios||[]).filter(s => campanaEfectiva_(s.fecha_inicio, s.campana_id) === String(campanaId)),
+    tactos: (S.cache.tactos||[]).filter(t => anioInicioCampana && String(t.fecha||'').slice(0,4) === anioInicioCampana),
+    pariciones: (S.cache.pariciones||[]).filter(p => campanaEfectiva_(p.fecha, p.campana_id) === String(campanaId)),
+    destetes: (S.cache.destetes||[]).filter(d => campanaEfectiva_(d.fecha, d.campana_id) === String(campanaId)),
+    abortos: (S.cache.abortos||[]).filter(a => campanaEfectiva_(a.fecha, a.campana_id) === String(campanaId)),
+    mortandad: (S.cache.mortandad||[]).filter(m => campanaEfectiva_(m.fecha, m.campana_id) === String(campanaId)),
+  };
+}
 
-  const g          = S.indicesData.general;
-  const rodeosList = S.indicesData.rodeos || [];
+// Réplica exacta, en el frontend, de calcKpisFromData_() del backend (ver
+// getKpis()/getDashboard() en Apps Script) — mismo criterio, para que estos
+// números por campaña coincidan siempre con la metodología ya usada en el
+// snapshot "a hoy" que sigue dando el backend.
+function calcKpisReproduccionJS_(datos, rodeoFiltro) {
+  const porRodeo = arr => rodeoFiltro ? arr.filter(x => String(x.rodeo_id) === String(rodeoFiltro)) : arr;
+  const sum = (arr, key) => arr.reduce((s, x) => s + (Number(x[key]) || 0), 0);
+  const round1 = n => (n === null || n === undefined || isNaN(n)) ? null : Math.round(n * 10) / 10;
+
+  const tactosF = porRodeo(datos.tactos);
+  const tactoIatf = tactosF.filter(t => t.tipo_tacto === 'Tacto IATF');
+  const tactoFinal = tactosF.filter(t => t.tipo_tacto === 'Tacto final');
+  const totalTacteadasIatf = sum(tactoIatf, 'total_tacteadas');
+  const prenadasIatf = sum(tactoIatf, 'prenadas');
+  const totalTacteadasFinal = sum(tactoFinal, 'total_tacteadas');
+  const prenadasFinalTotal = sum(tactoFinal, 'prenadas');
+  const prenadasToro = Math.max(0, prenadasFinalTotal - prenadasIatf);
+  const totalPrenadas = prenadasFinalTotal > 0 ? prenadasFinalTotal : prenadasIatf;
+  const totalServiciadas = totalTacteadasFinal > 0 ? totalTacteadasFinal : totalTacteadasIatf;
+  const pariF = porRodeo(datos.pariciones);
+  const nacidosVivos = sum(pariF, 'nacidos_vivos');
+  const nacidosMuertos = sum(pariF, 'nacidos_muertos');
+  const destF = porRodeo(datos.destetes);
+  const totalDestetados = sum(destF, 'total');
+  const abortosF = porRodeo(datos.abortos).length;
+  const mortF = sum(porRodeo(datos.mortandad), 'cantidad');
+  const indicePrenez = totalServiciadas > 0 ? (totalPrenadas / totalServiciadas * 100) : null;
+  const indicePrenezIatf = totalTacteadasIatf > 0 ? (prenadasIatf / totalTacteadasIatf * 100) : null;
+  const indicePrenezToro = (totalTacteadasFinal - totalTacteadasIatf) > 0
+    ? (prenadasToro / Math.max(1, totalTacteadasFinal - prenadasIatf) * 100) : null;
+  const indiceParicion = totalPrenadas > 0 ? (nacidosVivos / totalPrenadas * 100) : null;
+  const indiceDestete = nacidosVivos > 0 ? (totalDestetados / nacidosVivos * 100) : null;
+  return {
+    rodeo_id: rodeoFiltro,
+    servicio: { total_serviciadas: totalServiciadas, prenadas_iatf: prenadasIatf, prenadas_toro: prenadasToro, total_prenadas: totalPrenadas, total_tacteadas_iatf: totalTacteadasIatf, total_tacteadas_toro: Math.max(0, totalTacteadasFinal - totalTacteadasIatf), indice_prenez: round1(indicePrenez), indice_prenez_iatf: round1(indicePrenezIatf), indice_prenez_toro: round1(indicePrenezToro) },
+    gestacion: { abortos: abortosF },
+    paricion: { nacidos_vivos: nacidosVivos, nacidos_muertos: nacidosMuertos, indice_paricion: round1(indiceParicion) },
+    destete: { total_destetados: totalDestetados, mortandad_terneros: mortF, indice_destete: round1(indiceDestete) },
+  };
+}
+
+function buildIndicesReproduccion() {
+  if (!S.cache.tactos || !S.cache.pariciones || !S.cache.destetes || !S.cache.abortos || !S.cache.mortandad || !S.cache.servicios || !S.cache.campanas) {
+    return '<div class="loader"><div class="spinner"></div>Calculando índices reproductivos…</div>';
+  }
+
+  // Mismo selector de Campaña que ya usa el Dashboard de Cría (S._dashCampana
+  // compartido) — cambiás la campaña en una pantalla y queda igual en la otra.
+  const campanasCatIR = (S.cache.campanas||[]).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  const campanaActivaIR = campanasCatIR.find(c => c.activa===true || String(c.activa).toUpperCase()==='TRUE');
+  const campSelecIR = S._dashCampana || (campanaActivaIR ? campanaActivaIR.campana_id : (campanasCatIR[0]?.campana_id || ''));
+
+  const datosCampIR = datosReproduccionCampana_(campSelecIR);
+  const g = calcKpisReproduccionJS_(datosCampIR, null);
+
+  // Mismo filtro que ya usa getDashboard() en el backend: solo rodeos de
+  // vientre (vaca/vaquillona) que tuvieron alguna actividad reproductiva —
+  // acá, alguna actividad DENTRO de la campaña elegida.
+  const rodeosAllIR = (S.catalogs && S.catalogs.rodeos) || [];
+  const idsConActividadIR = new Set();
+  ['servicios','tactos','pariciones','destetes','abortos','mortandad'].forEach(k => {
+    datosCampIR[k].forEach(x => idsConActividadIR.add(String(x.rodeo_id)));
+  });
+  const rodeosList = rodeosAllIR
+    .filter(r => (r.categoria === 'vaca' || r.categoria === 'vaquillona') && idsConActividadIR.has(String(r.rodeo_id)))
+    .map(r => ({ rodeo: r, kpis: calcKpisReproduccionJS_(datosCampIR, r.rodeo_id) }));
+
   const campos     = (S.catalogs && S.catalogs.campos) || [];
   const criaTabs2 = [
     { k: 'dashboard',            icon: '◈',  label: 'Dashboard' },
@@ -1662,11 +1769,19 @@ function buildIndicesReproduccion() {
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       ${criaTabs2.map(t => `<button class="radio-pill${S.page===t.k?' selected':''}" onclick="goto('${t.k}')">${t.icon} ${t.label}</button>`).join('')}
     </div>
-    <div style="margin-top:10px">
+    <div style="margin-top:10px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:13px;font-weight:600;white-space:nowrap">Campaña:</label>
+        <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:140px"
+          onchange="S._dashCampana=this.value;render()">
+          ${campanasCatIR.map(c=>`<option value="${c.campana_id}" ${String(c.campana_id)===String(campSelecIR)?'selected':''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
       <button class="btn btn-primary" onclick="exportarIndicesReproduccionExcel_()" style="font-size:13px">
         📊 Exportar Reproducción por Rodeo (.xlsx)
       </button>
     </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px">Los índices de Tacto (Preñez general/IATF/toro) se atribuyen a la campaña por año de inicio — un Tacto de 03/2026 corresponde a la campaña 2026/2027. Parición, Destete, Abortos y Mortandad usan su campaña real cargada.</div>
   </div>`;
 
   h += '<div class="section-label">Establecimiento — índices generales</div>';
@@ -2322,7 +2437,7 @@ function valorizarStockPorRodeoHoy_(stockPorRodeo, rodeosFiltro, pesadasArr) {
 // avisar "sin pesada propia, peso de ingreso del <fecha>" en los reportes.
 function pesoIngresoRodeoAFecha_(rodeoId, fecha) {
   const entradas = (S.cache.movimientos || []).filter(m =>
-    (m.tipo === 'Saldo inicial' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
+    (m.tipo === 'Saldo inicial' || m.tipo === 'Nacimiento' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') &&
     String(m.rodeo_destino_id) === String(rodeoId) &&
     (m.fecha || '') <= fecha &&
     Number(m.peso_prom_kg) > 0
@@ -2816,10 +2931,14 @@ function buildDashboard() {
   const stockPorRodeo = Object.assign({}, eiCriaCampana_(campSelec).stockPorRodeo);
   movs.forEach(m => {
     const cant = Number(m.cantidad)||0;
-    if (m.tipo==='Saldo inicial') {
-      if (esAltaPorParicion_(m)) {
-        stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
-      }
+    // v22: esAltaPorParicion_ ya cubre 'Nacimiento' (nuevo) y 'Saldo inicial'
+    // + tag (viejo) — se saca el "if (m.tipo==='Saldo inicial')" de afuera,
+    // que antes tapaba a los nacimientos nuevos (fallan ese chequeo de tipo
+    // antes de llegar siquiera a esAltaPorParicion_) y los dejaba sin sumar
+    // al stock — el mismo bug de "Terneros al pie" que se arregló acá, pero
+    // reintroducido si un Nacimiento nuevo no entra por este camino.
+    if (esAltaPorParicion_(m)) {
+      stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
       // Saldo inicial NO-parición: ya contado en eiCriaCampana_(campSelec) más arriba.
     } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
       if (m.rodeo_origen_id)  stockPorRodeo[String(m.rodeo_origen_id)]  = (stockPorRodeo[String(m.rodeo_origen_id)] ||0) - cant;
@@ -4558,12 +4677,13 @@ window.paBuscarHuerfanos_ = async function() {
     const idsPariciones = new Set((S.cache.pariciones||[]).map(p=>String(p.paricion_id)));
     const idsAbortos = new Set((S.cache.abortos||[]).map(a=>String(a.aborto_id)));
     const filas = [];
-    // Huérfanos de Parición borrada — [pid:<id>] en Movimientos (Saldo inicial) y Mortandad
+    // Huérfanos de Parición borrada — [pid:<id>] en Movimientos (Saldo
+    // inicial o Nacimiento, v22) y Mortandad
     (S.cache.movimientos||[]).forEach(m => {
-      if (m.tipo !== 'Saldo inicial') return;
+      if (m.tipo !== 'Saldo inicial' && m.tipo !== 'Nacimiento') return;
       const match = /\[pid:(\d+)\]/.exec(String(m.observaciones||''));
       if (match && !idsPariciones.has(match[1])) {
-        filas.push({ tipoLabel:'Movimiento (Saldo inicial)', entity:'movimientos', id:m.movimiento_id, fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_destino_id), cantidad:m.cantidad, origen:'Parición id '+match[1]+' (borrada)' });
+        filas.push({ tipoLabel:'Movimiento ('+m.tipo+')', entity:'movimientos', id:m.movimiento_id, fecha:m.fecha, rodeo:rodeoNombre(m.rodeo_destino_id), cantidad:m.cantidad, origen:'Parición id '+match[1]+' (borrada)' });
       }
     });
     (S.cache.mortandad||[]).forEach(m => {
@@ -4603,7 +4723,7 @@ window.paBuscarHuerfanos_ = async function() {
     // backend). Se detecta comparando ambos, igual que ya se hace con Abortos.
     const paricionesPorId = Object.fromEntries((S.cache.pariciones||[]).map(p=>[String(p.paricion_id),p]));
     (S.cache.movimientos||[]).forEach(m => {
-      if (m.tipo !== 'Saldo inicial') return;
+      if (m.tipo !== 'Saldo inicial' && m.tipo !== 'Nacimiento') return;
       const match = /\[pid:(\d+)\]/.exec(String(m.observaciones||''));
       if (!match || !idsPariciones.has(match[1])) return;
       const paricionActual = paricionesPorId[match[1]];
@@ -4672,7 +4792,7 @@ window.paBuscarHuerfanos_ = async function() {
     // descuente como "ya parió" del lado de Preñadas — la causa de que
     // "Diferencia" en el Excel de auditoría reproductiva no dé 0.
     (S.cache.movimientos||[]).forEach(m => {
-      if (m.tipo !== 'Saldo inicial') return;
+      if (m.tipo !== 'Saldo inicial' && m.tipo !== 'Nacimiento') return;
       if (!/nacimiento/i.test(String(m.observaciones||''))) return;
       if (/\[pid:\d+\]/.test(String(m.observaciones||''))) return;
       // Rodeo madre: el nombre del rodeo de Terneros es siempre "Terneros (Nombre
@@ -4763,7 +4883,7 @@ window.paBuscarHuerfanos_ = async function() {
       const nombreTernerosF = rodeoMadreF ? ('Terneros (' + rodeoMadreF.nombre + ')') : null;
       const rodeoTernerosF = (nombreTernerosF && rodeoMadreF) ? (S.catalogs.rodeos||[]).find(r => r.nombre===nombreTernerosF && String(r.campo_id)===String(rodeoMadreF.campo_id)) : null;
       const tieneMovReal = (S.cache.movimientos||[]).some(m => {
-        if (m.tipo !== 'Saldo inicial') return false;
+        if (m.tipo !== 'Saldo inicial' && m.tipo !== 'Nacimiento') return false;
         if (String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1) return true;
         if (rodeoTernerosF && String(m.rodeo_destino_id)===String(rodeoTernerosF.rodeo_id) &&
             String(m.fecha)===String(p.fecha) && Number(m.cantidad)===Number(p.nacidos_vivos)) return true;
@@ -4927,10 +5047,10 @@ window.paCrearParicionYVincular_ = async function(movId, rodeoMadreId, fecha, ca
   } catch (err) { toast(err.message, 'err'); }
 };
 window.paCrearMovimientoFaltante_ = async function(paricionId, rodeoTernerosId, rodeoTernerosCampoId, fecha, cantidad) {
-  if (!confirm(`¿Crear el Movimiento de Saldo inicial que falta? Va a sumar ${cantidad} cabezas al stock de este rodeo de terneros, con fecha ${fd(fecha)} — así deja de faltar en Stock/Stock de Hacienda mientras el Libro ya lo venía compensando solo ahí.`)) return;
+  if (!confirm(`¿Crear el Movimiento de Nacimiento que falta? Va a sumar ${cantidad} cabezas al stock de este rodeo de terneros, con fecha ${fd(fecha)} — así deja de faltar en Stock/Stock de Hacienda mientras el Libro ya lo venía compensando solo ahí.`)) return;
   try {
     const data = {
-      tipo: 'Saldo inicial',
+      tipo: 'Nacimiento',
       fecha: fecha,
       campo_destino_id: rodeoTernerosCampoId,
       rodeo_destino_id: rodeoTernerosId,
@@ -6535,12 +6655,13 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
   let filas = [
     ...movsF.map(m => {
       const tieneCosto = (Number(m.precio_cabeza) || 0) > 0 || ((Number(m.precio_kg) || 0) > 0 && (Number(m.peso_prom_kg) || 0) > 0);
-      const esEntrada = m.tipo === 'Saldo inicial' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual';
+      const esEntrada = m.tipo === 'Saldo inicial' || m.tipo === 'Nacimiento' || m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual';
       // Solo marcar "sin costo" si el traslado cruza entre actividades distintas
       // (Cría→Recría, Recría→Terminación) — los traslados internos dentro de la misma
       // actividad no necesitan precio porque no afectan el Margen Bruto de ninguna actividad.
       const esCesionInterActividad = (() => {
-        if (m.tipo === 'Saldo inicial') return !esAltaPorParicion_(m); // saldo inicial necesita precio, salvo que sea un nacimiento (no se "compra")
+        if (m.tipo === 'Nacimiento') return false; // v22: un nacimiento nunca "se compra", nunca necesita precio
+        if (m.tipo === 'Saldo inicial') return !esAltaPorParicion_(m); // saldo inicial necesita precio, salvo que sea un nacimiento viejo (pre-v22)
         const or = rodeosPorId_[String(m.rodeo_origen_id)];
         const de = rodeosPorId_[String(m.rodeo_destino_id)];
         if (!or || !de) return false;
@@ -6549,7 +6670,7 @@ function buildMovimientosHistorial_(movimientos, ventas, corralesVentas, campoId
       return {
         fecha: m.fecha || '',
         _campanaNombre: campanaNombreGenerico_(m.fecha, m.campana_id),
-        tipoLabel: m.tipo, tipoClass: m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green',
+        tipoLabel: m.tipo, tipoClass: m.tipo === 'Saldo inicial' ? 'pill-gold' : m.tipo === 'Nacimiento' ? 'pill-green' : m.tipo === 'Traslado individual' ? 'pill-clay' : 'pill-green',
         caravana: m.caravana || '—',
         campoOrigen: m.campo_origen_id ? campoNombre(m.campo_origen_id) : '—',
         rodeoOrigen: m.rodeo_origen_id ? rodeoNombre(m.rodeo_origen_id) : '—',
@@ -6881,6 +7002,23 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
         salida: 0,
         obs: m.observaciones || '',
       });
+    } else if (m.tipo === 'Nacimiento') {
+      // v22: mismo tratamiento que Saldo inicial (entrada al rodeo destino),
+      // con su propia etiqueta — antes esto llegaba acá como 'Saldo inicial'
+      // con el tag [pid:...] en observaciones; ahora es su propio tipo.
+      lineas.push({
+        fecha: m.fecha || '',
+        tipo: 'Nacimiento',
+        pill: 'pill-green',
+        desc: 'Nacimiento',
+        rodeo: m.rodeo_destino_id ? rodeoNombre(m.rodeo_destino_id) : '—',
+        campo: campoNombre(campoDe_(m.rodeo_destino_id, m.campo_destino_id)),
+        rodeo_id: m.rodeo_destino_id,
+        campo_id: campoDe_(m.rodeo_destino_id, m.campo_destino_id),
+        entrada: Number(m.cantidad) || 0,
+        salida: 0,
+        obs: m.observaciones || '',
+      });
     } else if (m.tipo === 'Traslado en bloque' || m.tipo === 'Traslado individual') {
       const campoOrigenId  = campoDe_(m.rodeo_origen_id,  m.campo_origen_id);
       const campoDestinoId = campoDe_(m.rodeo_destino_id, m.campo_destino_id);
@@ -6949,7 +7087,7 @@ function buildLibroMovimientos_(rodeoId, campoId, desde, hasta) {
     var rodeoTerneros = (nombreTerneros && rodeoMadre) ? (S.catalogs && S.catalogs.rodeos || []).find(function(r){ return r.nombre === nombreTerneros && String(r.campo_id) === String(rodeoMadre.campo_id); }) : null;
     var ternRodeoId = rodeoTerneros ? rodeoTerneros.rodeo_id : p.rodeo_id;
     var tieneMovReal = movs.some(function(m){
-      if (m.tipo !== 'Saldo inicial') return false;
+      if (m.tipo !== 'Saldo inicial' && m.tipo !== 'Nacimiento') return false;
       // Coincidencia por tag (caso normal, pariciones cargadas con la
       // automatización ya activa).
       if (String(m.observaciones||'').indexOf('[pid:'+p.paricion_id+']') !== -1) return true;
@@ -14604,8 +14742,15 @@ function calcMargenCriaCampana_(campanaId, corte) {
   const stockPorRodeo = Object.assign({}, eiCriaCampana_(campanaId).stockPorRodeo);
   movs.forEach(m => {
     const cant = Number(m.cantidad)||0;
-    if (m.tipo==='Saldo inicial') {
-      if (esAltaPorParicion_(m)) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
+    // v22: esAltaPorParicion_ ya cubre 'Nacimiento' (nuevo) y 'Saldo inicial'
+    // + tag (viejo) — se saca el "if (m.tipo==='Saldo inicial')" de afuera,
+    // que antes tapaba a los nacimientos nuevos (fallan ese chequeo de tipo
+    // antes de llegar siquiera a esAltaPorParicion_) y los dejaba sin sumar
+    // al stock. Un 'Saldo inicial' real (no nacimiento) sigue sin sumar acá
+    // — ya está contado en la EI heredada de más arriba — mismo resultado
+    // que antes para ese caso.
+    if (esAltaPorParicion_(m)) {
+      stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
     } else if (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') {
       if (m.rodeo_origen_id)  stockPorRodeo[String(m.rodeo_origen_id)]  = (stockPorRodeo[String(m.rodeo_origen_id)] ||0) - cant;
       if (m.rodeo_destino_id) stockPorRodeo[String(m.rodeo_destino_id)] = (stockPorRodeo[String(m.rodeo_destino_id)]||0) + cant;
@@ -15970,12 +16115,18 @@ function buildMargenBruto() {
       </div>`;
     }
 
-    // Índices reproductivos — de S.dashboard (datos del GS)
-    const kpi = S.dashboard && S.dashboard.general;
+    // Índices reproductivos — antes venían de S.dashboard.general, un
+    // snapshot siempre-actual sin ninguna noción de campaña (por eso no se
+    // movía nunca al cambiar de campaña arriba). Ahora usa la misma
+    // función que ya calcula esto por campaña en Cría → Índices de
+    // Reproducción (datosReproduccionCampana_ / calcKpisReproduccionJS_),
+    // con la campaña ya elegida en esta pantalla (campSelecMB).
+    const kpi = calcKpisReproduccionJS_(datosReproduccionCampana_(campSelecMB), null);
     if (kpi) {
       function pctMB(v) { return v!==null&&v!==undefined ? `<strong>${v}%</strong>` : '<span style="color:var(--muted)">—</span>'; }
       h += `<div class="panel">
         <div class="panel-title">🐄 Índices reproductivos</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Campaña ${campSelecObjMB?campSelecObjMB.nombre:'—'} — el índice de Preñez se atribuye por año de inicio de campaña (Tacto de 03/2026 → campaña 2026/2027)</div>
         <div class="tw"><table class="dt"><thead><tr>
           <th>Índice</th><th class="tc">Valor</th>
         </tr></thead><tbody>
@@ -16158,7 +16309,11 @@ async function exportarAuditoriaCriaExcel_() {
       const rid = String(r.rodeo_id);
       const saldosR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid && !esAltaPorParicion_(m));
       const eiR = saldosR.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
-      const nacR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid && esAltaPorParicion_(m))
+      // v22: esAltaPorParicion_ ya valida el tipo internamente (acepta 'Saldo
+      // inicial'+tag viejo o 'Nacimiento' nuevo) — no hace falta repetir el
+      // chequeo de tipo acá, y repetirlo mal (solo 'Saldo inicial') dejaba
+      // afuera a los nacimientos nuevos.
+      const nacR = movsTodos.filter(m => String(m.rodeo_destino_id)===rid && esAltaPorParicion_(m))
         .reduce((s,m)=>s+(Number(m.cantidad)||0),0);
       const entradasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
       const salidasR = movsTodos.filter(m => (m.tipo==='Traslado en bloque'||m.tipo==='Traslado individual') && String(m.rodeo_origen_id)===rid).reduce((s,m)=>s+(Number(m.cantidad)||0),0);
@@ -18186,11 +18341,22 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     var saldoBase = 0;
     movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(rodeoId) && !esAltaPorParicion_(m); })
       .forEach(function(m){ saldoBase += Number(m.cantidad) || 0; });
-    movs.filter(function(m){ return m.tipo === 'Saldo inicial' && String(m.rodeo_destino_id) === String(rodeoId) && esAltaPorParicion_(m) && m.fecha < desde; })
+    // v22: esAltaPorParicion_ ya valida el tipo internamente (acepta 'Saldo
+    // inicial'+tag viejo o 'Nacimiento' nuevo) — se saca el chequeo de tipo
+    // de acá, que antes solo miraba 'Saldo inicial' y se perdía los
+    // nacimientos nuevos.
+    movs.filter(function(m){ return String(m.rodeo_destino_id) === String(rodeoId) && esAltaPorParicion_(m) && m.fecha < desde; })
       .forEach(function(m){ saldoBase += Number(m.cantidad) || 0; });
 
     var ajuste = 0;
-    movs.filter(function(m){ return m.fecha < desde && m.tipo !== 'Saldo inicial'; }).forEach(function(m) {
+    // OJO — v22: acá había riesgo de doble conteo. Antes 'Nacimiento' no
+    // existía como tipo propio, así que un nacimiento SIEMPRE tenía
+    // tipo==='Saldo inicial' y quedaba afuera de este loop (que excluye
+    // justamente ese tipo). Ahora que 'Nacimiento' es su propio tipo, sin el
+    // "&& !esAltaPorParicion_(m)" de acá, un nacimiento anterior a "desde"
+    // entraría ACÁ (por tener tipo !== 'Saldo inicial') Y en el bloque de
+    // arriba (saldoBase) — sumándose dos veces. Se excluye explícitamente.
+    movs.filter(function(m){ return m.fecha < desde && m.tipo !== 'Saldo inicial' && !esAltaPorParicion_(m); }).forEach(function(m) {
       if (String(m.rodeo_destino_id) === String(rodeoId)) ajuste += Number(m.cantidad) || 0;
       if (String(m.rodeo_origen_id) === String(rodeoId)) ajuste -= Number(m.cantidad) || 0;
     });
@@ -18207,10 +18373,13 @@ function calcStockHacienda_(desde, hasta, campoFiltro, mensual) {
     var compras=0, ventas_=0, nacimientos=0, muertes=0, destetar=0, traslados_e=0, traslados_s=0, ajustes=0;
     movs.filter(function(m){ return m.fecha >= fDesde && m.fecha <= fHasta; }).forEach(function(m) {
       const cant = Number(m.cantidad) || 0;
-      if (m.tipo === 'Saldo inicial') {
+      if (m.tipo === 'Saldo inicial' || m.tipo === 'Nacimiento') {
         // Altas por Parición ocurridas DENTRO del período: se acreditan como
         // "Nacimientos" del rodeo que las recibió (el rodeo de terneros), no
         // como Saldo inicial. Las anteriores a "desde" ya se sumaron en stockInicial().
+        // v22: 'Nacimiento' es su propio tipo — cae en esta misma rama junto
+        // con el patrón viejo ('Saldo inicial' + tag), para no contarlo más
+        // abajo como si fuera un traslado o una compra.
         if (esAltaPorParicion_(m) && String(m.rodeo_destino_id) === String(rodeoId)) nacimientos += cant;
         return;
       }
