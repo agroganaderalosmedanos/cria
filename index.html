@@ -177,6 +177,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 .pill-green { background: var(--green-bg); color: var(--green-text); }
 .pill-clay { background: var(--clay-bg); color: var(--clay-text); }
 .pill-gold { background: var(--gold-bg); color: var(--gold-text); }
+.pill-blue { background: var(--blue-bg); color: var(--blue-text); }
 .pill-red { background: var(--red-bg); color: var(--red-text); }
 .pill-gray { background: var(--bg3); color: var(--text2); }
 
@@ -257,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_222';
+const APP_VERSION = 'index_consolidado_4_6_155_223';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1026,6 +1027,7 @@ async function init() {
       // primero. Separadas acá, entran rápido por su cuenta.
       loadEntity('compras_insumos').catch(()=>{}),
       loadEntity('consumos_insumos').catch(()=>{}),
+      loadEntity('traslados_insumos').catch(()=>{}),
       // OPTIMIZACIÓN: antes acá había 16 llamadas sueltas (movimientos, ventas,
       // consumos_insumos, compras_insumos, pesadas, sueldos, mortandad, abortos,
       // destetes, pariciones, egresos_recria, precios_internos, campanas,
@@ -1663,21 +1665,23 @@ function buildKpiRow(k) {
 // del backend, sin ninguna noción de campaña), imposible de comparar una
 // campaña contra otra.
 //
-// Tacto NO tiene un campo de campaña propio y confiable (a diferencia de
-// Pariciones/Destetes/Abortos/Mortandad, que sí lo tienen desde v21) — según
-// lo charlado con Crist, en la operatoria real los Tactos siempre caen entre
-// enero y abril, unos meses antes de que arranque la campaña siguiente (ej.
-// un Tacto de 3/2026 corresponde a la campaña 2026/2027, que arranca
-// 1/5/2026) — así que se le atribuye la campaña cuyo AÑO DE INICIO coincide
-// con el año calendario del Tacto. Simple y sin casos raros porque los
-// Tactos nunca caen en diciembre (si algún día empezaran a caer ahí, este
-// criterio dejaría de servir para esos casos puntuales).
+// Tacto SÍ tiene un campo de campaña propio en la planilla (campana_id,
+// desde v21) — se usa directo cuando está cargado (desde que se agregó el
+// selector al formulario de "Registrar tacto"). Para Tactos viejos, sin ese
+// dato, se ubican por la campaña del SERVICIO vinculado a ese rodeo
+// (campanaDeServicioRodeo_) — NO por año calendario del Tacto: se probó esa
+// regla y falla con el Tacto IATF, que se hace en diciembre y correspondería
+// a la campaña que recién arranca en mayo siguiente, no a la que está en
+// curso en diciembre.
+function tactoCampanaId_(t) {
+  if (t.campana_id) return String(t.campana_id);
+  const camp = campanaDeServicioRodeo_(t.rodeo_id, t.fecha);
+  return camp ? String(camp.campana_id) : '';
+}
 function datosReproduccionCampana_(campanaId) {
-  const campanaObj = (S.cache.campanas||[]).find(c => String(c.campana_id) === String(campanaId));
-  const anioInicioCampana = campanaObj ? String(campanaObj.fecha_inicio||'').slice(0,4) : null;
   return {
     servicios: (S.cache.servicios||[]).filter(s => campanaEfectiva_(s.fecha_inicio, s.campana_id) === String(campanaId)),
-    tactos: (S.cache.tactos||[]).filter(t => anioInicioCampana && String(t.fecha||'').slice(0,4) === anioInicioCampana),
+    tactos: (S.cache.tactos||[]).filter(t => tactoCampanaId_(t) === String(campanaId)),
     pariciones: (S.cache.pariciones||[]).filter(p => campanaEfectiva_(p.fecha, p.campana_id) === String(campanaId)),
     destetes: (S.cache.destetes||[]).filter(d => campanaEfectiva_(d.fecha, d.campana_id) === String(campanaId)),
     abortos: (S.cache.abortos||[]).filter(a => campanaEfectiva_(a.fecha, a.campana_id) === String(campanaId)),
@@ -1781,7 +1785,7 @@ function buildIndicesReproduccion() {
         📊 Exportar Reproducción por Rodeo (.xlsx)
       </button>
     </div>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px">Los índices de Tacto (Preñez general/IATF/toro) se atribuyen a la campaña por año de inicio — un Tacto de 03/2026 corresponde a la campaña 2026/2027. Parición, Destete, Abortos y Mortandad usan su campaña real cargada.</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px">Los índices de Tacto (Preñez general/IATF/toro) usan la campaña cargada en cada Tacto; los viejos sin ese dato se ubican por la campaña del Servicio vinculado. Parición, Destete, Abortos y Mortandad usan su campaña real cargada.</div>
   </div>`;
 
   h += '<div class="section-label">Establecimiento — índices generales</div>';
@@ -4239,12 +4243,15 @@ function buildTactos() {  const _criaTabs = [
         </div>
       </div>
       <div class="fg"><label>Campo</label>
-        <select id="tc-campo" onchange="document.getElementById('tc-rodeo').innerHTML = rodeoOptionsHtml(rodeosConServicioPorCampo(this.value))">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+        <select id="tc-campo" onchange="const rs=rodeosConServicioPorCampo(this.value); document.getElementById('tc-rodeo').innerHTML = rodeoOptionsHtml(rs); const rid=rs[0]?.rodeo_id; const ce=document.getElementById('tc-campana-id'); if(ce) ce.innerHTML = tcCampanaOptionsHtml_(rid, document.getElementById('tc-fecha').value);">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg"><label>Rodeo</label>
-        <select id="tc-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
+        <select id="tc-rodeo" onchange="const ce=document.getElementById('tc-campana-id'); if(ce) ce.innerHTML = tcCampanaOptionsHtml_(this.value, document.getElementById('tc-fecha').value);">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
-      <div class="fg"><label>Fecha</label><input type="date" id="tc-fecha" value="${today()}"></div>
+      <div class="fg"><label>Fecha</label><input type="date" id="tc-fecha" value="${today()}" onchange="const ce=document.getElementById('tc-campana-id'); if(ce) ce.innerHTML = tcCampanaOptionsHtml_(document.getElementById('tc-rodeo').value, this.value);"></div>
+      <div class="fg" style="min-width:220px"><label>Campaña <span class="opt">(propuesta según el Servicio de este rodeo — se puede cambiar)</span></label>
+        <select id="tc-campana-id">${tcCampanaOptionsHtml_(rodeosAptos[0]?.rodeo_id, today())}</select>
+      </div>
       <div class="fg"><label>Total tacteadas</label><input type="number" id="tc-total" placeholder="Ej: 320" min="0" oninput="updateTactoCalc()"></div>
       <div class="fg" style="max-width:110px;flex:0 1 110px"><label>Preñadas</label><input type="number" id="tc-prenadas" placeholder="Ej: 280" min="0" oninput="updateTactoCalc()"></div>
       <div class="fg" style="min-width:320px;flex:2"><label>Observación</label><input type="text" id="tc-obs" placeholder="Opcional"></div>
@@ -4269,7 +4276,7 @@ function buildTactos() {  const _criaTabs = [
         ${rodeosConServ.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
-    <div class="fg"><label>Filtrar por campaña <span class="opt">(por año de inicio — un tacto de 03/2026 es de la campaña 2026/2027)</span></label>
+    <div class="fg"><label>Filtrar por campaña <span class="opt">(la que se cargó en cada Tacto; los viejos sin ese dato se ubican por la campaña del Servicio)</span></label>
       <select id="tc-hist-campana" onchange="tcFiltrarHistorial_()">
         <option value="">Todas las campañas</option>
         ${(S.cache.campanas||[]).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||''))).map(c=>`<option value="${c.campana_id}">${c.nombre}</option>`).join('')}
@@ -4285,8 +4292,19 @@ function buildTactos() {  const _criaTabs = [
 // por campo/rodeo (igual patrón que Abortos).
 function buildTactosTabla_(items) {
   const itemsConCampana = items.map(it => {
-    const camp = campanaDeServicioRodeo_(it.rodeo_id, it.fecha);
-    return { ...it, _campanaNombre: camp ? camp.nombre : '⚠ Sin Servicio con campaña' };
+    // Si ya tiene campana_id guardado (Tactos cargados desde que existe este
+    // campo), esa es la fuente de verdad — no hace falta adivinar. Si no
+    // (Tactos viejos), se sigue proponiendo por el Servicio vinculado, igual
+    // que siempre.
+    let nombreCamp;
+    if (it.campana_id) {
+      const c = (S.cache.campanas||[]).find(x => String(x.campana_id) === String(it.campana_id));
+      nombreCamp = c ? c.nombre : '⚠ Campaña inválida';
+    } else {
+      const camp = campanaDeServicioRodeo_(it.rodeo_id, it.fecha);
+      nombreCamp = camp ? camp.nombre + ' (sin confirmar)' : '⚠ Sin Servicio con campaña';
+    }
+    return { ...it, _campanaNombre: nombreCamp };
   }).slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
   return buildEntityTable(itemsConCampana, [
     { key: 'fecha', label: 'Fecha', render: v => fd(v) },
@@ -4295,7 +4313,7 @@ function buildTactosTabla_(items) {
     { key: 'total_tacteadas', label: 'Tacteadas', render: v => fn(v) },
     { key: 'prenadas', label: 'Preñadas', render: v => fn(v) },
     { key: 'vacias', label: 'Vacías', render: v => fn(v) },
-    { key: '_campanaNombre', label: 'Campaña', render: v => v.startsWith('⚠') ? `<span style="color:var(--clay-text)">${v}</span>` : v },
+    { key: '_campanaNombre', label: 'Campaña', render: v => (v.startsWith('⚠')) ? `<span style="color:var(--clay-text)">${v}</span>` : v },
     { key: 'observacion', label: 'Obs.', render: v => v || '—' },
   ], 'tactos', 'tacto_id');
 }
@@ -4321,18 +4339,25 @@ function attachTactosEvents() {
     const campoId = document.getElementById('tc-hist-campo')?.value || '';
     const rodeoId = document.getElementById('tc-hist-rodeo')?.value || '';
     const campanaId = document.getElementById('tc-hist-campana')?.value || '';
-    // Mismo criterio que datosReproduccionCampana_(): un Tacto se atribuye a
-    // la campaña cuyo año de inicio coincide con el año calendario del
-    // Tacto (no tiene un campo de campaña propio en la planilla).
-    const campanaObj = campanaId ? (S.cache.campanas||[]).find(c=>String(c.campana_id)===String(campanaId)) : null;
-    const anioInicioCampana = campanaObj ? String(campanaObj.fecha_inicio||'').slice(0,4) : null;
+    // Los Tactos cargados desde que existe este campo ya tienen su
+    // campana_id real guardado — se filtra por ese directo. Los viejos (sin
+    // campana_id) se ubican por la campaña del Servicio vinculado a ese
+    // rodeo (mismo criterio que ya usa la columna "Campaña" de la tabla) —
+    // NO por año calendario, que atribuía mal un Tacto IATF de diciembre.
     const items = (S.cache.tactos || []).filter(t => {
       if (rodeoId && String(t.rodeo_id) !== rodeoId) return false;
       if (campoId && !rodeoId) {
         const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(t.rodeo_id));
         if (!r || String(r.campo_id) !== campoId) return false;
       }
-      if (campanaId && (!anioInicioCampana || String(t.fecha||'').slice(0,4) !== anioInicioCampana)) return false;
+      if (campanaId) {
+        let campanaDelTacto = t.campana_id ? String(t.campana_id) : null;
+        if (!campanaDelTacto) {
+          const camp = campanaDeServicioRodeo_(t.rodeo_id, t.fecha);
+          campanaDelTacto = camp ? String(camp.campana_id) : null;
+        }
+        if (campanaDelTacto !== String(campanaId)) return false;
+      }
       return true;
     });
     const el = document.getElementById('tc-hist-tabla');
@@ -4355,6 +4380,7 @@ function attachTactosEvents() {
       fecha: document.getElementById('tc-fecha').value,
       total_tacteadas: total, prenadas: pren, vacias: total - pren,
       observacion: document.getElementById('tc-obs').value.trim(),
+      campana_id: document.getElementById('tc-campana-id')?.value || '',
     };
     save.disabled = true;
     try {
@@ -13563,6 +13589,7 @@ function buildInsumos() {
         <div class="radio-group" id="in-tipo-group">
           <div class="radio-pill" data-tipo="Compra">Compra (entra stock)</div>
           <div class="radio-pill selected" data-tipo="Consumo">Consumo (sale stock)</div>
+          <div class="radio-pill" data-tipo="Traslado">Traslado (entre campos)</div>
         </div>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="in-fecha" value="${today()}" onchange="const c=document.getElementById('in-campana-id'); if(c) c.innerHTML = svCampanaOptionsHtml_(this.value)"></div>
@@ -13586,6 +13613,12 @@ function buildInsumos() {
       </div>
       <div class="fg" id="in-rodeo-wrap" style="display:none"><label>Rodeo</label>
         <select id="in-rodeo">${rodeoOptionsHtml(rodeosConStockPorCampo_(campos[0]?.campo_id))}</select>
+      </div>
+      <div class="fg" id="in-traslado-origen-wrap" style="display:none"><label>Campo origen</label>
+        <select id="in-traslado-origen">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
+      <div class="fg" id="in-traslado-destino-wrap" style="display:none"><label>Campo destino</label>
+        <select id="in-traslado-destino">${campos.map((c,i) => `<option value="${c.campo_id}" ${i===1?'selected':''}>${c.nombre}</option>`).join('')}</select>
       </div>
       <div class="fg" id="in-campana-wrap" style="display:none;min-width:220px"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
         <select id="in-campana-id">${svCampanaOptionsHtml_(today())}</select>
@@ -13743,36 +13776,41 @@ function buildInsumos() {
     <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
   </div>
   </div>
-  <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '')}</div>`;
+  <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '', '', '', '', '', S.cache.traslados_insumos || [])}</div>`;
 
   return h;
 }
 
-function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro) {
+function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro, traslados) {
   const productosMap = {};
   ((S.catalogs && S.catalogs.productos) || []).forEach(p => { productosMap[p.producto_id] = p; });
 
   let comprasF = compras || [];
   let consumosF = consumos || [];
+  let trasladosF = traslados || [];
   if (productoFiltro) {
     comprasF = comprasF.filter(c => String(c.producto_id) === String(productoFiltro));
     consumosF = consumosF.filter(c => String(c.producto_id) === String(productoFiltro));
+    trasladosF = trasladosF.filter(t => String(t.producto_id) === String(productoFiltro));
   }
   if (categoriaFiltro) {
     comprasF = comprasF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
     consumosF = consumosF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
+    trasladosF = trasladosF.filter(t => (productosMap[t.producto_id] || {}).categoria === categoriaFiltro);
   }
   if (campoFiltro) {
     comprasF = comprasF.filter(c => String(c.campo_id || '') === String(campoFiltro));
     consumosF = consumosF.filter(c => String(c.campo_id || '') === String(campoFiltro));
+    trasladosF = trasladosF.filter(t => String(t.campo_origen_id || '') === String(campoFiltro) || String(t.campo_destino_id || '') === String(campoFiltro));
   }
   if (rodeoFiltro) {
-    // Las compras no tienen rodeo, solo los consumos
+    // Las compras y los traslados no tienen rodeo, solo los consumos
     consumosF = consumosF.filter(c => String(c.rodeo_id || '') === String(rodeoFiltro));
     comprasF = []; // si filtrás por rodeo, no tiene sentido mostrar compras que son por campo
+    trasladosF = [];
   }
-  if (desde) { comprasF = comprasF.filter(c => String(c.fecha || '') >= desde); consumosF = consumosF.filter(c => String(c.fecha || '') >= desde); }
-  if (hasta) { comprasF = comprasF.filter(c => String(c.fecha || '') <= hasta); consumosF = consumosF.filter(c => String(c.fecha || '') <= hasta); }
+  if (desde) { comprasF = comprasF.filter(c => String(c.fecha || '') >= desde); consumosF = consumosF.filter(c => String(c.fecha || '') >= desde); trasladosF = trasladosF.filter(t => String(t.fecha || '') >= desde); }
+  if (hasta) { comprasF = comprasF.filter(c => String(c.fecha || '') <= hasta); consumosF = consumosF.filter(c => String(c.fecha || '') <= hasta); trasladosF = trasladosF.filter(t => String(t.fecha || '') <= hasta); }
 
   let filas = [
     ...comprasF.map(c => {
@@ -13803,6 +13841,17 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
         campo: c.campo_id ? campoNombre(c.campo_id) : '—', rodeo: c.rodeo_id ? rodeoNombre(c.rodeo_id) : '—',
         cantidad: Number(c.cantidad) || 0, unidad: p.unidad || '', detalle: detalle || '—',
         entity: 'consumos_insumos', idCol: 'consumo_id', id: c.consumo_id,
+      };
+    }),
+    ...trasladosF.map(t => {
+      const p = productosMap[t.producto_id] || {};
+      return {
+        fecha: t.fecha || '', tipoLabel: 'Traslado', tipoClass: 'pill-blue',
+        producto: p.nombre || '(producto eliminado)',
+        campo: (t.campo_origen_id ? campoNombre(t.campo_origen_id) : '—') + ' → ' + (t.campo_destino_id ? campoNombre(t.campo_destino_id) : '—'),
+        rodeo: '—',
+        cantidad: Number(t.cantidad) || 0, unidad: p.unidad || '', detalle: t.observaciones || '—',
+        entity: 'traslados_insumos', idCol: 'traslado_id', id: t.traslado_id,
       };
     }),
   ];
@@ -13885,18 +13934,25 @@ function buildStockSeleccionado_(productoFiltro, campoFiltro) {
   }
   return `<div style="background:${colores[0]};color:${colores[1]};border-radius:9px;padding:10px 16px;font-size:16px;font-weight:700;display:inline-block;margin-bottom:12px">Stock actual de ${row.nombre}: ${stockLabel}</div>`;
 }
-function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoFiltro) {
+function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoFiltro, traslados) {
   const p = ((S.catalogs && S.catalogs.productos) || []).find(x => String(x.producto_id) === String(productoId));
   if (!p) return '';
   const porCampo = esPorCampo_(p.por_campo);
 
   let comprasP = (compras || []).filter(c => String(c.producto_id) === String(productoId));
   let consumosP = (consumos || []).filter(c => String(c.producto_id) === String(productoId));
+  // Los traslados solo importan para el saldo corrido cuando estás mirando UN
+  // campo puntual (ahí sí mueven la aguja: entra al destino, sale del
+  // origen). Mirando "todos los campos" juntos, un traslado no cambia nada
+  // (el mismo insumo, en otro lugar) — se excluyen del todo en ese caso para
+  // no ensuciar el saldo corrido con movimientos que se cancelan solos.
+  let trasladosP = (porCampo && campoFiltro) ? (traslados || []).filter(t => String(t.producto_id) === String(productoId)) : [];
 
   // Si el producto es por campo y hay filtro de campo, restringir ambas listas
   if (porCampo && campoFiltro) {
     comprasP = comprasP.filter(c => String(c.campo_id) === String(campoFiltro));
     consumosP = consumosP.filter(c => String(c.campo_id) === String(campoFiltro));
+    trasladosP = trasladosP.filter(t => String(t.campo_origen_id) === String(campoFiltro) || String(t.campo_destino_id) === String(campoFiltro));
   }
 
   // Saldo inicial: resultado de todo lo anterior a la fecha "Desde" (si no hay fecha "Desde", arranca en 0 desde el principio de todo)
@@ -13904,6 +13960,11 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
   if (desde) {
     comprasP.forEach(c => { if (String(c.fecha || '') < desde) saldoInicial += Number(c.cantidad) || 0; });
     consumosP.forEach(c => { if (String(c.fecha || '') < desde) saldoInicial -= Number(c.cantidad) || 0; });
+    trasladosP.forEach(t => {
+      if (String(t.fecha || '') >= desde) return;
+      if (String(t.campo_destino_id) === String(campoFiltro)) saldoInicial += Number(t.cantidad) || 0;
+      if (String(t.campo_origen_id) === String(campoFiltro)) saldoInicial -= Number(t.cantidad) || 0;
+    });
   }
 
   let movs = [
@@ -13917,6 +13978,15 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
       detalle: [c.campo_id ? campoNombre(c.campo_id) : '', c.rodeo_id ? rodeoNombre(c.rodeo_id) : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
       entity: 'consumos_insumos', idCol: 'consumo_id', id: c.consumo_id,
     })),
+    ...trasladosP.map(t => {
+      const esEntrada = String(t.campo_destino_id) === String(campoFiltro);
+      return {
+        fecha: t.fecha || '', tipoLabel: 'Traslado', tipoClass: 'pill-blue',
+        entrada: esEntrada ? (Number(t.cantidad) || 0) : 0, salida: esEntrada ? 0 : (Number(t.cantidad) || 0),
+        detalle: (esEntrada ? 'Desde ' + campoNombre(t.campo_origen_id) : 'Hacia ' + campoNombre(t.campo_destino_id)) + (t.observaciones ? ' — ' + t.observaciones : ''),
+        entity: 'traslados_insumos', idCol: 'traslado_id', id: t.traslado_id,
+      };
+    }),
   ];
   if (desde) movs = movs.filter(m => String(m.fecha) >= desde);
   if (hasta) movs = movs.filter(m => String(m.fecha) <= hasta);
@@ -13991,12 +14061,13 @@ window.renderInsumosHistorialFiltrado = function() {
   const el = document.getElementById('in-historial-tabla');
   if (el) {
     if (productoFiltro) {
-      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta, campoFiltro);
+      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta, campoFiltro, S.cache.traslados_insumos || []);
     } else {
-      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro);
+      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro, S.cache.traslados_insumos || []);
     }
     attachTableDeleteEvents('compras_insumos', 'compra_id');
     attachTableDeleteEvents('consumos_insumos', 'consumo_id');
+    attachTableDeleteEvents('traslados_insumos', 'traslado_id');
   }
 };
 window.toggleNuevoProducto = function() {
@@ -14075,17 +14146,21 @@ function attachInsumosEvents() {
 
   function applyInsumoTipoUI(tipo) {
     const esCompra = tipo === 'Compra';
+    const esTraslado = tipo === 'Traslado';
     const cw = document.getElementById('in-costo-wrap'), pw = document.getElementById('in-proveedor-wrap');
     const kw = document.getElementById('in-campo-wrap'), rw = document.getElementById('in-rodeo-wrap');
     const cnw = document.getElementById('in-campana-wrap');
+    const tow = document.getElementById('in-traslado-origen-wrap'), tdw = document.getElementById('in-traslado-destino-wrap');
     if (!cw || !pw || !rw) return;
     cw.style.display = esCompra ? 'flex' : 'none';
     pw.style.display = esCompra ? 'flex' : 'none';
     // in-campo-wrap: lo maneja actualizarCampoCompraInsumo_ según producto
-    if (kw && esCompra) kw.style.display = 'none'; // en compras nunca (tiene su propio wrap)
-    rw.style.display = esCompra ? 'none' : 'flex';
+    if (kw && (esCompra || esTraslado)) kw.style.display = 'none'; // en compras y traslados nunca (traslado tiene sus propios dos campos)
+    rw.style.display = (esCompra || esTraslado) ? 'none' : 'flex'; // el traslado no es de un rodeo, es entre campos
     if (cnw) cnw.style.display = esCompra ? 'none' : 'flex';
-    actualizarCampoCompraInsumo_();
+    if (tow) tow.style.display = esTraslado ? 'flex' : 'none';
+    if (tdw) tdw.style.display = esTraslado ? 'flex' : 'none';
+    if (!esTraslado) actualizarCampoCompraInsumo_();
   }
   document.querySelectorAll('#in-tipo-group .radio-pill').forEach(p => p.onclick = () => {
     document.querySelectorAll('#in-tipo-group .radio-pill').forEach(x => x.classList.remove('selected'));
@@ -14127,6 +14202,7 @@ function attachInsumosEvents() {
   if (save) save.onclick = async () => {
     const tipo = document.querySelector('#in-tipo-group .selected').dataset.tipo;
     const esCompra = tipo === 'Compra';
+    const esTraslado = tipo === 'Traslado';
     const productoId = document.getElementById('in-producto').value;
     if (!productoId) { toast('Creá o seleccioná un producto primero.', 'err'); return; }
     const cantidad = Number(document.getElementById('in-cantidad').value) || 0;
@@ -14148,6 +14224,23 @@ function attachInsumosEvents() {
         };
         await apiCall('create', { body: { entity: 'compras_insumos', data } });
         invalidateCache('compras_insumos');
+      } else if (esTraslado) {
+        const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
+        if (!producto || !esPorCampo_(producto.por_campo)) {
+          toast('Este producto no se guarda por separado en cada campo — un traslado entre campos no tiene sentido para él.', 'err');
+          save.disabled = false; return;
+        }
+        const campoOrigenId = document.getElementById('in-traslado-origen')?.value;
+        const campoDestinoId = document.getElementById('in-traslado-destino')?.value;
+        if (!campoOrigenId || !campoDestinoId) { toast('Elegí el campo de origen y el de destino.', 'err'); save.disabled = false; return; }
+        if (campoOrigenId === campoDestinoId) { toast('El campo de origen y el de destino no pueden ser el mismo.', 'err'); save.disabled = false; return; }
+        const data = {
+          fecha, producto_id: productoId, cantidad,
+          campo_origen_id: campoOrigenId, campo_destino_id: campoDestinoId,
+          observaciones: document.getElementById('in-obs').value.trim(),
+        };
+        await apiCall('create', { body: { entity: 'traslados_insumos', data } });
+        invalidateCache('traslados_insumos');
       } else {
         const rodeoId = document.getElementById('in-rodeo').value;
         if (!rodeoId) { toast('Seleccioná el rodeo que consume.', 'err'); save.disabled = false; return; }
@@ -14175,14 +14268,17 @@ function attachInsumosEvents() {
       }
       S.stockProductos = null;
       await loadStockProductos();
-      toast((esCompra ? 'Compra' : 'Consumo') + ' registrado', 'ok');
-      await loadEntity(esCompra ? 'compras_insumos' : 'consumos_insumos', true);
+      const nombreTipo = esCompra ? 'Compra' : esTraslado ? 'Traslado' : 'Consumo';
+      toast(nombreTipo + ' registrado', 'ok');
+      const entidadGuardada = esCompra ? 'compras_insumos' : esTraslado ? 'traslados_insumos' : 'consumos_insumos';
+      await loadEntity(entidadGuardada, true);
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
   };
 
   attachTableDeleteEvents('compras_insumos', 'compra_id');
   attachTableDeleteEvents('consumos_insumos', 'consumo_id');
+  attachTableDeleteEvents('traslados_insumos', 'traslado_id');
   attachTableDeleteEvents('productos', 'producto_id');
 
   // Botones "Actualizar precio" del panel Precios Vigentes
@@ -16139,7 +16235,7 @@ function buildMargenBruto() {
       function pctMB(v) { return v!==null&&v!==undefined ? `<strong>${v}%</strong>` : '<span style="color:var(--muted)">—</span>'; }
       h += `<div class="panel">
         <div class="panel-title">🐄 Índices reproductivos</div>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Campaña ${campSelecObjMB?campSelecObjMB.nombre:'—'} — el índice de Preñez se atribuye por año de inicio de campaña (Tacto de 03/2026 → campaña 2026/2027)</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Campaña ${campSelecObjMB?campSelecObjMB.nombre:'—'} — el índice de Preñez usa la campaña cargada en cada Tacto (o la del Servicio vinculado, si es un Tacto viejo sin ese dato)</div>
         <div class="tw"><table class="dt"><thead><tr>
           <th>Índice</th><th class="tc">Valor</th>
         </tr></thead><tbody>
@@ -19877,6 +19973,30 @@ function svCampanaOptionsHtml_(fecha, campanaIdForzada) {
   return campanas.map(c => `<option value="${c.campana_id}" ${idSeleccionado===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
 }
 
+// Igual que svCampanaOptionsHtml_, pero pensado para Tacto: la campaña que le
+// corresponde a un Tacto NO es necesariamente la que contiene su fecha por
+// calendario — un Tacto IATF de diciembre corresponde a la campaña que recién
+// arranca en mayo siguiente (los terneros de ese servicio nacen en ESA
+// campaña), no a la que está en curso en diciembre. Por eso acá se propone
+// primero la campaña del SERVICIO vinculado a ese rodeo (que ya tiene su
+// campaña confirmada de antes) — mismo criterio que ya usaba
+// campanaDeServicioRodeo_() para la columna informativa del historial — y
+// solo si no hay ningún Servicio, se cae al criterio por fecha de siempre.
+function tcCampanaOptionsHtml_(rodeoId, fecha, campanaIdForzada) {
+  const campanas = (S.cache.campanas || []).slice().sort((a,b) => String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  if (!campanas.length) return '<option value="">— No hay campañas cargadas —</option>';
+  let idSeleccionado = campanaIdForzada ? String(campanaIdForzada) : null;
+  if (!idSeleccionado) {
+    const porServicio = campanaDeServicioRodeo_(rodeoId, fecha);
+    if (porServicio) idSeleccionado = String(porServicio.campana_id);
+  }
+  if (!idSeleccionado) {
+    const porFecha = campanaDeFecha_(fecha);
+    if (porFecha) idSeleccionado = String(porFecha.campana_id);
+  }
+  return campanas.map(c => `<option value="${c.campana_id}" ${idSeleccionado===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
+}
+
 // Diagnóstico de cobertura: cuántos registros de Pariciones/Mortandad/Abortos
 // tienen una fecha que no cae en NINGUNA campaña definida en el catálogo.
 // Esta es la respuesta real a "qué registros históricos hay que arreglar" —
@@ -21136,7 +21256,7 @@ function openEditModal(entity, idCol, id) {
       if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) {
         lecturasRefresco_.push(loadDashboard().catch(() => { toast('El registro se guardó, pero no se pudo refrescar el Dashboard.', 'err'); }));
       }
-      if (entity === 'compras_insumos' || entity === 'consumos_insumos' || entity === 'productos') {
+      if (entity === 'compras_insumos' || entity === 'consumos_insumos' || entity === 'traslados_insumos' || entity === 'productos') {
         S.stockProductos = null;
         lecturasRefresco_.push(loadStockProductos().catch(() => {}));
       }
