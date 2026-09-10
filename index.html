@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_223';
+const APP_VERSION = 'index_consolidado_4_6_155_224';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -14077,7 +14077,9 @@ window.toggleNuevoProducto = function() {
 
 window.actualizarCampoCompraInsumo_ = function() {
   const tipoSel = document.querySelector('#in-tipo-group .radio-pill.selected');
-  const esCompra = !tipoSel || tipoSel.dataset.tipo === 'Compra';
+  const tipoActual = tipoSel ? tipoSel.dataset.tipo : 'Compra';
+  const esCompra = tipoActual === 'Compra';
+  const esTraslado = tipoActual === 'Traslado';
   const productoId = document.getElementById('in-producto')?.value;
   const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
   const esPorCampo = producto && esPorCampo_(producto.por_campo);
@@ -14085,6 +14087,14 @@ window.actualizarCampoCompraInsumo_ = function() {
   // Compras: campo solo si el producto es por campo
   const compraWrap = document.getElementById('in-compra-campo-wrap');
   if (compraWrap) compraWrap.style.display = (esCompra && esPorCampo) ? 'flex' : 'none';
+
+  // Traslado tiene sus propios dos campos (origen/destino, siempre visibles
+  // para ese tipo) — no toca "Campo" ni "Rodeo", que son de Consumo.
+  if (esTraslado) {
+    const kwT = document.getElementById('in-campo-wrap');
+    if (kwT) kwT.style.display = 'none';
+    return;
+  }
 
   // Consumos: campo solo si el producto es por campo (el rodeo siempre aparece)
   const kw = document.getElementById('in-campo-wrap');
