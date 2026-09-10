@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_224';
+const APP_VERSION = 'index_consolidado_4_6_155_225';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1028,6 +1028,7 @@ async function init() {
       loadEntity('compras_insumos').catch(()=>{}),
       loadEntity('consumos_insumos').catch(()=>{}),
       loadEntity('traslados_insumos').catch(()=>{}),
+      loadEntity('ajustes_insumos').catch(()=>{}),
       // OPTIMIZACIÓN: antes acá había 16 llamadas sueltas (movimientos, ventas,
       // consumos_insumos, compras_insumos, pesadas, sueldos, mortandad, abortos,
       // destetes, pariciones, egresos_recria, precios_internos, campanas,
@@ -13590,6 +13591,7 @@ function buildInsumos() {
           <div class="radio-pill" data-tipo="Compra">Compra (entra stock)</div>
           <div class="radio-pill selected" data-tipo="Consumo">Consumo (sale stock)</div>
           <div class="radio-pill" data-tipo="Traslado">Traslado (entre campos)</div>
+          <div class="radio-pill" data-tipo="Ajuste">Ajuste (+/-, sin costo)</div>
         </div>
       </div>
       <div class="fg"><label>Fecha</label><input type="date" id="in-fecha" value="${today()}" onchange="const c=document.getElementById('in-campana-id'); if(c) c.innerHTML = svCampanaOptionsHtml_(this.value)"></div>
@@ -13598,7 +13600,7 @@ function buildInsumos() {
       <div class="fg" style="min-width:240px"><label>Producto <a href="javascript:void(0)" onclick="toggleNuevoProducto()" style="font-size:11px;margin-left:8px;font-weight:600">+ nuevo producto</a></label>
         <select id="in-producto" onchange="actualizarCampoCompraInsumo_()">${productoOptionsHtml(productos)}</select>
       </div>
-      <div class="fg"><label>Cantidad</label><input type="number" id="in-cantidad" placeholder="Ej: 500" min="0.01" step="0.01" oninput="inActualizarTotalCompra_()"></div>
+      <div class="fg"><label id="in-cantidad-label">Cantidad</label><input type="number" id="in-cantidad" placeholder="Ej: 500" min="0.01" step="0.01" oninput="inActualizarTotalCompra_()"></div>
       <div class="fg" id="in-costo-wrap">
         <label>Precio unitario</label>
         <input type="number" id="in-costo" placeholder="Ej: 300" min="0" step="0.01" oninput="inActualizarTotalCompra_()">
@@ -13620,10 +13622,13 @@ function buildInsumos() {
       <div class="fg" id="in-traslado-destino-wrap" style="display:none"><label>Campo destino</label>
         <select id="in-traslado-destino">${campos.map((c,i) => `<option value="${c.campo_id}" ${i===1?'selected':''}>${c.nombre}</option>`).join('')}</select>
       </div>
+      <div class="fg" id="in-ajuste-campo-wrap" style="display:none"><label>Campo <span class="opt">(este producto se guarda por separado en cada campo)</span></label>
+        <select id="in-ajuste-campo">${campos.map(c => `<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select>
+      </div>
       <div class="fg" id="in-campana-wrap" style="display:none;min-width:220px"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
         <select id="in-campana-id">${svCampanaOptionsHtml_(today())}</select>
       </div>
-      <div class="fg" style="min-width:220px"><label>Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
+      <div class="fg" style="min-width:220px"><label id="in-obs-label">Observación</label><input type="text" id="in-obs" placeholder="Opcional"></div>
     </div>
     <div id="in-nuevo-producto-panel" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:4px;margin-bottom:10px">
       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Nuevo producto</div>
@@ -13776,41 +13781,46 @@ function buildInsumos() {
     <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
   </div>
   </div>
-  <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '', '', '', '', '', S.cache.traslados_insumos || [])}</div>`;
+  <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '', '', '', '', '', S.cache.traslados_insumos || [], S.cache.ajustes_insumos || [])}</div>`;
 
   return h;
 }
 
-function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro, traslados) {
+function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro, traslados, ajustes) {
   const productosMap = {};
   ((S.catalogs && S.catalogs.productos) || []).forEach(p => { productosMap[p.producto_id] = p; });
 
   let comprasF = compras || [];
   let consumosF = consumos || [];
   let trasladosF = traslados || [];
+  let ajustesF = ajustes || [];
   if (productoFiltro) {
     comprasF = comprasF.filter(c => String(c.producto_id) === String(productoFiltro));
     consumosF = consumosF.filter(c => String(c.producto_id) === String(productoFiltro));
     trasladosF = trasladosF.filter(t => String(t.producto_id) === String(productoFiltro));
+    ajustesF = ajustesF.filter(a => String(a.producto_id) === String(productoFiltro));
   }
   if (categoriaFiltro) {
     comprasF = comprasF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
     consumosF = consumosF.filter(c => (productosMap[c.producto_id] || {}).categoria === categoriaFiltro);
     trasladosF = trasladosF.filter(t => (productosMap[t.producto_id] || {}).categoria === categoriaFiltro);
+    ajustesF = ajustesF.filter(a => (productosMap[a.producto_id] || {}).categoria === categoriaFiltro);
   }
   if (campoFiltro) {
     comprasF = comprasF.filter(c => String(c.campo_id || '') === String(campoFiltro));
     consumosF = consumosF.filter(c => String(c.campo_id || '') === String(campoFiltro));
     trasladosF = trasladosF.filter(t => String(t.campo_origen_id || '') === String(campoFiltro) || String(t.campo_destino_id || '') === String(campoFiltro));
+    ajustesF = ajustesF.filter(a => String(a.campo_id || '') === String(campoFiltro));
   }
   if (rodeoFiltro) {
-    // Las compras y los traslados no tienen rodeo, solo los consumos
+    // Las compras, traslados y ajustes no tienen rodeo, solo los consumos
     consumosF = consumosF.filter(c => String(c.rodeo_id || '') === String(rodeoFiltro));
     comprasF = []; // si filtrás por rodeo, no tiene sentido mostrar compras que son por campo
     trasladosF = [];
+    ajustesF = [];
   }
-  if (desde) { comprasF = comprasF.filter(c => String(c.fecha || '') >= desde); consumosF = consumosF.filter(c => String(c.fecha || '') >= desde); trasladosF = trasladosF.filter(t => String(t.fecha || '') >= desde); }
-  if (hasta) { comprasF = comprasF.filter(c => String(c.fecha || '') <= hasta); consumosF = consumosF.filter(c => String(c.fecha || '') <= hasta); trasladosF = trasladosF.filter(t => String(t.fecha || '') <= hasta); }
+  if (desde) { comprasF = comprasF.filter(c => String(c.fecha || '') >= desde); consumosF = consumosF.filter(c => String(c.fecha || '') >= desde); trasladosF = trasladosF.filter(t => String(t.fecha || '') >= desde); ajustesF = ajustesF.filter(a => String(a.fecha || '') >= desde); }
+  if (hasta) { comprasF = comprasF.filter(c => String(c.fecha || '') <= hasta); consumosF = consumosF.filter(c => String(c.fecha || '') <= hasta); trasladosF = trasladosF.filter(t => String(t.fecha || '') <= hasta); ajustesF = ajustesF.filter(a => String(a.fecha || '') <= hasta); }
 
   let filas = [
     ...comprasF.map(c => {
@@ -13852,6 +13862,17 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
         rodeo: '—',
         cantidad: Number(t.cantidad) || 0, unidad: p.unidad || '', detalle: t.observaciones || '—',
         entity: 'traslados_insumos', idCol: 'traslado_id', id: t.traslado_id,
+      };
+    }),
+    ...ajustesF.map(a => {
+      const p = productosMap[a.producto_id] || {};
+      const cant = Number(a.cantidad) || 0;
+      return {
+        fecha: a.fecha || '', tipoLabel: 'Ajuste', tipoClass: cant >= 0 ? 'pill-green' : 'pill-clay',
+        producto: p.nombre || '(producto eliminado)',
+        campo: a.campo_id ? campoNombre(a.campo_id) : '—', rodeo: '—',
+        cantidad: cant, unidad: p.unidad || '', detalle: a.observaciones || '—',
+        entity: 'ajustes_insumos', idCol: 'ajuste_id', id: a.ajuste_id,
       };
     }),
   ];
@@ -13934,7 +13955,7 @@ function buildStockSeleccionado_(productoFiltro, campoFiltro) {
   }
   return `<div style="background:${colores[0]};color:${colores[1]};border-radius:9px;padding:10px 16px;font-size:16px;font-weight:700;display:inline-block;margin-bottom:12px">Stock actual de ${row.nombre}: ${stockLabel}</div>`;
 }
-function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoFiltro, traslados) {
+function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoFiltro, traslados, ajustes) {
   const p = ((S.catalogs && S.catalogs.productos) || []).find(x => String(x.producto_id) === String(productoId));
   if (!p) return '';
   const porCampo = esPorCampo_(p.por_campo);
@@ -13947,12 +13968,16 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
   // (el mismo insumo, en otro lugar) — se excluyen del todo en ese caso para
   // no ensuciar el saldo corrido con movimientos que se cancelan solos.
   let trasladosP = (porCampo && campoFiltro) ? (traslados || []).filter(t => String(t.producto_id) === String(productoId)) : [];
+  // Los ajustes SÍ cambian el total (a diferencia de los traslados) — se
+  // incluyen siempre, filtrados por campo si corresponde.
+  let ajustesP = (ajustes || []).filter(a => String(a.producto_id) === String(productoId));
 
   // Si el producto es por campo y hay filtro de campo, restringir ambas listas
   if (porCampo && campoFiltro) {
     comprasP = comprasP.filter(c => String(c.campo_id) === String(campoFiltro));
     consumosP = consumosP.filter(c => String(c.campo_id) === String(campoFiltro));
     trasladosP = trasladosP.filter(t => String(t.campo_origen_id) === String(campoFiltro) || String(t.campo_destino_id) === String(campoFiltro));
+    ajustesP = ajustesP.filter(a => String(a.campo_id) === String(campoFiltro));
   }
 
   // Saldo inicial: resultado de todo lo anterior a la fecha "Desde" (si no hay fecha "Desde", arranca en 0 desde el principio de todo)
@@ -13965,6 +13990,7 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
       if (String(t.campo_destino_id) === String(campoFiltro)) saldoInicial += Number(t.cantidad) || 0;
       if (String(t.campo_origen_id) === String(campoFiltro)) saldoInicial -= Number(t.cantidad) || 0;
     });
+    ajustesP.forEach(a => { if (String(a.fecha || '') < desde) saldoInicial += Number(a.cantidad) || 0; });
   }
 
   let movs = [
@@ -13985,6 +14011,15 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
         entrada: esEntrada ? (Number(t.cantidad) || 0) : 0, salida: esEntrada ? 0 : (Number(t.cantidad) || 0),
         detalle: (esEntrada ? 'Desde ' + campoNombre(t.campo_origen_id) : 'Hacia ' + campoNombre(t.campo_destino_id)) + (t.observaciones ? ' — ' + t.observaciones : ''),
         entity: 'traslados_insumos', idCol: 'traslado_id', id: t.traslado_id,
+      };
+    }),
+    ...ajustesP.map(a => {
+      const cant = Number(a.cantidad) || 0;
+      return {
+        fecha: a.fecha || '', tipoLabel: 'Ajuste', tipoClass: cant >= 0 ? 'pill-green' : 'pill-clay',
+        entrada: cant >= 0 ? cant : 0, salida: cant < 0 ? -cant : 0,
+        detalle: a.observaciones || '—',
+        entity: 'ajustes_insumos', idCol: 'ajuste_id', id: a.ajuste_id,
       };
     }),
   ];
@@ -14061,13 +14096,14 @@ window.renderInsumosHistorialFiltrado = function() {
   const el = document.getElementById('in-historial-tabla');
   if (el) {
     if (productoFiltro) {
-      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta, campoFiltro, S.cache.traslados_insumos || []);
+      el.innerHTML = buildInsumosKardex_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, desde, hasta, campoFiltro, S.cache.traslados_insumos || [], S.cache.ajustes_insumos || []);
     } else {
-      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro, S.cache.traslados_insumos || []);
+      el.innerHTML = buildInsumosHistorial_(S.cache.compras_insumos || [], S.cache.consumos_insumos || [], productoFiltro, categoriaFiltro, desde, hasta, campoFiltro, rodeoFiltro, S.cache.traslados_insumos || [], S.cache.ajustes_insumos || []);
     }
     attachTableDeleteEvents('compras_insumos', 'compra_id');
     attachTableDeleteEvents('consumos_insumos', 'consumo_id');
     attachTableDeleteEvents('traslados_insumos', 'traslado_id');
+    attachTableDeleteEvents('ajustes_insumos', 'ajuste_id');
   }
 };
 window.toggleNuevoProducto = function() {
@@ -14080,6 +14116,7 @@ window.actualizarCampoCompraInsumo_ = function() {
   const tipoActual = tipoSel ? tipoSel.dataset.tipo : 'Compra';
   const esCompra = tipoActual === 'Compra';
   const esTraslado = tipoActual === 'Traslado';
+  const esAjuste = tipoActual === 'Ajuste';
   const productoId = document.getElementById('in-producto')?.value;
   const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
   const esPorCampo = producto && esPorCampo_(producto.por_campo);
@@ -14093,6 +14130,16 @@ window.actualizarCampoCompraInsumo_ = function() {
   if (esTraslado) {
     const kwT = document.getElementById('in-campo-wrap');
     if (kwT) kwT.style.display = 'none';
+    return;
+  }
+
+  // Ajuste: campo propio, solo si el producto es por campo (si es de pozo
+  // común, el ajuste es directo al total, sin elegir campo).
+  if (esAjuste) {
+    const kwA = document.getElementById('in-campo-wrap');
+    if (kwA) kwA.style.display = 'none';
+    const aw = document.getElementById('in-ajuste-campo-wrap');
+    if (aw) aw.style.display = esPorCampo ? 'flex' : 'none';
     return;
   }
 
@@ -14157,19 +14204,30 @@ function attachInsumosEvents() {
   function applyInsumoTipoUI(tipo) {
     const esCompra = tipo === 'Compra';
     const esTraslado = tipo === 'Traslado';
+    const esAjuste = tipo === 'Ajuste';
     const cw = document.getElementById('in-costo-wrap'), pw = document.getElementById('in-proveedor-wrap');
     const kw = document.getElementById('in-campo-wrap'), rw = document.getElementById('in-rodeo-wrap');
     const cnw = document.getElementById('in-campana-wrap');
     const tow = document.getElementById('in-traslado-origen-wrap'), tdw = document.getElementById('in-traslado-destino-wrap');
+    const aw = document.getElementById('in-ajuste-campo-wrap');
+    const cantInput = document.getElementById('in-cantidad'), cantLabel = document.getElementById('in-cantidad-label');
+    const obsLabel = document.getElementById('in-obs-label'), obsInput = document.getElementById('in-obs');
     if (!cw || !pw || !rw) return;
     cw.style.display = esCompra ? 'flex' : 'none';
     pw.style.display = esCompra ? 'flex' : 'none';
     // in-campo-wrap: lo maneja actualizarCampoCompraInsumo_ según producto
-    if (kw && (esCompra || esTraslado)) kw.style.display = 'none'; // en compras y traslados nunca (traslado tiene sus propios dos campos)
-    rw.style.display = (esCompra || esTraslado) ? 'none' : 'flex'; // el traslado no es de un rodeo, es entre campos
+    if (kw && (esCompra || esTraslado || esAjuste)) kw.style.display = 'none'; // cada uno de estos 3 tiene su propio campo (o ninguno)
+    rw.style.display = (esCompra || esTraslado || esAjuste) ? 'none' : 'flex'; // ninguno de estos tres es de un rodeo
     if (cnw) cnw.style.display = esCompra ? 'none' : 'flex';
     if (tow) tow.style.display = esTraslado ? 'flex' : 'none';
     if (tdw) tdw.style.display = esTraslado ? 'flex' : 'none';
+    if (aw) aw.style.display = 'none'; // lo termina de decidir actualizarCampoCompraInsumo_ según el producto elegido
+    // Ajuste: la cantidad puede ser negativa (para restar stock), y la
+    // observación pasa a ser obligatoria (para dejar registrado el motivo).
+    if (cantInput) { cantInput.min = esAjuste ? '' : '0.01'; cantInput.placeholder = esAjuste ? 'Ej: -20 (resta) ó 20 (suma)' : 'Ej: 500'; }
+    if (cantLabel) cantLabel.textContent = esAjuste ? 'Cantidad (+ suma, - resta)' : 'Cantidad';
+    if (obsLabel) obsLabel.textContent = esAjuste ? 'Observación (obligatoria — explicá el motivo)' : 'Observación';
+    if (obsInput) obsInput.placeholder = esAjuste ? 'Ej: conteo físico, se encontraron 20 rollos menos' : 'Opcional';
     if (!esTraslado) actualizarCampoCompraInsumo_();
   }
   document.querySelectorAll('#in-tipo-group .radio-pill').forEach(p => p.onclick = () => {
@@ -14213,6 +14271,7 @@ function attachInsumosEvents() {
     const tipo = document.querySelector('#in-tipo-group .selected').dataset.tipo;
     const esCompra = tipo === 'Compra';
     const esTraslado = tipo === 'Traslado';
+    const esAjuste = tipo === 'Ajuste';
     const productoId = document.getElementById('in-producto').value;
     if (!productoId) { toast('Creá o seleccioná un producto primero.', 'err'); return; }
     const cantidad = Number(document.getElementById('in-cantidad').value) || 0;
@@ -14251,6 +14310,20 @@ function attachInsumosEvents() {
         };
         await apiCall('create', { body: { entity: 'traslados_insumos', data } });
         invalidateCache('traslados_insumos');
+      } else if (esAjuste) {
+        const producto = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(productoId));
+        const esPorCampo = producto && esPorCampo_(producto.por_campo);
+        const campoAjusteId = document.getElementById('in-ajuste-campo')?.value;
+        if (esPorCampo && !campoAjusteId) { toast('Este producto se guarda por separado en cada campo — elegí a cuál corresponde el ajuste.', 'err'); save.disabled = false; return; }
+        const obsAjuste = document.getElementById('in-obs').value.trim();
+        if (!obsAjuste) { toast('Un ajuste necesita una observación que explique el motivo.', 'err'); save.disabled = false; return; }
+        const data = {
+          fecha, producto_id: productoId, cantidad, // cantidad ya viene con signo (+/-)
+          campo_id: esPorCampo ? campoAjusteId : '',
+          observaciones: obsAjuste,
+        };
+        await apiCall('create', { body: { entity: 'ajustes_insumos', data } });
+        invalidateCache('ajustes_insumos');
       } else {
         const rodeoId = document.getElementById('in-rodeo').value;
         if (!rodeoId) { toast('Seleccioná el rodeo que consume.', 'err'); save.disabled = false; return; }
@@ -14278,9 +14351,9 @@ function attachInsumosEvents() {
       }
       S.stockProductos = null;
       await loadStockProductos();
-      const nombreTipo = esCompra ? 'Compra' : esTraslado ? 'Traslado' : 'Consumo';
+      const nombreTipo = esCompra ? 'Compra' : esTraslado ? 'Traslado' : esAjuste ? 'Ajuste' : 'Consumo';
       toast(nombreTipo + ' registrado', 'ok');
-      const entidadGuardada = esCompra ? 'compras_insumos' : esTraslado ? 'traslados_insumos' : 'consumos_insumos';
+      const entidadGuardada = esCompra ? 'compras_insumos' : esTraslado ? 'traslados_insumos' : esAjuste ? 'ajustes_insumos' : 'consumos_insumos';
       await loadEntity(entidadGuardada, true);
       render();
     } catch (err) { toast(err.message, 'err'); } finally { save.disabled = false; }
@@ -14289,6 +14362,7 @@ function attachInsumosEvents() {
   attachTableDeleteEvents('compras_insumos', 'compra_id');
   attachTableDeleteEvents('consumos_insumos', 'consumo_id');
   attachTableDeleteEvents('traslados_insumos', 'traslado_id');
+  attachTableDeleteEvents('ajustes_insumos', 'ajuste_id');
   attachTableDeleteEvents('productos', 'producto_id');
 
   // Botones "Actualizar precio" del panel Precios Vigentes
@@ -21266,7 +21340,7 @@ function openEditModal(entity, idCol, id) {
       if (ENTIDADES_AFECTAN_DASHBOARD_.includes(entity)) {
         lecturasRefresco_.push(loadDashboard().catch(() => { toast('El registro se guardó, pero no se pudo refrescar el Dashboard.', 'err'); }));
       }
-      if (entity === 'compras_insumos' || entity === 'consumos_insumos' || entity === 'traslados_insumos' || entity === 'productos') {
+      if (entity === 'compras_insumos' || entity === 'consumos_insumos' || entity === 'traslados_insumos' || entity === 'ajustes_insumos' || entity === 'productos') {
         S.stockProductos = null;
         lecturasRefresco_.push(loadStockProductos().catch(() => {}));
       }
