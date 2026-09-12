@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_227';
+const APP_VERSION = 'index_consolidado_4_6_155_228';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -973,6 +973,17 @@ function rodeosConStockTodosCampos_() {
 
 async function loadCatalogs() {
   S.catalogs = await apiCall('catalog');
+  // Se ordenan acá, una sola vez — así todos los combos de la app (Rodeo,
+  // Campo, Comprador, Producto) salen alfabéticos en TODAS las pantallas,
+  // sin tener que tocar cada selector por separado. localeCompare con 'es'
+  // ordena bien los acentos (ej. "Ñandú" después de "Novillo", no antes).
+  const ordenarPorNombre_ = arr => (arr || []).slice().sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es', { sensitivity: 'base' }));
+  if (S.catalogs) {
+    if (S.catalogs.rodeos)      S.catalogs.rodeos      = ordenarPorNombre_(S.catalogs.rodeos);
+    if (S.catalogs.campos)      S.catalogs.campos      = ordenarPorNombre_(S.catalogs.campos);
+    if (S.catalogs.compradores) S.catalogs.compradores = ordenarPorNombre_(S.catalogs.compradores);
+    if (S.catalogs.productos)   S.catalogs.productos   = ordenarPorNombre_(S.catalogs.productos);
+  }
 }
 async function loadEntity(entity, force) {
   if (!force && S.cache[entity]) return S.cache[entity];
