@@ -634,7 +634,21 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // Preñadas AJUSTADAS por movimientos entre rodeos — esta es la que se usa
     // para el total consolidado y para "Para parir", no la cruda del tacto.
     const prenadasAjustadas = Math.max(0, res.prenadas - exportadas + totalImportadas);
-    const pendientesAjustado = res.sinTactoFinal ? 0 : Math.max(0, prenadasAjustadas - res.abortos - res.muertas - res.yaParieron - salidasExternas.total);
+    // OJO — bug real encontrado y corregido (Vacas Rodeo 5, campaña 2026):
+    // "pendientesAjustado" restaba salidasExternas.total ACÁ, pero esa misma
+    // cantidad (ventas directas + traslados a destino no-vaca) YA está restada
+    // arriba, dentro de "exportadas" (que entra en prenadasAjustadas): el bucle
+    // de Traslados (más arriba) suma a exportadasPorRodeo TODO traslado que
+    // sale del rodeo sin importar el destino, y el bloque de ventas directas
+    // también suma cantVendida a exportadasPorRodeo (no solo a salidasExternas).
+    // Resultado: esas cabezas se restaban dos veces, y "Para parir" podía
+    // quedar en 0 cuando en realidad faltaban cabezas por parir (caso real:
+    // 216 preñadas - 13 trasladadas a "Vacas Venta" - 1 aborto - 2 muertas -
+    // 196 parieron = 4 para parir, pero el sistema mostraba 0 porque esas
+    // mismas 13 se restaban una segunda vez acá). "salidasExternas" sigue
+    // existiendo solo para el desglose informativo (ventas vs. traslado-no-
+    // vaca) y para el total de "Descartadas" — no se debe volver a restar aquí.
+    const pendientesAjustado = res.sinTactoFinal ? 0 : Math.max(0, prenadasAjustadas - res.abortos - res.muertas - res.yaParieron);
     // "Sin stock" = vaciado por traslado — sus preñadas ya viajaron a otro
     // rodeo (restadas arriba como "exportadas"), así que no debe aportar nada
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
