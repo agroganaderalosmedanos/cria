@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_230';
+const APP_VERSION = 'index_consolidado_4_6_155_231';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -585,6 +585,25 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     }
   });
 
+  // Control de stock: cabezas que SALIERON físicamente del rodeo después del
+  // tacto pero que el panel no resta de "preñadas" porque ya están contadas en
+  // Abortos o en Parieron ([abid], [pid], "ternero muerto", caravana de aborto).
+  // Las "vacías" no entran: nunca estuvieron en las preñadas del tacto.
+  const noRestadasPorRodeo = {};
+  (S.cache.movimientos||[]).filter(m=>(m.fecha||'')<=corte).forEach(m => {
+    if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
+    if (!trasladoNoRestaPrenadas_(m, idxAbortosCaravana)) return;
+    if (/vac[ií]a/i.test(String(m.observaciones||'')) && !/\[(abid|pid):\d+\]/.test(String(m.observaciones||''))) return;
+    const origId = String(m.rodeo_origen_id);
+    if (!idsVaca.has(origId)) return;
+    const infoOrig = infoTactoBase[origId];
+    if (!infoOrig || infoOrig.sinTactoFinal) return;
+    if (infoOrig.fecha && String(m.fecha) < String(infoOrig.fecha)) return;
+    const cant = Number(m.cantidad)||0;
+    if (cant <= 0) return;
+    noRestadasPorRodeo[origId] = (noRestadasPorRodeo[origId]||0) + cant;
+  });
+
   // Ventas directas (tabla Ventas, no Movimientos) de vacas preñadas post-tacto
   // — mismo criterio: SIEMPRE restan del origen (ya no van a parir acá), no
   // se les aplica ninguna tasa. Se acumulan en el MISMO exportadasPorRodeo que
@@ -649,6 +668,10 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     // existiendo solo para el desglose informativo (ventas vs. traslado-no-
     // vaca) y para el total de "Descartadas" — no se debe volver a restar aquí.
     const pendientesAjustado = res.sinTactoFinal ? 0 : Math.max(0, prenadasAjustadas - res.abortos - res.muertas - res.yaParieron);
+    // Control de stock: las vacas que deberían estar físicamente en el rodeo
+    // según las cuentas del panel vs. el stock real de Movimientos.
+    const stockEsperado = prenadasAjustadas - res.muertas - (noRestadasPorRodeo[rid]||0);
+    const difStock = res.sinTactoFinal ? null : (stockActual - stockEsperado);
     // "Sin stock" = vaciado por traslado — sus preñadas ya viajaron a otro
     // rodeo (restadas arriba como "exportadas"), así que no debe aportar nada
     // más al total: se excluye directamente en vez de sumar 0 preñadas ajustadas
@@ -678,7 +701,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     filas.push({
       nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
-      prenadasAjustadas, pendientesAjustado,
+      prenadasAjustadas, pendientesAjustado, stockEsperado, difStock,
       rodeoTernerosNombre: rodeoTernerosVerif ? rodeoTernerosVerif.nombre : null,
       ternerosAlPie, ternerosMuertosPostParto, ternerosVendidos, ternerosCedidos, verifTotal, verifDiff,
     });
@@ -790,7 +813,7 @@ function vacasPendientesDeParir_(rodeoId) {
   ).reduce((s,m) => s + (Number(m.cantidad)||1), 0);
 
   const pendientes = Math.max(0, prenadasAjustadas - abortos - muertas - yaParieron);
-  return { prenadas, importadas, exportadas, prenadasAjustadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
+  return { fecha: fechaTacto, prenadas, importadas, exportadas, prenadasAjustadas, yaParieron, nacidosVivos, nacidosMuertos, abortos, muertas, pendientes, sinTactoFinal: !ultimoTactoFinal };
 }
 function rodeosTodos() {
   return (S.catalogs && S.catalogs.rodeos || []);
@@ -4011,6 +4034,9 @@ function buildEstadoVientres() {
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
         <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
+        ${f.difStock===null||f.difStock===undefined?'':(f.difStock===0
+          ?`<div style="font-size:11px;color:var(--green-text);margin-top:6px">✓ Control de stock: ${fn(f.stockActual)} vacas en el rodeo, coincide con lo esperado.</div>`
+          :`<div style="font-size:11px;color:var(--red);margin-top:6px;line-height:1.5">⚠ Control de stock: el panel espera ${fn(f.stockEsperado)} vacas en el rodeo y hay ${fn(f.stockActual)} (${f.difStock>0?'+':''}${fn(f.difStock)}). ${f.difStock<0?'Faltan vacas que salieron o se contaron de más en el tacto — "Para parir" puede estar sobrestimado en ese número.':'Sobran vacas en el rodeo (ej. vacías que no se sacaron) — no afecta "Para parir".'}</div>`)}
       </div>`;
     }
     h += '</div>';
