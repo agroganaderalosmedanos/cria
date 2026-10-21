@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_239';
+const APP_VERSION = 'index_consolidado_4_6_155_240';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4202,11 +4202,17 @@ function buildServicios() {  const _criaTabs = [
       </div>
     </div>
 
-    <!-- Toros a campo: un solo toro, sin cantidad -->
+    <!-- Toros a campo: cantidad de vacas (opcional) + toro(s) -->
     <div id="sv-toro-wrap" style="display:none;margin-top:12px">
-      <div class="fg"><label>Identificación del toro <span class="opt">(nombre o caravana)</span></label>
-        <input type="text" id="sv-toro" placeholder="Ej: Don Pedro / 982000...">
+      <div class="fgrid">
+        <div class="fg" style="max-width:160px"><label>Cant. vacas <span class="opt">(opcional)</span></label>
+          <input type="number" id="sv-toro-cant" min="1" placeholder="Ej: 18">
+        </div>
+        <div class="fg"><label>Identificación del toro <span class="opt">(nombre o caravana)</span></label>
+          <input type="text" id="sv-toro" placeholder="Ej: Don Pedro / 982000...">
+        </div>
       </div>
+      <div class="helper-text" style="margin-top:4px">Usalo para las vacas que no entran a IATF y van directo con el toro. Las que se inseminaron y después van al repaso no se cargan acá: ya están en el IATF.</div>
     </div>
 
     <div class="fg" style="margin-top:12px;max-width:400px">
@@ -4341,10 +4347,13 @@ function attachServiciosEvents() {
 
     } else {
       const toroEl = document.getElementById('sv-toro');
+      const cantToroEl = document.getElementById('sv-toro-cant');
+      const cantToro = cantToroEl ? parseInt(cantToroEl.value) : NaN;
       const data = {
         tipo, rodeo_id, fecha_inicio, fecha_fin, observacion, campana_id,
         identificacion_toro: toroEl ? toroEl.value.trim() : '',
       };
+      if (!isNaN(cantToro) && cantToro > 0) data.cantidad = cantToro;
       save.disabled = true;
       try {
         await apiCall('create', { body: { entity: 'servicios', data } });
