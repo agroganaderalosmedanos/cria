@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_237';
+const APP_VERSION = 'index_consolidado_4_6_155_238';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -4109,10 +4109,10 @@ function buildServicios() {  const _criaTabs = [
       <div class="fg"><label>Rodeo</label>
         <select id="sv-rodeo">${rodeoOptionsHtml(rodeosAptos)}</select>
       </div>
-      <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}" onchange="document.getElementById('sv-campana').innerHTML = svCampanaOptionsHtml_(this.value)"></div>
+      <div class="fg"><label>Fecha inicio</label><input type="date" id="sv-fecha-ini" value="${today()}" onchange="document.getElementById('sv-campana').innerHTML = svServicioCampanaOptionsHtml_(this.value)"></div>
       <div class="fg"><label>Fecha fin <span class="opt">(opcional)</span></label><input type="date" id="sv-fecha-fin"></div>
       <div class="fg"><label>Campaña <span class="opt">(propuesta según la fecha, se puede cambiar)</span></label>
-        <select id="sv-campana">${svCampanaOptionsHtml_(today())}</select>
+        <select id="sv-campana">${svServicioCampanaOptionsHtml_(today())}</select>
       </div>
     </div>
 
@@ -4243,6 +4243,7 @@ function attachServiciosEvents() {
     const observacion = obsEl ? obsEl.value.trim() : '';
     const campana_id = campanaEl ? campanaEl.value : '';
     if (!fecha_inicio || !rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    if (!campana_id) { toast('Elegí la campaña (la de la parición que va a generar este servicio). Si no aparece, creala en Configuración → Campañas.', 'err'); return; }
 
     if (tipo === 'IATF') {
       const filas = [];
@@ -19033,6 +19034,35 @@ function svCampanaOptionsHtml_(fecha, campanaIdForzada) {
 // campaña confirmada de antes) — mismo criterio que ya usaba
 // campanaDeServicioRodeo_() para la columna informativa del historial — y
 // solo si no hay ningún Servicio, se cae al criterio por fecha de siempre.
+// v238: la campaña de un SERVICIO no es la que contiene la fecha del servicio,
+// sino la de la PARICIÓN que genera. Un IATF del 21/10/2026 da terneros a fines
+// de julio 2027 → campaña 2027/2028, no 2026/2027. Se suma la gestación
+// (~283 días) a la fecha y se busca la campaña que contiene ese parto estimado.
+// Si la campaña de la parición todavía no está cargada en el catálogo, devuelve
+// null (el formulario avisa y no propone una equivocada).
+const DIAS_GESTACION_ = 283;
+function sumarDias_(fecha, dias) {
+  if (!fecha) return fecha;
+  const d = new Date(String(fecha).slice(0,10) + 'T12:00:00');
+  if (isNaN(d.getTime())) return fecha;
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0,10);
+}
+function campanaDeParicionEstimada_(fecha, dias) {
+  return campanaDeFecha_(sumarDias_(fecha, dias == null ? DIAS_GESTACION_ : dias));
+}
+function svServicioCampanaOptionsHtml_(fecha, campanaIdForzada) {
+  const campanas = (S.cache.campanas || []).slice().sort((a,b) => String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
+  if (!campanas.length) return '<option value="">— No hay campañas cargadas —</option>';
+  let idSeleccionado = campanaIdForzada ? String(campanaIdForzada) : null;
+  if (!idSeleccionado) {
+    const p = campanaDeParicionEstimada_(fecha);
+    if (p) idSeleccionado = String(p.campana_id);
+  }
+  const aviso = idSeleccionado ? '' : `<option value="" selected>⚠ Falta crear la campaña del parto estimado (${fd(sumarDias_(fecha, DIAS_GESTACION_))})</option>`;
+  return aviso + campanas.map(c => `<option value="${c.campana_id}" ${idSeleccionado===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
+}
+
 function tcCampanaOptionsHtml_(rodeoId, fecha, campanaIdForzada) {
   const campanas = (S.cache.campanas || []).slice().sort((a,b) => String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
   if (!campanas.length) return '<option value="">— No hay campañas cargadas —</option>';
@@ -19042,7 +19072,10 @@ function tcCampanaOptionsHtml_(rodeoId, fecha, campanaIdForzada) {
     if (porServicio) idSeleccionado = String(porServicio.campana_id);
   }
   if (!idSeleccionado) {
-    const porFecha = campanaDeFecha_(fecha);
+    // v238: sin Servicio vinculado, se estima el parto (~200 días después del
+    // tacto) en vez de usar la fecha del tacto — un tacto de diciembre es de la
+    // campaña siguiente.
+    const porFecha = campanaDeParicionEstimada_(fecha, 200);
     if (porFecha) idSeleccionado = String(porFecha.campana_id);
   }
   return campanas.map(c => `<option value="${c.campana_id}" ${idSeleccionado===String(c.campana_id) ? 'selected' : ''}>${c.nombre}${!c.fecha_fin ? ' (en curso)' : ''}</option>`).join('');
