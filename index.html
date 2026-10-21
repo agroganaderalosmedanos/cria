@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_234';
+const APP_VERSION = 'index_consolidado_4_6_155_237';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2798,7 +2798,10 @@ function buildDashboard() {
   // si el registro no tiene campana_id cargado (viejo, de antes de v15), se
   // usa la campaña que corresponde por fecha como respaldo. Y, como el resto,
   // el corte de fecha solo aplica si esta es la campaña activa.
-  const mortandadCria = (S.cache.mortandad || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
+  // Se excluyen los "Nacido muerto [pid:]": se cargan en Mortandad con el
+  // rodeo de la MADRE, pero la vaca no murió — restarlos bajaba el stock de
+  // vacas del Dashboard en la cantidad de nacidos muertos de cada rodeo.
+  const mortandadCria = (S.cache.mortandad || []).filter(m => !esMortandadPorParicion_(m) && (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campSelec));
 
   const campSelecField = S._dashCampo || '';
 
@@ -3375,6 +3378,13 @@ function buildDashboard() {
     const stockTerneros = rodeosCriaFilt
       .filter(r => normAct_(r.categoria).includes('ternero'))
       .reduce((s,r) => s + Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0), 0);
+    // Guachos: terneros de esta parición cuya madre salió a venta — están en
+    // un rodeo propio ("Terneros guachos"), sin vínculo por nombre a un rodeo
+    // de vientre, pero SÍ son de esta parición: se suman a los de al pie.
+    const stockGuachos = rodeosCriaFilt
+      .filter(r => normAct_(r.categoria).includes('ternero') && /guach/i.test(String(r.nombre||'')))
+      .reduce((s,r) => s + Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0), 0);
+    const ternerosParicion = (totVacaDash.ternerosAlPie||0) + stockGuachos;
     h += `<div class="panel">
       <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelecObj?.nombre || campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       ${preñadasMayorQueEntoradas ? `<div style="background:rgba(220,50,50,0.08);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--red);font-weight:600">⚠ Preñadas (${fn(totVacaDash.prenadas)}) es mayor que Entoradas (${fn(totVacaDash.entoradas)}) — matemáticamente imposible. Revisá en algún rodeo si el campo "Preñadas" del Tacto final quedó cargado más alto que "Total tacteadas".</div>` : ''}
@@ -3402,10 +3412,12 @@ function buildDashboard() {
       <div style="border-top:1px dashed var(--border);margin-top:16px;padding-top:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <div>
-            <div style="font-weight:600;font-size:13px">🐣 Terneros — stock físico actual</div>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">Conteo de HOY en los rodeos de terneros/as — no es una apertura de las preñadas de arriba, es otro conteo aparte.</div>
+            <div style="font-weight:600;font-size:13px">🐣 Terneros al pie — de esta parición</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">Stock de HOY en los rodeos "Terneros (…)" de los rodeos de vientre de arriba. Preñadas − Pendientes − Abortadas − Muertas − Descartadas − Nacidos muertos − Terneros muertos + mellizos = este número.</div>
+            ${stockGuachos>0?`<div style="font-size:11px;color:var(--text3);margin-top:2px">Incluye ${fn(stockGuachos)} guachos (rodeo propio, madres salidas a venta).</div>`:''}
+            ${(stockTerneros - ternerosParicion) > 0 ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">No incluye ${fn(stockTerneros - ternerosParicion)} terneros de otros rodeos de terneros no vinculados a un rodeo de vientre (ej. "Terneros 2026", "Terneros/as") — stock de otra campaña. Total físico en rodeos de terneros: ${fn(stockTerneros)}.</div>` : ''}
           </div>
-          <div class="kpi-val" style="color:var(--gold-text);font-size:22px">${fn(stockTerneros)}</div>
+          <div class="kpi-val" style="color:var(--gold-text);font-size:22px">${fn(ternerosParicion)}</div>
         </div>
       </div>
     </div>`;
@@ -13868,7 +13880,7 @@ function calcMargenCriaCampana_(campanaId, corte) {
   const ventas   = (S.cache.ventas || []).filter(v => (!esCampanaActivaCria || (v.fecha_salida||'') <= corteCria) && campanaEfectiva_(v.fecha_salida, v.campana_id)===String(campanaId));
   const consumos = (S.cache.consumos_insumos || []).filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campanaId));
   const comprasH = comprasHacGetAll_().filter(c => (!esCampanaActivaCria || (c.fecha||'') <= corteCria) && campanaEfectiva_(c.fecha, c.campana_id)===String(campanaId));
-  const mortandadCria = (S.cache.mortandad || []).filter(m => (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campanaId));
+  const mortandadCria = (S.cache.mortandad || []).filter(m => !esMortandadPorParicion_(m) && (!esCampanaActivaCria || (m.fecha||'') <= corteCria) && campanaEfectiva_(m.fecha, m.campana_id)===String(campanaId));
 
   const ventasCria = ventas.filter(v => rodeosCriaIds.has(String(v.rodeo_id)));
   const cesiones = movs.filter(m => {
