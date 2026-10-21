@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_232';
+const APP_VERSION = 'index_consolidado_4_6_155_233';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -420,6 +420,12 @@ function trasladoNoRestaPrenadas_(m, idxAbortosCaravana) {
   if (/\[pid:\d+\]/.test(obs)) return true;
   if (/vac[ií]a/i.test(obs)) return true;
   if (/terneros?\s*muert[oa]s?/i.test(obs)) return true;
+  // "parió" / "parida(s)" en la observación: la vaca ya está contada en
+  // "Parieron" (ej. madre de guacho que se manda a venta). El aviso de la
+  // tarjeta ya sugería escribir "parió", pero esta regla faltaba — por eso
+  // no tenía efecto. Acepta mayúsculas, con o sin tilde, y cualquier signo
+  // alrededor ("Parió - madre de guacho"). No matchea "parición".
+  if (/pari[oó](?![a-z\u00e0-\u00ff])|parid[ao]s?(?![a-z\u00e0-\u00ff])/i.test(obs)) return true;
   if (idxAbortosCaravana && m.caravana) {
     const key = String(m.rodeo_origen_id) + '|' + String(m.caravana).trim().toUpperCase();
     const fechaAborto = idxAbortosCaravana[key];
@@ -4035,7 +4041,7 @@ function buildEstadoVientres() {
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Abortos</span><span>−${fn(f.abortos)}</span></div>
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes</span><span>−${fn(f.muertas)}</span></div>
         <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
-        ${(f.pendientesRaw!==null&&f.pendientesRaw!==undefined&&f.pendientesRaw<0)?`<div style="font-size:11px;color:var(--red);margin-top:6px;line-height:1.5">⚠ La cuenta da ${fn(f.pendientesRaw)} (no puede ser negativa, se muestra 0): hay al menos ${fn(-f.pendientesRaw)} vaca(s) que se restan dos veces, porque salieron del rodeo (traslado/venta) pero ya estaban contadas en "Parieron". Ponele "ternero muerto" o "parió" en la observación de ese traslado, o cargalo desde la Parición, para que no se reste de nuevo. "Para parir" real: entre 0 y ${fn(Math.max(0,(f.exportadas||0)+f.pendientesRaw))}.</div>`:''}
+        ${(f.pendientesRaw!==null&&f.pendientesRaw!==undefined&&f.pendientesRaw<0)?`<div style="font-size:11px;color:var(--red);margin-top:6px;line-height:1.5">⚠ La cuenta da ${fn(f.pendientesRaw)} (no puede ser negativa, se muestra 0): hay al menos ${fn(-f.pendientesRaw)} vaca(s) que se restan dos veces, porque salieron del rodeo (traslado/venta) pero ya estaban contadas en "Parieron". Ponele "parió" (o "ternero muerto") en la observación de ese traslado, o cargalo desde la Parición, para que no se reste de nuevo. Ojo: "vacía" en la observación significa que nunca estuvo preñada, y esa vaca deja de restarse de las preñadas. "Para parir" real: entre 0 y ${fn(Math.max(0,(f.exportadas||0)+f.pendientesRaw))}.</div>`:''}
         ${f.difStock===null||f.difStock===undefined?'':(f.difStock===0
           ?`<div style="font-size:11px;color:var(--green-text);margin-top:6px">✓ Control de stock: ${fn(f.stockActual)} vacas en el rodeo, coincide con lo esperado.</div>`
           :`<div style="font-size:11px;color:var(--red);margin-top:6px;line-height:1.5">⚠ Control de stock: el panel espera ${fn(f.stockEsperado)} vacas en el rodeo y hay ${fn(f.stockActual)} (${f.difStock>0?'+':''}${fn(f.difStock)}). ${f.difStock<0?'Faltan vacas que salieron o se contaron de más en el tacto — "Para parir" puede estar sobrestimado en ese número.':'Sobran vacas en el rodeo (ej. vacías que no se sacaron) — no afecta "Para parir".'}</div>`)}
