@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_233';
+const APP_VERSION = 'index_consolidado_4_6_155_234';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -645,7 +645,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
 
   const stockACorte = stockPorRodeoACorte_(corte);
-  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, nacidosMuertos:0, ternerosAlPie:0, ternerosMuertosPostParto:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0 };
+  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, nacidosMuertos:0, ternerosAlPie:0, ternerosMuertosPostParto:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0, prenadasTacto:0 };
   const filas = [];
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
@@ -735,6 +735,12 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     totales.entoradas += (infoTactoBase[rid]?.total) || 0;
     totales.descartadas += salidasExternas.cabezas || 0;
     totales.prenadas += prenadasAjustadas;
+    // Preñadas "del tacto" para el panel del Dashboard: las ajustadas YA
+    // tienen restadas las descartadas (salidas a Venta/Descarte), así que si
+    // la apertura vuelve a sumar Descartadas, hay que comparar contra las
+    // preñadas ANTES de esa resta — si no, la verificación da de más
+    // exactamente lo descartado, y Vacías/Índice de preñez quedan mal.
+    totales.prenadasTacto += prenadasAjustadas + (salidasExternas.total || 0);
     totales.paridas += res.yaParieron;
     totales.abortadas += res.abortos;
     totales.muertas += res.muertas;
@@ -3360,6 +3366,7 @@ function buildDashboard() {
   } else {
   const { totales: totVacaDash } = calcularVacasReproductivas_(campSelecField, corteCria);
   if (totVacaDash) {
+    totVacaDash.prenadas = totVacaDash.prenadasTacto; // ver nota en calcularVacasReproductivas_
     const preñadasMayorQueEntoradas = totVacaDash.prenadas > totVacaDash.entoradas;
     const vacias = Math.max(0, totVacaDash.entoradas - totVacaDash.prenadas);
     const indicePrenez = totVacaDash.entoradas > 0 ? (totVacaDash.prenadas / totVacaDash.entoradas * 100) : null;
