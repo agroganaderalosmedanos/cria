@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_240';
+const APP_VERSION = 'index_consolidado_4_6_155_241';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -528,6 +528,18 @@ function esCategoriaReproductora_(categoria) {
 // como el Excel de auditoría reproductiva — antes cada uno tenía su propia
 // copia de esta cuenta, y como una se actualizaba y la otra no, terminaban
 // dando números distintos sin que hubiera forma simple de saber cuál mirar.
+// v241: fila "En servicio" (IATF + Toros a campo) para Dashboard y Estado de Vientres.
+function htmlEnServicio_(t) {
+  if (!t) return '';
+  const aviso = t.serviciosSinCantidad > 0 ? `<div style="font-size:11px;color:var(--gold-text);margin-top:6px">⚠ ${t.serviciosSinCantidad} servicio${t.serviciosSinCantidad>1?'s':''} sin cantidad de vacas cargada — no suma${t.serviciosSinCantidad>1?'n':''} al total.</div>` : '';
+  return `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">Entoradas según Servicios cargados</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:6px">
+      <div class="kpi"><div class="kpi-label">Total entoradas</div><div class="kpi-val">${fn(t.enServicio)}</div></div>
+      <div class="kpi"><div class="kpi-label">IATF</div><div class="kpi-val" style="color:var(--gold-text)">${fn(t.enServicioIatf)}</div></div>
+      <div class="kpi"><div class="kpi-label">Toro a campo (sin IATF)</div><div class="kpi-val" style="color:var(--green-text)">${fn(t.enServicioToro)}</div></div>
+    </div>${aviso}
+    <div style="font-size:11px;color:var(--text3);margin-bottom:14px">Sale de Servicios. "Vacas entoradas" de abajo sale del Tacto final y aparece recién cuando se carga.</div>`;
+}
 function calcularVacasReproductivas_(campoFiltro, corte, campanaId) {
   corte = corte || today();
   // v239 — TODO el cálculo queda acotado a UNA campaña reproductiva. Antes se
@@ -783,6 +795,18 @@ function calcularVacasReproductivas_(campoFiltro, corte, campanaId) {
     totales.ternerosMuertosPostParto += ternerosMuertosPostParto || 0;
   });
   totales.terneroProyectado = totales.nacidosVivos + totales.pendientes;
+  // v241: vacas en servicio según lo cargado en Servicios de ESTA campaña
+  // (IATF + Toros a campo), para ver el total entorado antes del Tacto final.
+  totales.enServicioIatf = 0; totales.enServicioToro = 0; totales.serviciosSinCantidad = 0;
+  const idsRodeosIncl = new Set(rodeos.map(r => String(r.rodeo_id)));
+  (S.cache.servicios||[]).forEach(sv => {
+    if (servicioCampanaId_(sv) !== cid || !idsRodeosIncl.has(String(sv.rodeo_id))) return;
+    if ((sv.fecha_inicio||'') > corte) return;
+    const cant = Number(sv.cantidad) || 0;
+    if (!cant) { totales.serviciosSinCantidad++; return; }
+    if (sv.tipo === 'IATF') totales.enServicioIatf += cant; else totales.enServicioToro += cant;
+  });
+  totales.enServicio = totales.enServicioIatf + totales.enServicioToro;
   return { filas, totales, campanaId: cid };
 }
 
@@ -3446,6 +3470,7 @@ function buildDashboard() {
     h += `<div class="panel">
       <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelecObj?.nombre || campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
       ${preñadasMayorQueEntoradas ? `<div style="background:rgba(220,50,50,0.08);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--red);font-weight:600">⚠ Preñadas (${fn(totVacaDash.prenadas)}) es mayor que Entoradas (${fn(totVacaDash.entoradas)}) — matemáticamente imposible. Revisá en algún rodeo si el campo "Preñadas" del Tacto final quedó cargado más alto que "Total tacteadas".</div>` : ''}
+      ${htmlEnServicio_(totVacaDash)}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
         <div class="kpi"><div class="kpi-label">Vacas entoradas</div><div class="kpi-val">${fn(totVacaDash.entoradas)}</div></div>
         <div class="kpi"><div class="kpi-label">Vacas preñadas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.prenadas)}</div></div>
@@ -4045,6 +4070,7 @@ function buildEstadoVientres() {
         kpiTernerosAlPie = totVaca.ternerosAlPie, kpiTernerosMuertosPostParto = totVaca.ternerosMuertosPostParto,
         kpiNacidosMuertos = totVaca.nacidosMuertos;
   h += `<div class="panel"><div class="panel-title">🐮 Vacas — resumen de la campaña</div>`;
+  h += htmlEnServicio_(totVaca);
   h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
     <div class="kpi"><div class="kpi-label">Preñadas (ajustado por movimientos)</div><div class="kpi-val">${fn(kpiPrenadas)}</div></div>
     <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(kpiParidas)}</div></div>
