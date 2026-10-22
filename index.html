@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_236';
+const APP_VERSION = 'index_consolidado_4_6_155_237';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5859,6 +5859,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
   // por sanidad/descarte sin haber parido ni abortado formalmente.
   const idxAbortosCaravanaMA = indiceAbortosPorCaravana_();
   const trasladasPorMadre = {};
+  const detalleTrasladas = []; // detalle de cada traslado/venta que suma a "No van a nacer"
   (S.cache.movimientos||[]).forEach(m => {
     if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
     if (!fechaMatch_(m.fecha)) return;
@@ -5878,6 +5879,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     const cant = Number(m.cantidad)||0;
     if (cant<=0) return;
     trasladasPorMadre[String(m.rodeo_origen_id)] = (trasladasPorMadre[String(m.rodeo_origen_id)]||0) + cant;
+    detalleTrasladas.push({ fecha: m.fecha, rodeoId: m.rodeo_origen_id, origen: rOrig.nombre, destino: rDest ? rDest.nombre : rodeoNombre(m.rodeo_destino_id), tipo: m.tipo, cant, obs: m.observaciones || '', id: m.movimiento_id });
   });
   (S.cache.ventas||[]).forEach(v => {
     if (!fechaMatch_(v.fecha_salida)) return;
@@ -5887,6 +5889,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     const catOrig = (rOrig.categoria||'').toLowerCase();
     if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
     trasladasPorMadre[String(v.rodeo_id)] = (trasladasPorMadre[String(v.rodeo_id)]||0) + (Number(v.cant_animales)||0);
+    if ((Number(v.cant_animales)||0) > 0) detalleTrasladas.push({ fecha: v.fecha_salida, rodeoId: v.rodeo_id, origen: rOrig.nombre, destino: 'Venta directa' + (v.comprador ? ' — ' + v.comprador : ''), tipo: 'Venta', cant: Number(v.cant_animales)||0, obs: v.observaciones || v.observacion || '', id: v.venta_id });
   });
   const totalTrasladas = Object.values(trasladasPorMadre).reduce((s,n)=>s+n,0);
 
@@ -5961,7 +5964,51 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     filas, otros: { ternerosMuertos: otrosCant },
     totalNacidosMuertos, totalTernerosMuertos, totalAbortos, totalTrasladas, totalNacidosVivosScope,
     detalleNacidosMuertos, detalleTernerosMuertos, detalleAbortos,
+    detalleTrasladas: detalleTrasladas.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))),
   };
+}
+
+// Hoja "No van a nacer": cada traslado/venta de vacas que suma a ese KPI, con la fecha
+// del último Tacto final del rodeo para ver cuáles son realmente "preñadas que se fueron".
+function hojaNoVanANacer_(XLSX, detalle, filtroTxt, st) {
+  const fechaTactoFinal = {};
+  (S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto final').forEach(t => {
+    const k = String(t.rodeo_id);
+    if (!fechaTactoFinal[k] || String(t.fecha) > fechaTactoFinal[k]) fechaTactoFinal[k] = String(t.fecha);
+  });
+  const hd = ['Fecha','Rodeo origen','Destino','Tipo','Cabezas','¿Después del último tacto?','Observación','ID'];
+  const aoa = [
+    ['No van a nacer — vacas/vaquillonas que salieron del rodeo (traslado a un rodeo que no es de vacas, o venta)'],
+    ['Qué es: toda salida de cabezas de rodeos de vacas/vaquillonas en el período, sin contar las ya explicadas por otro concepto (vacías, abortos, vacas que ya parieron). OJO: incluye también salidas ANTERIORES al tacto o de vacas que nunca estuvieron preñadas (descarte, vacías); solo las marcadas "Sí" en la columna F son preñadas confirmadas que se fueron. Filtros: ' + filtroTxt],
+    [],
+    hd,
+  ];
+  detalle.forEach(d => {
+    const ft = fechaTactoFinal[String(d.rodeoId)];
+    const desp = !ft ? 'Sin tacto final' : (String(d.fecha) >= ft ? 'Sí' : 'No');
+    aoa.push([fd(d.fecha), d.origen, d.destino, d.tipo, d.cant, desp, d.obs, d.id == null ? '' : d.id]);
+  });
+  const n = detalle.length, r0 = 5, rl = 4 + n;
+  aoa.push(['TOTAL','','','', n ? { f: `SUM(E${r0}:E${rl})` } : 0,'','','']);
+  aoa.push(['Después del último tacto (preñadas confirmadas que se fueron)','','','', n ? { f: `SUMIF(F${r0}:F${rl},"Sí",E${r0}:E${rl})` } : 0,'','','']);
+  aoa.push(['Antes del tacto (ya contempladas en el tacto)','','','', n ? { f: `SUMIF(F${r0}:F${rl},"No",E${r0}:E${rl})` } : 0,'','','']);
+  aoa.push(['Rodeo sin tacto final','','','', n ? { f: `SUMIF(F${r0}:F${rl},"Sin tacto final",E${r0}:E${rl})` } : 0,'','','']);
+  const ws = XLSX.utils.aoa_to_sheet(aoa.map(r => r.map(v => (v && typeof v === 'object') ? '' : v)));
+  // fórmulas (aoa_to_sheet no las toma como objeto)
+  aoa.forEach((r, i) => r.forEach((v, c) => {
+    if (v && typeof v === 'object' && v.f) ws[XLSX.utils.encode_cell({ r:i, c })] = { t:'n', f: v.f };
+  }));
+  ws['!cols'] = [{wch:12},{wch:20},{wch:34},{wch:18},{wch:9},{wch:16},{wch:60},{wch:8}];
+  ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:7} }, { s:{r:1,c:0}, e:{r:1,c:7} }];
+  ws['!rows'] = []; ws['!rows'][1] = { hpt: 62 };
+  const estilar = (r, style) => { for (let c = 0; c < 8; c++) { const a = XLSX.utils.encode_cell({ r, c }); if (!ws[a]) ws[a] = { t:'s', v:'' }; ws[a].s = style; } };
+  estilar(0, st.titulo); estilar(3, st.header);
+  ws[XLSX.utils.encode_cell({r:1,c:0})].s = { alignment:{ wrapText:true, vertical:'top' } };
+  for (let i = 0; i < n; i++) estilar(4 + i, st.row);
+  for (let k = 0; k < 4; k++) estilar(4 + n + k, st.total);
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:4+n+3,c:7} });
+  ws['!autofilter'] = { ref: `A4:H${Math.max(5, rl)}` };
+  return ws;
 }
 
 async function exportarMortandadAnalisisExcel_() {
@@ -6087,6 +6134,7 @@ async function exportarMortandadAnalisisExcel_() {
     detalleAbortos.forEach((a,i) => estilarFila_(ws4, 5+i, headers4.length, i%2===1?ST_ROW_ALT:ST_ROW));
     estilarFila_(ws4, 5+detalleAbortos.length, headers4.length, ST_TOTAL);
     XLSX.utils.book_append_sheet(wb, ws4, 'Abortos');
+    XLSX.utils.book_append_sheet(wb, hojaNoVanANacer_(XLSX, (calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, incluirOtros).detalleTrasladas||[]), filtroTxt, { titulo: ST_TITULO, header: ST_HEADER, row: ST_ROW, total: ST_TOTAL }), 'No van a nacer');
 
     // ── HOJA 5: Cobertura de campañas — sólo si hay huecos ──
     const pariciones_ = S.cache.pariciones || [];
@@ -6447,6 +6495,8 @@ async function exportarPerdidasReproductivasExcel_() {
       cerrar(ws, rt, 7);
       XLSX.utils.book_append_sheet(wb, ws, 'Detalle');
     }
+
+    XLSX.utils.book_append_sheet(wb, hojaNoVanANacer_(XLSX, mort.detalleTrasladas || [], periodoTxt, { titulo: ST_TITULO, header: ST_HEADER, row: ST_NUM, total: ST_SUB }), 'No van a nacer');
 
     const buf = XLSX.write(wb, { bookType:'xlsx', type:'array' });
     const blob = new Blob([buf], { type:'application/octet-stream' });
