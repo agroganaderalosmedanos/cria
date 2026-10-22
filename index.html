@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_234';
+const APP_VERSION = 'index_consolidado_4_6_155_235';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6242,9 +6242,11 @@ async function exportarPerdidasReproductivasExcel_() {
     });
     det.sort((a,b) => a.madre.localeCompare(b.madre) || a.tipo.localeCompare(b.tipo) || String(b.fecha).localeCompare(String(a.fecha)));
 
-    const hayHuerfanos = det.some(d => d.madre === SIN_VINC);
+    const huerfanos = det.filter(d => d.madre === SIN_VINC);
+    const hayHuerfanos = huerfanos.length > 0;
+    huerfanos.forEach(d => { d.nota = (d.nota ? d.nota + ' · ' : '') + 'Rodeo sin vínculo a una madre: NO entra en los totales'; });
     const nombresCols = cols.map(f => f.nombre);
-    const colsCausas = hayHuerfanos ? [...nombresCols, SIN_VINC] : nombresCols;
+    const colsCausas = nombresCols;
     const madresFueraDeColumnas = [...new Set(det.filter(d => d.madre !== SIN_VINC && !nombresCols.includes(d.madre)).map(d => d.madre))];
 
     // ── Estilos ──
@@ -6259,14 +6261,18 @@ async function exportarPerdidasReproductivasExcel_() {
     const ST_SUBLBL = { font:{bold:true}, fill:{fgColor:{rgb:'FBEDEC'}}, border:B };
     const ST_NOTA = { alignment:{wrapText:true,vertical:'top'} };
 
+    const estiloNumFmt_ = {};
     const put = (ws, r, c, v, s, f, z) => {
       const a = XLSX.utils.encode_cell({ r, c });
       let cell;
       if (f) cell = { t:'n', f };
       else if (typeof v === 'number') cell = { t:'n', v };
       else cell = { t:'s', v: v == null ? '' : String(v) };
-      if (z) cell.z = z;
-      if (s) cell.s = s;
+      if (s && z) {
+        const k = JSON.stringify(s) + '|' + z;
+        if (!estiloNumFmt_[k]) estiloNumFmt_[k] = Object.assign({}, s, { numFmt: z });
+        cell.s = estiloNumFmt_[k];
+      } else if (s) cell.s = s;
       ws[a] = cell;
     };
     const cerrar = (ws, maxR, maxC) => { ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxR,c:maxC} }); };
@@ -6343,7 +6349,8 @@ async function exportarPerdidasReproductivasExcel_() {
       ];
       if (rep.filas.some(f => f.sinTactoFinal)) notas.push('• Rodeos sin Tacto final cargado (no aparecen como columna): ' + rep.filas.filter(f => f.sinTactoFinal).map(f => f.nombre).join(', ') + '.');
       if (madresFueraDeColumnas.length) notas.push('• Hay registros de pérdida de rodeos que no tienen columna acá (sin Tacto final o sin preñadas): ' + madresFueraDeColumnas.join(', ') + '. Están en la hoja Detalle.');
-      if (hayHuerfanos) notas.push('• Los terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026") NO están en esta hoja; sí figuran en "Causas terneros" (columna "— sin vínculo —").');
+      if (hayHuerfanos) notas.push('• ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026") NO entran en los totales de ninguna hoja; están en Detalle marcados como "sin vínculo".');
+      notas.push('• Si en un rodeo "Terneros nacidos − vacas paridas" da positivo (ej. Rodeo 1, Rodeo 3), suele ser porque hubo vacas que parieron y después murieron o salieron: Estado de Vientres las resta dos veces como "pendientes" (pendiente de diseño).');
       notas.forEach((t, i) => put(ws, R.difStock + 2 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
       ws['!cols'] = [{wch:58}, ...cols.map(() => ({wch:15})), {wch:11}, {wch:12}];
       ws['!rows'] = []; ws['!rows'][3] = { hpt: 32 };
@@ -6388,7 +6395,6 @@ async function exportarPerdidasReproductivasExcel_() {
       const pariciones = (S.cache.pariciones || []);
       put(ws, rVivos-1, 0, 'Nacidos vivos', ST_LBL);
       colsCausas.forEach((n, i) => {
-        if (n === SIN_VINC) { put(ws, rVivos-1, 1 + i, '', ST_NUM); return; }
         const f = cols.find(x => x.nombre === n);
         const rid = (rodeosCat.find(r => r.nombre === n && String(r.campo_id) === String(f && f.campoId)) || {}).rodeo_id;
         put(ws, rVivos-1, 1 + i, pariciones.filter(p => String(p.rodeo_id) === String(rid) && enPeriodo_(p.fecha)).reduce((s,p) => s + (Number(p.nacidos_vivos)||0), 0), ST_DATO);
@@ -6400,6 +6406,7 @@ async function exportarPerdidasReproductivasExcel_() {
         'Notas',
         '• Azul = dato de la app (nacidos vivos). Todo lo demás son fórmulas sobre la hoja Detalle: si cambiás una causa ahí (escribila igual que en la lista de arriba), se actualiza todo.',
         '• La causa se asigna leyendo el texto de la Observación; los registros sin observación o con solo una caravana quedan como "Sin causa / sin dato". Revisá la columna Nota de Detalle: marca posibles duplicados y registros mal clasificados.',
+        ...(hayHuerfanos ? ['• No incluye ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (stock anterior a la parición o rodeos generales): están en Detalle.'] : []),
       ];
       notas.forEach((t, i) => put(ws, totPost + 1 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
       ws['!cols'] = [{wch:46}, ...colsCausas.map(() => ({wch:15})), {wch:11}, {wch:12}];
