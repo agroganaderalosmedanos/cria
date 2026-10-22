@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_235';
+const APP_VERSION = 'index_consolidado_4_6_155_236';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6154,6 +6154,12 @@ const CAUSAS_MORT_ = [
   'Sin causa / sin dato',
 ];
 
+// Terneros guachos (de madres que ya salieron a venta) asignados a su rodeo madre.
+// Hoy el sistema los tiene juntos en el rodeo "Terneros guachos" sin indicar de qué
+// madre es cada uno, por eso el reparto se define acá (editable también en el Excel,
+// fila azul). Si cambia, actualizar estos números.
+const GUACHOS_POR_MADRE_ = { 'Vacas 2023': 10, 'Vacas Rodeo 1': 1, 'Vacas Rodeo 5': 9 };
+
 function clasificarCausaMortandad_(obs) {
   const t = String(obs || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   const SIN = 'Sin causa / sin dato';
@@ -6296,11 +6302,11 @@ async function exportarPerdidasReproductivasExcel_() {
       const pariciones = (S.cache.pariciones || []);
       const vivosDe = (rid) => pariciones.filter(p => String(p.rodeo_id) === String(rid) && enPeriodo_(p.fecha)).reduce((s,p) => s + (Number(p.nacidos_vivos)||0), 0);
       // fila Excel (1-based): 5..24
-      const R = { pren:5, mov:6, prenRodeo:7, salieron:8, faltan:9, abort:10, muertas:11, paridas:12, vivos:14, nacM:15, nacidos:16, dif:17, t1:19, t2:20, t3:21, alPie:22, stock:23, difStock:24 };
+      const R = { pren:5, mov:6, prenRodeo:7, salieron:8, faltan:9, abort:10, muertas:11, paridas:12, vivos:14, guachos:15, nacM:16, nacidos:17, dif:18, t1:20, t2:21, t3:22, alPie:23, stock:24, difStock:25 };
       const labels = {
         pren:'Preñadas en el tacto', mov:'± Movidas entre rodeos de vacas', prenRodeo:'→ PREÑADAS DEL RODEO',
         salieron:'− Salieron sin parir (venta / descarte / sanidad)', faltan:'− Faltan parir', abort:'− Abortadas', muertas:'− Vacas muertas',
-        paridas:'→ VACAS PARIDAS', vivos:'Terneros nacidos vivos', nacM:'+ Nacidos muertos', nacidos:'→ TERNEROS NACIDOS',
+        paridas:'→ VACAS PARIDAS', vivos:'Terneros nacidos vivos', guachos:'+ Guachos (madres que salieron a venta)', nacM:'+ Nacidos muertos', nacidos:'→ TERNEROS NACIDOS',
         dif:'Diferencia terneros nacidos − vacas paridas (mellizos / ajuste de tacto)', t1:'Terneros nacidos', t2:'− Nacidos muertos',
         t3:'− Muertos después de nacer', alPie:'→ TERNEROS AL PIE', stock:'Terneros al pie según stock de la app', difStock:'Diferencia (cuenta − stock de la app)'
       };
@@ -6318,15 +6324,16 @@ async function exportarPerdidasReproductivasExcel_() {
         put(ws, R.muertas-1, c, f.muertas || 0, ST_DATO);
         put(ws, R.paridas-1, c, null, ST_SUB, `${cl}${R.prenRodeo}-${cl}${R.salieron}-${cl}${R.faltan}-${cl}${R.abort}-${cl}${R.muertas}`);
         put(ws, R.vivos-1, c, vivosDe(f.rodeo_id != null ? f.rodeo_id : (rodeosCat.find(r => r.nombre === f.nombre && String(r.campo_id) === String(f.campoId))||{}).rodeo_id), ST_DATO);
+        put(ws, R.guachos-1, c, GUACHOS_POR_MADRE_[f.nombre] || 0, ST_DATO);
         put(ws, R.nacM-1, c, null, ST_NUM, `SUMIFS(${rgD('E')},${rgD('B')},${cl}$4,${rgD('D')},"Nacido muerto")`);
-        put(ws, R.nacidos-1, c, null, ST_SUB, `${cl}${R.vivos}+${cl}${R.nacM}`);
+        put(ws, R.nacidos-1, c, null, ST_SUB, `${cl}${R.vivos}+${cl}${R.guachos}+${cl}${R.nacM}`);
         put(ws, R.dif-1, c, null, ST_NUM, `${cl}${R.nacidos}-${cl}${R.paridas}`);
         put(ws, R.t1-1, c, null, ST_NUM, `${cl}${R.nacidos}`);
         put(ws, R.t2-1, c, null, ST_NUM, `${cl}${R.nacM}`);
         put(ws, R.t3-1, c, null, ST_NUM, `SUMIFS(${rgD('E')},${rgD('B')},${cl}$4,${rgD('D')},"Muerto después de nacer")`);
         put(ws, R.alPie-1, c, null, ST_SUB, `${cl}${R.t1}-${cl}${R.t2}-${cl}${R.t3}`);
         if (f.ternerosAlPie == null) put(ws, R.stock-1, c, 'sin rodeo de terneros', ST_NUM);
-        else put(ws, R.stock-1, c, f.ternerosAlPie, ST_DATO);
+        else put(ws, R.stock-1, c, f.ternerosAlPie + (GUACHOS_POR_MADRE_[f.nombre] || 0), ST_DATO);
         if (f.ternerosAlPie == null) put(ws, R.difStock-1, c, '', ST_NUM);
         else put(ws, R.difStock-1, c, null, ST_NUM, `${cl}${R.alPie}-${cl}${R.stock}`);
       });
@@ -6337,16 +6344,23 @@ async function exportarPerdidasReproductivasExcel_() {
       });
       put(ws, R.stock-1, cTot, null, ST_NUM, `SUM(${c1}${R.stock}:${cN}${R.stock})`);
       put(ws, R.difStock-1, cTot, null, ST_NUM, `SUM(${c1}${R.difStock}:${cN}${R.difStock})`);
-      ['prenRodeo','salieron','faltan','abort','muertas','paridas','vivos','nacM','nacidos','dif','t1','t2','t3','alPie'].forEach(k => {
+      ['prenRodeo','salieron','faltan','abort','muertas','paridas','vivos','guachos','nacM','nacidos','dif','t1','t2','t3','alPie'].forEach(k => {
         put(ws, R[k]-1, cPct, null, ST_NUM, `IFERROR(${L(cTot)}${R[k]}/${L(cTot)}$${R.prenRodeo},0)`, PCT);
       });
       const notas = [
         'Notas',
         '• Preñadas, movidas, salieron, faltan parir, abortadas y muertas vienen de Estado de Vientres (cuenta de hoy). Nacidos vivos, nacidos muertos y muertos después de nacer son del período indicado arriba.',
-        '• "Diferencia terneros nacidos − vacas paridas": las vacas paridas salen de Estado de Vientres (cuenta terneros, no vacas) y los terneros nacidos son los del período elegido. Si da distinto de 0 puede ser por mellizos (la app todavía no tiene campo de mellizos), partos de otro período o guachos asignados a otro rodeo.',
-        '• "Diferencia (cuenta − stock)": si no da 0, hay guachos asignados a otro rodeo, ventas/cesiones de terneros o un registro faltante. Los guachos cargados como rodeo propio no se suman al rodeo de la madre.',
+        '• "Diferencia terneros nacidos − vacas paridas": los guachos suman terneros pero sus madres figuran en "Salieron sin parir", por eso la diferencia los incluye. Las vacas paridas salen de Estado de Vientres (cuenta terneros, no vacas) y los terneros nacidos son los del período elegido. Si da distinto de 0 puede ser por mellizos (la app todavía no tiene campo de mellizos), partos de otro período o guachos asignados a otro rodeo.',
+        '• Guachos: son terneros cuyas madres salieron a venta después de parir; el sistema los tiene juntos en el rodeo "Terneros guachos". El reparto por rodeo madre (fila azul) viene de una tabla fija de la app: si cambia, editá la fila acá. En "Terneros al pie según stock" se les suman los guachos asignados.',
+        '• "Diferencia (cuenta − stock)": si no da 0 hay ventas/cesiones de terneros o un registro faltante.',
         '• Nacidos muertos y muertos después de nacer salen de la hoja Detalle (si cambiás una causa o borrás una fila ahí, se actualiza todo).',
       ];
+      {
+        const stockHoy = stockPorRodeoACorte_(today());
+        const guachosApp = rodeosCat.filter(r => /guach/i.test(r.nombre)).reduce((s2, r) => s2 + Math.max(0, stockHoy[String(r.rodeo_id)] || 0), 0);
+        const guachosRepartidos = cols.reduce((s2, f) => s2 + (GUACHOS_POR_MADRE_[f.nombre] || 0), 0);
+        notas.push('• Guachos: ' + guachosRepartidos + ' repartidos por madre en esta hoja; en el rodeo de guachos de la app hay hoy ' + guachosApp + (guachosApp !== guachosRepartidos ? ' → NO coinciden, revisá el reparto.' : ' (coincide).'));
+      }
       if (rep.filas.some(f => f.sinTactoFinal)) notas.push('• Rodeos sin Tacto final cargado (no aparecen como columna): ' + rep.filas.filter(f => f.sinTactoFinal).map(f => f.nombre).join(', ') + '.');
       if (madresFueraDeColumnas.length) notas.push('• Hay registros de pérdida de rodeos que no tienen columna acá (sin Tacto final o sin preñadas): ' + madresFueraDeColumnas.join(', ') + '. Están en la hoja Detalle.');
       if (hayHuerfanos) notas.push('• ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026") NO entran en los totales de ninguna hoja; están en Detalle marcados como "sin vínculo".');
@@ -6393,11 +6407,11 @@ async function exportarPerdidasReproductivasExcel_() {
       const rPost = totNacM + 2;
       const totPost = cuerpo(rPost, 'Muertos después de nacer (Mortandad)', 'Muerto después de nacer');
       const pariciones = (S.cache.pariciones || []);
-      put(ws, rVivos-1, 0, 'Nacidos vivos', ST_LBL);
+      put(ws, rVivos-1, 0, 'Nacidos vivos (incluye guachos)', ST_LBL);
       colsCausas.forEach((n, i) => {
         const f = cols.find(x => x.nombre === n);
         const rid = (rodeosCat.find(r => r.nombre === n && String(r.campo_id) === String(f && f.campoId)) || {}).rodeo_id;
-        put(ws, rVivos-1, 1 + i, pariciones.filter(p => String(p.rodeo_id) === String(rid) && enPeriodo_(p.fecha)).reduce((s,p) => s + (Number(p.nacidos_vivos)||0), 0), ST_DATO);
+        put(ws, rVivos-1, 1 + i, pariciones.filter(p => String(p.rodeo_id) === String(rid) && enPeriodo_(p.fecha)).reduce((s,p) => s + (Number(p.nacidos_vivos)||0), 0) + (GUACHOS_POR_MADRE_[n] || 0), ST_DATO);
       });
       put(ws, rVivos-1, cTot, null, ST_NUM, `SUM(${L(1)}${rVivos}:${L(NC)}${rVivos})`);
       put(ws, rPct-1, 0, '% pérdida (perdidos / nacidos totales)', ST_LBL);
