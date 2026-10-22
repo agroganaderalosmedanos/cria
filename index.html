@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_233';
+const APP_VERSION = 'index_consolidado_4_6_155_234';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5636,7 +5636,7 @@ function buildMortandadAnalisis() {
 
   h += `<div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn btn-secondary btn-sm" onclick="exportarMortandadAnalisisExcel_()" title="Descarga un Excel con el resumen y el detalle de nacidos muertos, terneros muertos post-nacimiento y abortos">📊 Exportar a Excel</button>
-    <button class="btn btn-secondary btn-sm" onclick="exportarPerdidasReproductivasExcel_()" title="Descarga un Excel con la cuenta por rodeo (de la preñada al ternero al pie), las pérdidas de terneros agrupadas por causa y el detalle de cada registro. Usa el período elegido abajo; si no elegís ninguno, la campaña más reciente.">📥 Pérdidas reproductivas (Excel)</button>
+    <button class="btn btn-secondary btn-sm" onclick="exportarPerdidasReproductivasExcel_()" title="Descarga un Excel con la cuenta por rodeo (de la preñada al ternero al pie), las pérdidas de terneros agrupadas por causa y el detalle de cada registro. Usa el período elegido abajo; si no elegís ninguno, la campaña más reciente que ya tenga partos.">📥 Pérdidas reproductivas (Excel)</button>
   </div>`;
   h += `<div class="panel">
     <div class="panel-title">☠ Análisis de Mortandad — nacidos muertos, terneros muertos y abortos</div>
@@ -6193,7 +6193,10 @@ async function exportarPerdidasReproductivasExcel_() {
     const campanasAll = (S.cache.campanas || []).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||'')));
     let desde = S._maDesde || '', hasta = S._maHasta || '', periodoTxt = '';
     if (!desde && !hasta) {
-      const c = campanasAll.find(x => x.fecha_inicio);
+      // La campaña más reciente puede ser una recién abierta sin partos todavía (ej. 2027/2028):
+      // se usa la más reciente que tenga al menos una Parición dentro de su rango de fechas.
+      const _pars = S.cache.pariciones || [];
+      const c = campanasAll.find(x => x.fecha_inicio && _pars.some(p => String(p.fecha||'') >= String(x.fecha_inicio) && (!x.fecha_fin || String(p.fecha||'') <= String(x.fecha_fin))));
       if (c) { desde = c.fecha_inicio; hasta = c.fecha_fin || ''; periodoTxt = 'Campaña ' + c.nombre; }
       else periodoTxt = 'Todas las fechas';
     } else {
