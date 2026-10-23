@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_256';
+const APP_VERSION = 'index_consolidado_4_6_155_257';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1165,6 +1165,7 @@ const NAV = [
     { k: 'mortandad',            icon: 'ti-skull',           label: 'Mortandad' },
     { k: 'cotizacion',           icon: 'ti-currency-dollar', label: 'Cotización U$S' },
     { k: 'precios_valorizacion', icon: 'ti-tag',             label: 'Hacienda — Precios del mes' },
+    { k: 'importar_fielddata',   icon: 'ti-file-import',     label: 'Importar Fielddata' },
   ]},
   { section: 'Configuración', icon: 'ti-settings', defaultPage: 'config', items: [
     { k: 'config',   icon: 'ti-adjustments', label: 'Configuración' },
@@ -1268,6 +1269,20 @@ async function goto(page) {
     if (!S.cache.abortos)     evLoads.push(loadEntity('abortos').catch(()=>{}));
     if (!S.cache.servicios)   evLoads.push(loadEntity('servicios').catch(()=>{}));
     if (evLoads.length) { S.loading = true; render(); await Promise.all(evLoads); S.loading = false; }
+  }
+  if (page === 'importar_fielddata') {
+    // v257 -- El importador cruza contra Consumos/Traslados de insumos, la
+    // huella y las equivalencias guardadas. Se recargan siempre (force) para
+    // no comparar contra datos viejos de la sesion.
+    const fdLoads = [
+      loadEntity('consumos_insumos', true).catch(()=>{}),
+      loadEntity('traslados_insumos', true).catch(()=>{}),
+      loadEntity('fielddata_importados', true).catch(()=>{ S.cache.fielddata_importados = []; }),
+      loadEntity('fielddata_equivalencias', true).catch(()=>{ S.cache.fielddata_equivalencias = []; }),
+    ];
+    if (!S.cache.campanas) fdLoads.push(loadEntity('campanas').catch(()=>{}));
+    if (!S.stock) fdLoads.push(loadStock().catch(()=>{}));
+    S.loading = true; render(); await Promise.all(fdLoads); S.loading = false;
   }
   if (page === 'movimientos') {
     // Cargar todo en paralelo para evitar múltiples re-renders
@@ -1518,7 +1533,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', dashboard_costos: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    home: '', recria_dashboard: 'Dashboard Recría', recria_dashboard_costos: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde',
+    home: '', recria_dashboard: 'Dashboard Recría', recria_dashboard_costos: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde', importar_fielddata: 'Importar Fielddata',
   };
   return titles[p] || p;
 }
@@ -1537,6 +1552,7 @@ function pageSubtitle(p) {
     insumos: 'Compras y consumos de alimentación y veterinaria',
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
+    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — primera versión: rollos',
   };
   return subs[p] || '';
 }
@@ -1587,6 +1603,7 @@ function buildPage(page) {
       }
       return buildABM();
     case 'campanas':    return buildCampanas();
+    case 'importar_fielddata': return buildImportarFielddata();
     default: return '';
   }
 }
@@ -1657,7 +1674,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, dashboard_costos: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents, importar_fielddata: attachImportarFielddataEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -20596,6 +20613,540 @@ function sortEntityTable(entity, key) {
   }
   render();
 }
+// ══════════════════════════════════════════════════════════════════════
+// v257 — IMPORTAR FIELDDATA (primera versión: rollos)
+// ══════════════════════════════════════════════════════════════════════
+// Lee los exports de Fielddata (un archivo por campo), arma los traslados y
+// los consumos de ROLLOS, los cruza contra lo que ya está en el sistema y
+// contra la huella (hoja "Fielddata Importados"), y graba SOLO lo que el
+// usuario tilda, por los mismos caminos de siempre (backend:
+// importarFielddata -> createEntity). No toca hacienda ni ningún cálculo de
+// stock: los traslados/consumos grabados quedan iguales a uno cargado a mano.
+//
+// Reglas (acordadas con Crist, 23/10/2026):
+// - Fielddata es lo correcto; las fechas pueden diferir 1-2 días.
+// - Un traslado aparece en Fielddata como salida en un campo + ingreso en el
+//   otro. Se graba UN traslado, con la fecha de la salida. Si falta una de
+//   las dos patas, la fila va a "Revisar" y no se graba.
+// - El rodeo de un consumo sale de la nota ("Novillos corral", "Vq 2024"...).
+//   La primera vez se confirma a mano y queda guardado en "Fielddata
+//   Equivalencias" (por campo).
+// - "Ya cargado": mismo producto, campo y cantidad, con hasta 2 días de
+//   diferencia, contra un registro del sistema que no esté ya usado por otra
+//   fila. No exige el mismo rodeo (si difiere, se avisa) para no duplicar.
+
+const FD_TOLERANCIA_DIAS_YA_CARGADO_ = 2;
+const FD_TOLERANCIA_DIAS_TRASLADO_ = 3;
+const FD_LOTE_GRABAR_ = 15;
+
+function fdNorm_(s) {
+  return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9ñ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function fdEsc_(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function fdDias_(a, b) {
+  const pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
+  return Math.round((Date.UTC(pa[0], pa[1] - 1, pa[2]) - Date.UTC(pb[0], pb[1] - 1, pb[2])) / 86400000);
+}
+function fdFechaISO_(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    const d = new Date(v.getTime() + 12 * 3600 * 1000); // evita correrse un día por zona horaria
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  if (typeof v === 'number' && window.XLSX && XLSX.SSF) {
+    const o = XLSX.SSF.parse_date_code(v);
+    if (o) return o.y + '-' + String(o.m).padStart(2, '0') + '-' + String(o.d).padStart(2, '0');
+  }
+  const s = String(v || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  return '';
+}
+// Palabra clave de cada campo ("El Misterio" -> "misterio", "El Clavo Chico" -> "clavo"),
+// para reconocer el campo en el nombre del archivo y en las notas de traslado.
+function fdClaveCampo_(nombre) {
+  const w = fdNorm_(nombre).split(' ').filter(x => x && !['el', 'la', 'los', 'las', 'de', 'del'].includes(x));
+  return w[0] || '';
+}
+function fdCampoEnTexto_(texto, excluirCampoId) {
+  const t = ' ' + fdNorm_(texto) + ' ';
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const hits = campos.filter(c => String(c.campo_id) !== String(excluirCampoId || '') && fdClaveCampo_(c.nombre) && t.indexOf(' ' + fdClaveCampo_(c.nombre) + ' ') !== -1);
+  return hits.length === 1 ? String(hits[0].campo_id) : '';
+}
+function fdCampoNombre_(id) {
+  const c = ((S.catalogs && S.catalogs.campos) || []).find(x => String(x.campo_id) === String(id));
+  return c ? c.nombre : '—';
+}
+function fdRodeoNombre_(id) {
+  const r = rodeosTodos().find(x => String(x.rodeo_id) === String(id));
+  return r ? r.nombre : '—';
+}
+function fdStockRodeo_(id) {
+  const row = (S.stock || []).find(s => String(s.rodeo_id) === String(id));
+  return row ? Number(row.stock) || 0 : 0;
+}
+
+async function fdAsegurarXlsx_() {
+  if (window.XLSX) return window.XLSX;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+    s.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+    s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+    document.head.appendChild(s);
+  });
+  return window.XLSX;
+}
+
+// Lee un export de Fielddata y devuelve las filas como objetos con claves
+// normalizadas (fecha, area, tipo, lote, insumo, cantidad, unidad, nota...).
+async function fdLeerArchivo_(file) {
+  const X = await fdAsegurarXlsx_();
+  const buf = await file.arrayBuffer();
+  const wb = X.read(buf, { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const aoa = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  if (!aoa.length) return [];
+  const headers = aoa[0].map(h => fdNorm_(h));
+  const idx = n => headers.indexOf(n);
+  const col = { fecha: idx('fecha'), area: idx('area'), tipo: idx('tipo'), lote: idx('lote'), rodeo: idx('rodeo'),
+    insumo: idx('insumo'), cantidad: idx('cantidad'), unidad: idx('unidad'), categoria: idx('categoria'), nota: idx('nota') };
+  if (col.fecha < 0 || col.area < 0 || col.tipo < 0 || col.insumo < 0 || col.cantidad < 0) {
+    throw new Error('El archivo "' + file.name + '" no tiene el formato de Fielddata (faltan columnas Fecha, Área, Tipo, Insumo o Cantidad).');
+  }
+  const g = (r, k) => col[k] >= 0 ? r[col[k]] : '';
+  return aoa.slice(1).filter(r => r.some(c => c !== '' && c != null)).map(r => ({
+    fecha: fdFechaISO_(g(r, 'fecha')), area: String(g(r, 'area') || ''), tipo: String(g(r, 'tipo') || ''),
+    lote: String(g(r, 'lote') || ''), rodeo: String(g(r, 'rodeo') || ''), insumo: String(g(r, 'insumo') || ''),
+    cantidad: Number(g(r, 'cantidad')) || 0, unidad: String(g(r, 'unidad') || ''), categoria: String(g(r, 'categoria') || ''),
+    nota: String(g(r, 'nota') || '').trim(),
+  }));
+}
+
+// Sugiere el rodeo de un consumo a partir de la nota de Fielddata. Solo es una
+// sugerencia: el usuario la confirma (o cambia) antes de grabar.
+function fdSugerirRodeo_(campoId, nota) {
+  const syn = { vq: 'vaquillonas', vaq: 'vaquillonas', vaquillona: 'vaquillonas', vc: 'vacas', vcas: 'vacas', vaca: 'vacas', novillo: 'novillos', ternero: 'terneros', terneras: 'terneros', r1: 'rodeo 1', r3: 'rodeo 3', r5: 'rodeo 5' };
+  const toks = s => fdNorm_(s).split(' ').map(t => syn[t] || t).join(' ').split(' ').filter(t => t && !['el', 'la', 'de', 'del', 'mas', 'y', 'para', 'los', 'las', 'al'].includes(t));
+  const tn = toks(nota);
+  if (!tn.length) return '';
+  const nombreCampo = fdNorm_(fdCampoNombre_(campoId)).split(' ');
+  const mencionaTerneros = tn.includes('terneros');
+  let mejor = null, mejorScore = 0, empate = false;
+  rodeosPorCampo(campoId).forEach(r => {
+    const tr = toks(r.nombre).filter(t => !nombreCampo.includes(t));
+    let sc = 0;
+    tr.forEach(t => { if (tn.includes(t)) sc += /^\d+$/.test(t) ? 3 : 1; });
+    if (!sc) return;
+    if (!mencionaTerneros && /terner/.test(fdNorm_(r.categoria) + ' ' + fdNorm_(r.nombre))) sc -= 2;
+    if (fdStockRodeo_(r.rodeo_id) > 0) sc += 0.5; // desempate: el que hoy tiene animales
+    if (sc > mejorScore) { mejor = r; mejorScore = sc; empate = false; }
+    else if (sc === mejorScore) empate = true;
+  });
+  return (mejor && mejorScore >= 1 && !empate) ? String(mejor.rodeo_id) : '';
+}
+
+function fdEquivKey_(campoId, nota) { return String(campoId) + '|' + fdNorm_(nota); }
+
+// Arma la lista de movimientos (traslados y consumos de rollos) con su estado.
+function fdAnalizar_() {
+  const st = S.fd;
+  st.error = '';
+  const productos = (S.catalogs && S.catalogs.productos) || [];
+  const prod = productos.find(p => fdNorm_(p.nombre) === 'rollos');
+  if (!prod) { st.error = 'No encuentro el producto "Rollos" en el catálogo.'; st.items = []; return; }
+  const prodId = String(prod.producto_id);
+  const desde = st.desde || '2026-09-01';
+
+  // Huellas ya registradas
+  const huellaEstado = {};
+  (S.cache.fielddata_importados || []).forEach(h => { huellaEstado[String(h.huella)] = h; });
+
+  // Equivalencias guardadas
+  const equivGuardadas = {};
+  (S.cache.fielddata_equivalencias || []).filter(e => e.tipo === 'rodeo_nota').forEach(e => {
+    equivGuardadas[String(e.campo_id) + '|' + String(e.texto)] = String(e.destino_id);
+  });
+
+  // 1. Filas fuente de cada archivo
+  const fuentes = [];
+  const camposCargados = new Set();
+  st.archivos.forEach(a => {
+    if (!a.campo_id) return;
+    camposCargados.add(String(a.campo_id));
+    const ocurr = {};
+    a.filas.forEach(f => {
+      if (fdNorm_(f.area) !== 'insumos' || fdNorm_(f.insumo) !== 'rollos') return;
+      if (!f.fecha || f.fecha < desde || !f.cantidad) return;
+      const tipo = /ingreso/i.test(f.tipo) ? 'ingreso' : (/salida/i.test(f.tipo) ? 'salida' : '');
+      if (!tipo) return;
+      const base = ['fd', a.campo_id, f.fecha, tipo, fdNorm_(f.insumo), f.cantidad, fdNorm_(f.nota), fdNorm_(f.lote)].join('|');
+      ocurr[base] = (ocurr[base] || 0) + 1;
+      fuentes.push({ huella: base + '|' + ocurr[base], campo_id: String(a.campo_id), fecha: f.fecha, tipo, cantidad: f.cantidad,
+        nota: f.nota, lote: f.lote, otroCampoId: fdCampoEnTexto_(f.nota, a.campo_id) });
+    });
+  });
+
+  const items = [];
+  // 2. Traslados: se juntan salida (campo A, nota menciona B) con ingreso (campo B, nota menciona A)
+  const outs = fuentes.filter(f => f.tipo === 'salida' && f.otroCampoId);
+  const ins = fuentes.filter(f => f.tipo === 'ingreso' && f.otroCampoId);
+  const usadosIn = new Set();
+  outs.sort((a, b) => a.fecha.localeCompare(b.fecha)).forEach(o => {
+    let mejor = null, mejorD = 99;
+    ins.forEach((i, k) => {
+      if (usadosIn.has(k)) return;
+      if (i.campo_id !== o.otroCampoId || i.otroCampoId !== o.campo_id || i.cantidad !== o.cantidad) return;
+      const d = Math.abs(fdDias_(i.fecha, o.fecha));
+      if (d <= FD_TOLERANCIA_DIAS_TRASLADO_ && d < mejorD) { mejor = k; mejorD = d; }
+    });
+    const it = { clase: 'traslado', fecha: o.fecha, campo_id: o.campo_id, origen: o.campo_id, destino: o.otroCampoId,
+      cantidad: o.cantidad, nota: o.nota, fuentes: [o] };
+    if (mejor !== null) {
+      usadosIn.add(mejor);
+      it.fuentes.push(ins[mejor]);
+      if (ins[mejor].fecha !== o.fecha) it.aviso = 'El ingreso en ' + fdCampoNombre_(o.otroCampoId) + ' está el ' + fd(ins[mejor].fecha) + '.';
+    } else {
+      it.revisar = camposCargados.has(o.otroCampoId)
+        ? 'No encuentro el ingreso de ' + o.cantidad + ' en ' + fdCampoNombre_(o.otroCampoId) + ' (±' + FD_TOLERANCIA_DIAS_TRASLADO_ + ' días).'
+        : 'Falta subir el archivo de ' + fdCampoNombre_(o.otroCampoId) + ' para cerrar el traslado.';
+    }
+    items.push(it);
+  });
+  ins.forEach((i, k) => {
+    if (usadosIn.has(k)) return;
+    items.push({ clase: 'traslado', fecha: i.fecha, campo_id: i.campo_id, origen: i.otroCampoId, destino: i.campo_id, cantidad: i.cantidad,
+      nota: i.nota, fuentes: [i],
+      revisar: camposCargados.has(i.otroCampoId)
+        ? 'No encuentro la salida de ' + i.cantidad + ' en ' + fdCampoNombre_(i.otroCampoId) + ' (±' + FD_TOLERANCIA_DIAS_TRASLADO_ + ' días).'
+        : 'Falta subir el archivo de ' + fdCampoNombre_(i.otroCampoId) + ' para cerrar el traslado.' });
+  });
+  // 3. Ingresos que no son traslados (compras, cosechas): fuera de esta versión
+  fuentes.filter(f => f.tipo === 'ingreso' && !f.otroCampoId).forEach(f => {
+    items.push({ clase: 'ingreso', fecha: f.fecha, campo_id: f.campo_id, cantidad: f.cantidad, nota: f.nota, fuentes: [f],
+      revisar: 'Ingreso sin campo de origen en la nota (¿compra?). Esta versión no importa compras.' });
+  });
+  // 4. Consumos
+  fuentes.filter(f => f.tipo === 'salida' && !f.otroCampoId).forEach(f => {
+    const key = fdEquivKey_(f.campo_id, f.nota);
+    if (!st.equiv[key]) {
+      const guardado = equivGuardadas[f.campo_id + '|' + fdNorm_(f.nota)];
+      st.equiv[key] = guardado
+        ? { campo_id: f.campo_id, texto: fdNorm_(f.nota), notaOriginal: f.nota, rodeo_id: guardado, origen: 'guardado', confirmado: true }
+        : { campo_id: f.campo_id, texto: fdNorm_(f.nota), notaOriginal: f.nota, rodeo_id: fdSugerirRodeo_(f.campo_id, f.nota), origen: 'sugerido', confirmado: false };
+    }
+    items.push({ clase: 'consumo', fecha: f.fecha, campo_id: f.campo_id, cantidad: f.cantidad, nota: f.nota, equivKey: key, fuentes: [f] });
+  });
+
+  // 5. Estado de cada item: huella -> ya en el sistema -> listo / pendiente
+  const consSis = (S.cache.consumos_insumos || []).filter(c => String(c.producto_id) === prodId);
+  const trasSis = (S.cache.traslados_insumos || []).filter(t => String(t.producto_id) === prodId);
+  const usadosC = new Set(), usadosT = new Set();
+  items.sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.clase === 'traslado' ? -1 : 1));
+  items.forEach(it => {
+    it.huellas = it.fuentes.map(f => f.huella);
+    it.id = it.huellas.join('##');
+    const h = it.huellas.map(x => huellaEstado[x]).find(Boolean);
+    if (h) {
+      it.estado = h.estado === 'grabado' ? 'importado' : (h.estado === 'ya_cargado' ? 'ya_cargado' : 'descartado');
+      it.motivo = h.estado === 'grabado' ? 'Grabado por el importador' + (h.registro_id ? ' (id ' + h.registro_id + ')' : '') + '.' : (h.estado === 'ya_cargado' ? 'Ya estaba en el sistema.' : 'Descartado.');
+      return;
+    }
+    if (it.revisar) { it.estado = 'revisar'; it.motivo = it.revisar; return; }
+    if (it.clase === 'traslado') {
+      let mejor = null, mejorD = 99;
+      trasSis.forEach(t => {
+        if (usadosT.has(t.traslado_id)) return;
+        if (String(t.campo_origen_id) !== it.origen || String(t.campo_destino_id) !== it.destino || Number(t.cantidad) !== it.cantidad) return;
+        const d = Math.abs(fdDias_(t.fecha, it.fecha));
+        if (d <= FD_TOLERANCIA_DIAS_YA_CARGADO_ && d < mejorD) { mejor = t; mejorD = d; }
+      });
+      if (mejor) { usadosT.add(mejor.traslado_id); it.estado = 'ya_cargado'; it.registroId = mejor.traslado_id; it.entidad = 'traslados_insumos'; it.motivo = 'En el sistema: traslado del ' + fd(mejor.fecha) + '.'; return; }
+    } else if (it.clase === 'consumo') {
+      const eq = st.equiv[it.equivKey];
+      let mejor = null, mejorScore = -1;
+      consSis.forEach(c => {
+        if (usadosC.has(c.consumo_id)) return;
+        if (String(c.campo_id) !== it.campo_id || Number(c.cantidad) !== it.cantidad) return;
+        const d = Math.abs(fdDias_(c.fecha, it.fecha));
+        if (d > FD_TOLERANCIA_DIAS_YA_CARGADO_) return;
+        const sc = (eq && eq.rodeo_id && String(c.rodeo_id) === String(eq.rodeo_id) ? 10 : 0) - d;
+        if (sc > mejorScore) { mejor = c; mejorScore = sc; }
+      });
+      if (mejor) {
+        usadosC.add(mejor.consumo_id);
+        it.estado = 'ya_cargado'; it.registroId = mejor.consumo_id; it.entidad = 'consumos_insumos';
+        it.motivo = 'En el sistema: ' + fd(mejor.fecha) + ' en ' + fdRodeoNombre_(mejor.rodeo_id) + '.';
+        if (eq && eq.rodeo_id && String(mejor.rodeo_id) !== String(eq.rodeo_id)) it.motivo += ' ⚠ Distinto rodeo que la nota.';
+        return;
+      }
+    }
+    if (!campanaDeFecha_(it.fecha)) { it.estado = 'revisar'; it.motivo = 'La fecha no cae en ninguna campaña del catálogo.'; return; }
+    if (it.clase === 'consumo') {
+      const eq = st.equiv[it.equivKey];
+      if (!eq || !eq.rodeo_id || !eq.confirmado) { it.estado = 'pendiente'; it.motivo = 'Falta confirmar el rodeo de esta nota (arriba).'; return; }
+    }
+    it.estado = 'nuevo'; it.motivo = it.aviso || '';
+  });
+  // Selección por defecto: todo lo nuevo
+  const prevSel = st.sel || {};
+  st.sel = {};
+  items.forEach(it => { if (it.estado === 'nuevo') st.sel[it.id] = prevSel[it.id] !== undefined ? prevSel[it.id] : true; else if (prevSel[it.id] && it.estado !== 'importado' && it.estado !== 'ya_cargado' && it.estado !== 'descartado') st.sel[it.id] = true; });
+  st.items = items;
+  st.prodId = prodId;
+}
+
+function fdEstadoPill_(e) {
+  const m = { nuevo: ['pill-green', 'Nuevo'], pendiente: ['pill-gold', 'Falta rodeo'], revisar: ['pill-red', 'Revisar'],
+    ya_cargado: ['pill-gray', 'Ya cargado'], importado: ['pill-blue', 'Importado'], descartado: ['pill-gray', 'Descartado'] };
+  const x = m[e] || ['pill-gray', e];
+  return `<span class="pill ${x[0]}">${x[1]}</span>`;
+}
+
+function buildImportarFielddata() {
+  if (!S.fd) S.fd = { archivos: [], desde: '2026-09-01', equiv: {}, items: null, sel: {}, filtro: 'pendientes', grabando: false, log: [] };
+  const st = S.fd;
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  let h = `<div class="panel">
+    <div class="panel-title">1. Archivos de Fielddata</div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Esta versión importa <b>solo rollos</b>: traslados entre campos y consumos por rodeo. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <div class="fgrid">
+      <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
+      <div class="fg"><label>Desde</label><input type="date" id="fd-desde" value="${fdEsc_(st.desde)}"></div>
+    </div>`;
+  if (st.archivos.length) {
+    h += `<table class="dt" style="margin-top:10px"><thead><tr><th>Archivo</th><th>Campo</th><th class="tc">Filas</th><th class="tc">Filas de rollos</th><th></th></tr></thead><tbody>` +
+      st.archivos.map((a, i) => `<tr>
+        <td>${fdEsc_(a.nombre)}</td>
+        <td><select class="fd-campo-archivo" data-i="${i}"><option value="">— Elegí el campo —</option>${campos.map(c => `<option value="${c.campo_id}" ${String(c.campo_id) === String(a.campo_id) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></td>
+        <td class="tc">${a.filas.length}</td>
+        <td class="tc">${a.filas.filter(f => fdNorm_(f.area) === 'insumos' && fdNorm_(f.insumo) === 'rollos').length}</td>
+        <td><button class="btn btn-secondary btn-sm fd-quitar" data-i="${i}">Quitar</button></td></tr>`).join('') + `</tbody></table>`;
+  }
+  h += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" id="fd-analizar" ${st.archivos.length ? '' : 'disabled'}>Analizar</button></div></div>`;
+
+  if (st.error) h += `<div class="panel" style="border-color:var(--red);color:var(--red)">${fdEsc_(st.error)}</div>`;
+
+  if (st.items) {
+    // 2. Equivalencias de rodeo por nota
+    const usadas = {};
+    st.items.filter(it => it.clase === 'consumo').forEach(it => { usadas[it.equivKey] = (usadas[it.equivKey] || 0) + 1; });
+    const keys = Object.keys(usadas).sort((a, b) => {
+      const ea = st.equiv[a], eb = st.equiv[b];
+      return (ea.confirmado === eb.confirmado ? 0 : ea.confirmado ? 1 : -1) || fdCampoNombre_(ea.campo_id).localeCompare(fdCampoNombre_(eb.campo_id)) || ea.texto.localeCompare(eb.texto);
+    });
+    const sinConfirmar = keys.filter(k => !st.equiv[k].confirmado).length;
+    const sugeridasListas = keys.filter(k => !st.equiv[k].confirmado && st.equiv[k].rodeo_id).length;
+    h += `<div class="panel"><div class="panel-title">2. Rodeo según la nota de Fielddata <span class="pill ${sinConfirmar ? 'pill-gold' : 'pill-green'}">${sinConfirmar ? sinConfirmar + ' sin confirmar' : 'todas confirmadas'}</span></div>
+      <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Cada nota distinta se confirma una sola vez y queda guardada para las próximas importaciones. Las sugeridas las propone la app: revisalas antes de confirmar.</p>
+      ${sugeridasListas ? `<button class="btn btn-secondary btn-sm" id="fd-confirmar-sugeridas" style="margin-bottom:8px">Confirmar las ${sugeridasListas} sugeridas</button>` : ''}
+      <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Campo</th><th>Nota en Fielddata</th><th class="tc">Filas</th><th>Rodeo del sistema</th><th>Estado</th><th></th></tr></thead><tbody>` +
+      keys.map(k => {
+        const e = st.equiv[k];
+        const opts = rodeosPorCampo(e.campo_id).map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id) === String(e.rodeo_id) ? 'selected' : ''}>${fdEsc_(r.nombre)}</option>`).join('');
+        const estado = e.confirmado ? `<span class="pill pill-green">${e.origen === 'guardado' ? 'Guardado' : 'Confirmado'}</span>` : (e.rodeo_id ? '<span class="pill pill-gold">Sugerido</span>' : '<span class="pill pill-red">Sin asignar</span>');
+        return `<tr><td>${fdEsc_(fdCampoNombre_(e.campo_id))}</td><td style="white-space:normal">${fdEsc_(e.notaOriginal || '(sin nota)')}</td><td class="tc">${usadas[k]}</td>
+          <td><select class="fd-equiv-sel" data-k="${fdEsc_(k)}"><option value="">— Elegí —</option>${opts}</select></td><td>${estado}</td>
+          <td>${!e.confirmado && e.rodeo_id ? `<button class="btn btn-secondary btn-sm fd-equiv-ok" data-k="${fdEsc_(k)}">Confirmar</button>` : ''}</td></tr>`;
+      }).join('') + `</tbody></table></div></div>`;
+
+    // 3. Movimientos
+    const cuenta = {};
+    st.items.forEach(it => { cuenta[it.estado] = (cuenta[it.estado] || 0) + 1; });
+    const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar)', todos: 'Todos', nuevo: 'Nuevos', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados' };
+    const visibles = st.items.filter(it => st.filtro === 'todos' ? true : st.filtro === 'pendientes' ? ['nuevo', 'pendiente', 'revisar'].includes(it.estado) : it.estado === st.filtro);
+    const selIds = Object.keys(st.sel).filter(k => st.sel[k]);
+    const selGrabar = st.items.filter(it => st.sel[it.id] && it.estado === 'nuevo').length;
+    const selDescartar = st.items.filter(it => st.sel[it.id] && ['nuevo', 'pendiente', 'revisar'].includes(it.estado)).length;
+    const yaCargadosSinHuella = st.items.filter(it => it.estado === 'ya_cargado' && it.registroId).length;
+    h += `<div class="panel"><div class="panel-title">3. Movimientos de rollos</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <select id="fd-filtro">${Object.keys(filtros).map(k => `<option value="${k}" ${st.filtro === k ? 'selected' : ''}>${filtros[k]}</option>`).join('')}</select>
+        <button class="btn btn-primary" id="fd-grabar" ${selGrabar && !st.grabando ? '' : 'disabled'}>${st.grabando ? 'Grabando…' : 'Grabar seleccionados (' + selGrabar + ')'}</button>
+        <button class="btn btn-secondary" id="fd-descartar" ${selDescartar && !st.grabando ? '' : 'disabled'}>Descartar seleccionados (${selDescartar})</button>
+      </div>
+      ${yaCargadosSinHuella ? `<p style="font-size:12px;color:var(--text3);margin:0 0 8px">Al grabar, los ${yaCargadosSinHuella} "Ya cargado" quedan registrados en la huella para no volver a ofrecerlos.</p>` : ''}
+      <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tc"><input type="checkbox" id="fd-sel-todos"></th><th>Estado</th><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="tc">Rollos</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
+      (visibles.length ? visibles.map(it => {
+        const seleccionable = ['nuevo', 'pendiente', 'revisar'].includes(it.estado);
+        let detalle = '';
+        if (it.clase === 'traslado') detalle = fdEsc_(fdCampoNombre_(it.origen)) + ' → ' + fdEsc_(fdCampoNombre_(it.destino));
+        else if (it.clase === 'consumo') { const eq = st.equiv[it.equivKey]; detalle = fdEsc_(fdCampoNombre_(it.campo_id)) + ' — ' + (eq && eq.rodeo_id ? fdEsc_(fdRodeoNombre_(eq.rodeo_id)) : '<i>sin rodeo</i>'); }
+        else detalle = fdEsc_(fdCampoNombre_(it.campo_id));
+        return `<tr><td class="tc">${seleccionable ? `<input type="checkbox" class="fd-sel" data-id="${fdEsc_(it.id)}" ${st.sel[it.id] ? 'checked' : ''}>` : ''}</td>
+          <td>${fdEstadoPill_(it.estado)}</td><td>${fd(it.fecha)}</td><td>${it.clase === 'traslado' ? 'Traslado' : it.clase === 'consumo' ? 'Consumo' : 'Ingreso'}</td>
+          <td>${detalle}</td><td class="tc">${fn(it.cantidad)}</td>
+          <td style="white-space:normal;max-width:260px">${fdEsc_(it.fuentes.map(f => f.nota || '—').join(' / '))}</td>
+          <td style="white-space:normal;max-width:300px;font-size:12px;color:var(--text2)">${fdEsc_(it.motivo || '')}</td></tr>`;
+      }).join('') : `<tr><td colspan="8" style="color:var(--text3)">No hay filas con este filtro.</td></tr>`) + `</tbody></table></div></div>`;
+  }
+  if (st.log && st.log.length) {
+    h += `<div class="panel"><div class="panel-title">Resultado de la última grabación</div><ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6">${st.log.map(l => `<li style="color:${l.ok ? 'var(--text)' : 'var(--red)'}">${fdEsc_(l.txt)}</li>`).join('')}</ul></div>`;
+  }
+  return h;
+}
+
+async function fdRecargarDatos_() {
+  await Promise.all([
+    loadEntity('consumos_insumos', true).catch(() => {}),
+    loadEntity('traslados_insumos', true).catch(() => {}),
+    loadEntity('fielddata_importados', true).catch(() => { S.cache.fielddata_importados = []; }),
+    loadEntity('fielddata_equivalencias', true).catch(() => { S.cache.fielddata_equivalencias = []; }),
+  ]);
+}
+
+async function fdGrabar_(modo) {
+  const st = S.fd;
+  const sel = st.items.filter(it => st.sel[it.id] && (modo === 'grabar' ? it.estado === 'nuevo' : ['nuevo', 'pendiente', 'revisar'].includes(it.estado)));
+  if (!sel.length) return;
+  const nTras = sel.filter(it => it.clase === 'traslado').length, nCons = sel.filter(it => it.clase === 'consumo').length;
+  const msg = modo === 'grabar'
+    ? '¿Grabar ' + sel.length + ' movimientos de rollos (' + nTras + ' traslados y ' + nCons + ' consumos)? Esto cambia el stock de rollos y el costo de alimentación.'
+    : '¿Descartar ' + sel.length + ' filas? No se graba nada en el sistema; solo quedan anotadas para no volver a ofrecerlas.';
+  if (!confirm(msg)) return;
+  const campanas = S.cache.campanas || [];
+  const items = [];
+  // Traslados primero, después consumos (por la validación de stock por campo)
+  const orden = sel.slice().sort((a, b) => (a.clase === 'traslado' ? 0 : 1) - (b.clase === 'traslado' ? 0 : 1) || a.fecha.localeCompare(b.fecha));
+  orden.forEach(it => {
+    const base = { huellas: it.huellas, campo_id: it.campo_id, fecha: it.fecha, rubro: 'rollos',
+      detalle: (it.clase === 'traslado' ? 'Traslado ' + fdCampoNombre_(it.origen) + ' → ' + fdCampoNombre_(it.destino) : 'Consumo ' + fdCampoNombre_(it.campo_id)) + ' ' + it.cantidad + ' — ' + it.fuentes.map(f => f.nota).join(' / ') };
+    if (modo === 'descartar') { items.push(Object.assign(base, { accion: 'marcar', estado: 'descartado' })); return; }
+    const camp = campanaDeFecha_(it.fecha);
+    if (it.clase === 'traslado') {
+      items.push(Object.assign(base, { accion: 'crear', entity: 'traslados_insumos', data: {
+        fecha: it.fecha, producto_id: st.prodId, cantidad: it.cantidad, campo_origen_id: it.origen, campo_destino_id: it.destino,
+        observaciones: 'Fielddata: ' + (it.fuentes[0].nota || ''), campana_id: camp ? camp.campana_id : '' } }));
+    } else {
+      const eq = st.equiv[it.equivKey];
+      items.push(Object.assign(base, { accion: 'crear', entity: 'consumos_insumos', data: {
+        fecha: it.fecha, producto_id: st.prodId, campo_id: it.campo_id, rodeo_id: eq.rodeo_id, cantidad: it.cantidad,
+        observaciones: 'Fielddata: ' + (it.nota || ''), campana_id: camp ? camp.campana_id : '', campana: camp ? camp.nombre : '' } }));
+    }
+  });
+  // Los "ya cargado" quedan en la huella junto con la grabación
+  if (modo === 'grabar') {
+    st.items.filter(it => it.estado === 'ya_cargado' && it.registroId).forEach(it => {
+      items.push({ accion: 'marcar', estado: 'ya_cargado', entity: it.entidad, registro_id: it.registroId, huellas: it.huellas,
+        campo_id: it.campo_id, fecha: it.fecha, rubro: 'rollos', detalle: 'Ya estaba en el sistema — ' + (it.nota || '') });
+    });
+  }
+  // Equivalencias confirmadas en esta sesión (las usadas por lo que se graba)
+  const equivalencias = [];
+  if (modo === 'grabar') {
+    const keys = new Set(orden.filter(it => it.clase === 'consumo').map(it => it.equivKey));
+    st.items.filter(it => it.clase === 'consumo').forEach(it => keys.add(it.equivKey));
+    keys.forEach(k => { const e = st.equiv[k]; if (e && e.confirmado && e.rodeo_id && e.origen !== 'guardado') equivalencias.push({ tipo: 'rodeo_nota', campo_id: e.campo_id, texto: e.texto, destino_id: e.rodeo_id }); });
+  }
+
+  st.grabando = true; st.log = []; render();
+  let ok = 0, err = 0, omit = 0;
+  try {
+    for (let i = 0; i < items.length || (i === 0 && equivalencias.length); i += FD_LOTE_GRABAR_) {
+      const lote = items.slice(i, i + FD_LOTE_GRABAR_);
+      const res = await apiCall('importarFielddata', { body: { items: lote, equivalencias: i === 0 ? equivalencias : [] } });
+      (res.resultados || []).forEach((r, j) => {
+        const it = lote[j];
+        if (r.omitido) { omit++; return; }
+        if (r.ok) { if (it.accion === 'crear') { ok++; } return; }
+        err++;
+        st.log.push({ ok: false, txt: fd(it.fecha) + ' — ' + it.detalle + ': ' + r.error });
+      });
+      st.log.unshift({ ok: true, txt: 'Lote ' + (Math.floor(i / FD_LOTE_GRABAR_) + 1) + ' de ' + Math.max(1, Math.ceil(items.length / FD_LOTE_GRABAR_)) + ' procesado.' });
+      render();
+      if (!items.length) break;
+    }
+    st.log.unshift({ ok: !err, txt: modo === 'grabar'
+      ? 'Grabados: ' + ok + (omit ? ' · ya registrados antes (omitidos): ' + omit : '') + (err ? ' · con error: ' + err : '')
+      : 'Descartadas: ' + (items.length - err - omit) + (err ? ' · con error: ' + err : '') });
+    toast(modo === 'grabar' ? ('Importación terminada: ' + ok + ' grabados' + (err ? ', ' + err + ' con error' : '')) : 'Filas descartadas', err ? 'err' : 'ok');
+  } catch (e) {
+    st.log.unshift({ ok: false, txt: 'Se cortó la grabación: ' + e.message + '. Lo grabado hasta acá quedó en la huella: volvé a Analizar y seguí.' });
+    toast(e.message, 'err');
+  } finally {
+    st.grabando = false;
+    S.stockProductos = null;
+    S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
+    await fdRecargarDatos_();
+    // Las equivalencias ya guardadas pasan a "guardado"
+    (S.cache.fielddata_equivalencias || []).forEach(e => { const k = String(e.campo_id) + '|' + String(e.texto); if (st.equiv[k]) { st.equiv[k].origen = 'guardado'; st.equiv[k].confirmado = true; st.equiv[k].rodeo_id = String(e.destino_id); } });
+    fdAnalizar_();
+    render();
+  }
+}
+
+function attachImportarFielddataEvents() {
+  const st = S.fd;
+  if (!st) return;
+  const camposCat = (S.catalogs && S.catalogs.campos) || [];
+  const inp = document.getElementById('fd-files');
+  if (inp) inp.onchange = async () => {
+    const files = [...inp.files];
+    for (const f of files) {
+      try {
+        const filas = await fdLeerArchivo_(f);
+        const t = ' ' + fdNorm_(f.name.replace(/\.[^.]+$/, '')) + ' ';
+        const hits = camposCat.filter(c => fdClaveCampo_(c.nombre) && t.indexOf(' ' + fdClaveCampo_(c.nombre) + ' ') !== -1);
+        const campo_id = hits.length === 1 ? String(hits[0].campo_id) : '';
+        st.archivos = st.archivos.filter(a => a.nombre !== f.name);
+        st.archivos.push({ nombre: f.name, campo_id, filas });
+      } catch (e) { toast(e.message, 'err'); }
+    }
+    st.items = null; render();
+  };
+  const desde = document.getElementById('fd-desde');
+  if (desde) desde.onchange = () => { st.desde = desde.value || '2026-09-01'; if (st.items) { fdAnalizar_(); render(); } };
+  document.querySelectorAll('.fd-campo-archivo').forEach(s => s.onchange = () => { st.archivos[Number(s.dataset.i)].campo_id = s.value; st.items = null; render(); });
+  document.querySelectorAll('.fd-quitar').forEach(b => b.onclick = () => { st.archivos.splice(Number(b.dataset.i), 1); st.items = null; render(); });
+  const an = document.getElementById('fd-analizar');
+  if (an) an.onclick = async () => {
+    const sinCampo = st.archivos.filter(a => !a.campo_id);
+    if (sinCampo.length) { toast('Elegí el campo de: ' + sinCampo.map(a => a.nombre).join(', '), 'err'); return; }
+    const camposRep = st.archivos.map(a => a.campo_id).filter((c, i, arr) => arr.indexOf(c) !== i);
+    if (camposRep.length) { toast('Hay dos archivos del mismo campo (' + fdCampoNombre_(camposRep[0]) + '). Dejá uno solo por campo.', 'err'); return; }
+    an.disabled = true; an.textContent = 'Analizando…';
+    try {
+      await fdRecargarDatos_();
+      if (!S.cache.campanas) await loadEntity('campanas').catch(() => {});
+      if (!S.stock) await loadStock().catch(() => {});
+      fdAnalizar_();
+    } catch (e) { toast(e.message, 'err'); }
+    render();
+  };
+  document.querySelectorAll('.fd-equiv-sel').forEach(s => s.onchange = () => {
+    const e = st.equiv[s.dataset.k]; if (!e) return;
+    e.rodeo_id = s.value; e.confirmado = !!s.value; e.origen = s.value ? 'manual' : 'sugerido';
+    fdAnalizar_(); render();
+  });
+  document.querySelectorAll('.fd-equiv-ok').forEach(b => b.onclick = () => {
+    const e = st.equiv[b.dataset.k]; if (!e || !e.rodeo_id) return;
+    e.confirmado = true; e.origen = 'manual'; fdAnalizar_(); render();
+  });
+  const cs = document.getElementById('fd-confirmar-sugeridas');
+  if (cs) cs.onclick = () => {
+    Object.values(st.equiv).forEach(e => { if (!e.confirmado && e.rodeo_id) { e.confirmado = true; e.origen = 'manual'; } });
+    fdAnalizar_(); render();
+  };
+  const fl = document.getElementById('fd-filtro');
+  if (fl) fl.onchange = () => { st.filtro = fl.value; render(); };
+  document.querySelectorAll('.fd-sel').forEach(c => c.onchange = () => { st.sel[c.dataset.id] = c.checked; render(); });
+  const todos = document.getElementById('fd-sel-todos');
+  if (todos) todos.onchange = () => {
+    document.querySelectorAll('.fd-sel').forEach(c => { st.sel[c.dataset.id] = todos.checked; });
+    render();
+  };
+  const gb = document.getElementById('fd-grabar');
+  if (gb) gb.onclick = () => fdGrabar_('grabar');
+  const ds = document.getElementById('fd-descartar');
+  if (ds) ds.onclick = () => fdGrabar_('descartar');
+}
+
+
 function attachTableDeleteEvents(entity, idCol) {
   document.querySelectorAll('[data-del][data-entity="' + entity + '"]').forEach(btn => {
     btn.onclick = async () => {
