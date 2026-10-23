@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_245';
+const APP_VERSION = 'index_consolidado_4_6_155_246';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6366,7 +6366,9 @@ async function exportarPerdidasReproductivasExcel_() {
 
     const huerfanos = det.filter(d => d.madre === SIN_VINC);
     const hayHuerfanos = huerfanos.length > 0;
-    huerfanos.forEach(d => { d.nota = (d.nota ? d.nota + ' · ' : '') + 'Rodeo sin vínculo a una madre: NO entra en los totales'; });
+    // Terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026": son de la campaña anterior / recría):
+    // no pertenecen a las vacas preñadas de este análisis, así que se sacan también del Detalle.
+    for (let i = det.length - 1; i >= 0; i--) if (det[i].madre === SIN_VINC) det.splice(i, 1);
     const nombresCols = cols.map(f => f.nombre);
     const colsCausas = nombresCols;
     const madresFueraDeColumnas = [...new Set(det.filter(d => d.madre !== SIN_VINC && !nombresCols.includes(d.madre)).map(d => d.madre))];
@@ -6508,7 +6510,7 @@ async function exportarPerdidasReproductivasExcel_() {
       }
       if (rep.filas.some(f => f.sinTactoFinal)) notas.push('• Rodeos sin Tacto final cargado (no aparecen como columna): ' + rep.filas.filter(f => f.sinTactoFinal).map(f => f.nombre).join(', ') + '.');
       if (madresFueraDeColumnas.length) notas.push('• Hay registros de pérdida de rodeos que no tienen columna acá (sin Tacto final o sin preñadas): ' + madresFueraDeColumnas.join(', ') + '. Están en la hoja Detalle.');
-      if (hayHuerfanos) notas.push('• ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026") NO entran en los totales de ninguna hoja; están en Detalle marcados como "sin vínculo".');
+      if (hayHuerfanos) notas.push('• ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos de rodeos sin vínculo a una madre (ej. "Terneros 2026": terneros de la campaña anterior / recría) NO están en ninguna hoja: no son de las vacas preñadas de este análisis. Se ven en Análisis de Mortandad.');
       notas.push('• Si en un rodeo "Terneros nacidos − vacas paridas" da positivo (ej. Rodeo 1, Rodeo 3), suele ser porque hubo vacas que parieron y después murieron o salieron: Estado de Vientres las resta dos veces como "pendientes" (pendiente de diseño).');
       notas.forEach((t, i) => put(ws, X.res + 1 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
       ws['!cols'] = [{wch:58}, ...cols.map(() => ({wch:15})), {wch:11}, {wch:12}];
@@ -6566,7 +6568,7 @@ async function exportarPerdidasReproductivasExcel_() {
         'Notas',
         '• Azul = dato de la app (nacidos vivos). Todo lo demás son fórmulas sobre la hoja Detalle: si cambiás una causa ahí (escribila igual que en la lista de arriba), se actualiza todo.',
         '• La causa se asigna leyendo el texto de la Observación; los registros sin observación o con solo una caravana quedan como "Sin causa / sin dato". Revisá la columna Nota de Detalle: marca posibles duplicados y registros mal clasificados.',
-        ...(hayHuerfanos ? ['• No incluye ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (stock anterior a la parición o rodeos generales): están en Detalle.'] : []),
+        ...(hayHuerfanos ? ['• No incluye ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos de rodeos sin vínculo a una madre (campaña anterior / recría, ej. "Terneros 2026").'] : []),
       ];
       notas.forEach((t, i) => put(ws, totPost + 1 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
       ws['!cols'] = [{wch:46}, ...colsCausas.map(() => ({wch:15})), {wch:11}, {wch:12}];
