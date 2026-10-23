@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_252';
+const APP_VERSION = 'index_consolidado_4_6_155_253';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1700,7 +1700,7 @@ function aggregateKpis_(rodeosArr) {
     },
     gestacion: { abortos },
     paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, vacas_paridas: vacParidas, madres_guacho: madGuacho, base: parBase, indice_paricion: parBase > 0 ? round1_((vacParidas + abortos) / parBase * 100) : null },
-    destete: { total_destetados: totDest, mortandad_terneros: mortTerneros, indice_destete: nacVivos > 0 ? round1_(totDest / nacVivos * 100) : null },
+    destete: { total_destetados: totDest, mortandad_terneros: mortTerneros, indice_destete: parBase > 0 ? round1_(totDest / parBase * 100) : null, indice_destete_entorada: basePreñez > 0 ? round1_(totDest / basePreñez * 100) : null },
   };
 }
 function round1_(n) { return n === null || n === undefined || isNaN(n) ? null : Math.round(n * 10) / 10; }
@@ -1720,12 +1720,17 @@ function buildKpiRow(k) {
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
       <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
-      <div class="kpi-sub">${fn(k.paricion.vacas_paridas || 0)} paridas${k.paricion.madres_guacho ? ` (incl. ${fn(k.paricion.madres_guacho)} madres de guacho)` : ''} + ${fn((k.gestacion && k.gestacion.abortos) || 0)} abortos de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} preñadas</div>
+      <div class="kpi-sub">${fn(k.paricion.vacas_paridas || 0)} paridas${k.paricion.madres_guacho ? ` (incl. ${fn(k.paricion.madres_guacho)} madres de guacho)` : ''} + ${fn((k.gestacion && k.gestacion.abortos) || 0)} abortos de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} preñadas${(k.paricion.base != null && k.paricion.base !== k.servicio.total_prenadas) ? ` <br>(${fn(k.servicio.total_prenadas)} del tacto ${k.paricion.base > k.servicio.total_prenadas ? '+' : '−'} ${fn(Math.abs(k.paricion.base - k.servicio.total_prenadas))} ${k.paricion.base > k.servicio.total_prenadas ? 'que llegaron de otros rodeos' : 'que pasaron a otros rodeos'})` : ''}</div>
     </div>
     <div class="kpi-card accent-green">
-      <div class="kpi-icon">⊞</div><div class="kpi-label">Índice de destete</div>
+      <div class="kpi-icon">⊞</div><div class="kpi-label">Destete / vaca preñada</div>
       <div class="kpi-value">${pct(k.destete.indice_destete)}</div>
-      <div class="kpi-sub">${fn(k.destete.total_destetados)} de ${fn(k.paricion.nacidos_vivos)} terneros destetados</div>
+      <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} vacas preñadas${k.destete.total_destetados ? '' : ' · todavía sin destetes'}</div>
+    </div>
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">⊞</div><div class="kpi-label">Destete / vaca entorada</div>
+      <div class="kpi-value">${pct(k.destete.indice_destete_entorada)}</div>
+      <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados de ${fn(k.servicio.total_serviciadas||k.servicio.total_tacteadas)} vacas entoradas${k.destete.total_destetados ? '' : ' · todavía sin destetes'}</div>
     </div>
   </div>`;
 }
@@ -1810,13 +1815,15 @@ function calcKpisReproduccionJS_(datos, rodeoFiltro) {
     ? (prenadasToro / Math.max(1, totalTacteadasFinal - prenadasIatf) * 100) : null;
   // v250: Índice de parición = vacas que ya resolvieron su preñez (parieron — con ternero vivo o muerto — o abortaron) / vacas preñadas
   const indiceParicion = totalPrenadas > 0 ? ((vacasParidas + abortosF) / totalPrenadas * 100) : null;
-  const indiceDestete = nacidosVivos > 0 ? (totalDestetados / nacidosVivos * 100) : null;
+  // v253: destete sobre vaca PREÑADA y sobre vaca ENTORADA (ya no sobre nacidos vivos)
+  const indiceDestete = totalPrenadas > 0 ? (totalDestetados / totalPrenadas * 100) : null;
+  const indiceDesteteEntorada = totalServiciadas > 0 ? (totalDestetados / totalServiciadas * 100) : null;
   return {
     rodeo_id: rodeoFiltro,
     servicio: { total_serviciadas: totalServiciadas, prenadas_iatf: prenadasIatf, prenadas_toro: prenadasToro, total_prenadas: totalPrenadas, total_tacteadas_iatf: totalTacteadasIatf, total_tacteadas_toro: Math.max(0, totalTacteadasFinal - totalTacteadasIatf), indice_prenez: round1(indicePrenez), indice_prenez_iatf: round1(indicePrenezIatf), indice_prenez_toro: round1(indicePrenezToro) },
     gestacion: { abortos: abortosF },
-    paricion: { nacidos_vivos: nacidosVivos, nacidos_muertos: nacidosMuertos, vacas_paridas: vacasParidas, madres_guacho: madresGuacho, indice_paricion: round1(indiceParicion) },
-    destete: { total_destetados: totalDestetados, mortandad_terneros: mortF, indice_destete: round1(indiceDestete) },
+    paricion: { nacidos_vivos: nacidosVivos + madresGuacho, nacidos_muertos: nacidosMuertos, vacas_paridas: vacasParidas, madres_guacho: madresGuacho, indice_paricion: round1(indiceParicion) },
+    destete: { total_destetados: totalDestetados, mortandad_terneros: mortF, indice_destete: round1(indiceDestete), indice_destete_entorada: round1(indiceDesteteEntorada) },
   };
 }
 
@@ -1860,6 +1867,7 @@ function buildIndicesReproduccion() {
         if (base > 0) {
           x.kpis.paricion.base = base;
           x.kpis.paricion.indice_paricion = round1_(((x.kpis.paricion.vacas_paridas || 0) + ((x.kpis.gestacion && x.kpis.gestacion.abortos) || 0)) / base * 100);
+          x.kpis.destete.indice_destete = round1_((x.kpis.destete.total_destetados || 0) / base * 100);
         }
       });
     } catch (e) { console.warn('Base de parición ajustada no disponible', e); }
@@ -1935,7 +1943,7 @@ function buildIndicesReproduccion() {
   } else {
     h += `<div class="tw"><table class="dt"><thead><tr>
       <th>Rodeo</th><th>Campo</th>
-      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete</th>
+      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete / preñada</th><th class="tc">Destete / entorada</th>
       <th class="tc">Nacidos vivos</th><th class="tc">Destetados</th>
     </tr></thead><tbody>`;
     rodeosFiltrados.forEach(r => {
@@ -1946,6 +1954,7 @@ function buildIndicesReproduccion() {
         <td class="tc">${pct(k.servicio.indice_prenez)}</td>
         <td class="tc">${pct(k.paricion.indice_paricion)}</td>
         <td class="tc">${pct(k.destete.indice_destete)}</td>
+        <td class="tc">${pct(k.destete.indice_destete_entorada)}</td>
         <td class="tc">${fn(k.paricion.nacidos_vivos)}</td>
         <td class="tc">${fn(k.destete.total_destetados)}</td>
       </tr>`;
@@ -15886,7 +15895,7 @@ function buildMargenBruto() {
           <tr><td>Preñez IATF</td><td class="tc">${pctMB(kpi.servicio?.indice_prenez_iatf)}</td></tr>
           <tr><td>Preñez toro</td><td class="tc">${pctMB(kpi.servicio?.indice_prenez_toro)}</td></tr>
           <tr><td>Parición</td><td class="tc">${pctMB(kpi.paricion?.indice_paricion)}</td></tr>
-          <tr><td>Destete</td><td class="tc">${pctMB(kpi.destete?.indice_destete)}</td></tr>
+          <tr><td>Destete (s/ preñadas)</td><td class="tc">${pctMB(kpi.destete?.indice_destete)}</td></tr>
         </tbody></table></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
           <div style="background:var(--bg2);border-radius:8px;padding:10px 16px;text-align:center">
