@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_250';
+const APP_VERSION = 'index_consolidado_4_6_155_251';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -568,6 +568,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   const exportadasPorRodeo = {}; // rodeo_id -> total preñadas exportadas
   const exportadasDetallePorRodeo = {}; // rodeo_id -> [{cantidad, aNombre, fecha, fechaTacto}]
   const importadasPorRodeo = {}; // rodeo_id -> [{cantidad, deNombre, fecha}]
+  const madresGuachoPorRodeo = {}; // rodeo_id -> vacas que PARIERON (su ternero quedó como guacho) y salieron a venta: se restan de preñadas pero SÍ parieron
   const idxAbortosCaravana = indiceAbortosPorCaravana_();
   (S.cache.movimientos||[]).filter(m=>(m.fecha||'')<=corte).forEach(m => {
     if (m.tipo!=='Traslado en bloque' && m.tipo!=='Traslado individual') return;
@@ -580,6 +581,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     const cant = Number(m.cantidad)||0;
     if (cant <= 0) return;
     exportadasPorRodeo[origId] = (exportadasPorRodeo[origId]||0) + cant;
+    if (!idsVaca.has(destId) && clasePerdidaTraslado_(m.observaciones) === 'Madre de guacho') madresGuachoPorRodeo[origId] = (madresGuachoPorRodeo[origId]||0) + cant;
     if (!exportadasDetallePorRodeo[origId]) exportadasDetallePorRodeo[origId] = [];
     const destNombre = (rodeos.find(r=>String(r.rodeo_id)===destId)||{}).nombre || rodeoNombre(destId);
     exportadasDetallePorRodeo[origId].push({ cantidad: cant, aNombre: destNombre, fecha: m.fecha, fechaTacto: infoOrig.fecha });
@@ -644,7 +646,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
   });
 
   const stockACorte = stockPorRodeoACorte_(corte);
-  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, nacidosMuertos:0, ternerosAlPie:0, ternerosMuertosPostParto:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0, mellizos:0, ternerosParidos:0 };
+  const totales = { prenadas:0, paridas:0, abortadas:0, muertas:0, pendientes:0, nacidosVivos:0, nacidosMuertos:0, ternerosAlPie:0, ternerosMuertosPostParto:0, rodeosSinTactoFinal:0, rodeosExcluidos:0, entoradas:0, descartadas:0, mellizos:0, ternerosParidos:0, madresGuacho:0 };
   const filas = [];
   rodeos.forEach(r => {
     const rid = String(r.rodeo_id);
@@ -705,7 +707,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
       verifDiff = res.ternerosParidos - verifTotal; // se compara en TERNEROS (los mellizos cuentan 2)
     }
     filas.push({
-      nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, ...res,
+      nombre: r.nombre, campo: campoNombre(r.campo_id), campoId: r.campo_id, categoria: r.categoria, rodeoId: r.rodeo_id, madresGuacho: madresGuachoPorRodeo[rid] || 0, ...res,
       stockActual, sinStock, exportadas, exportadasDetalle, importadas, totalImportadas, salidasExternas,
       prenadasAjustadas, pendientesAjustado, pendientesRaw, stockEsperado, difStock,
       rodeoTernerosNombre: rodeoTernerosVerif ? rodeoTernerosVerif.nombre : null,
@@ -735,6 +737,7 @@ function calcularVacasReproductivas_(campoFiltro, corte) {
     totales.descartadas += salidasExternas.cabezas || 0;
     totales.prenadas += prenadasAjustadas;
     totales.paridas += res.yaParieron;
+    totales.madresGuacho += madresGuachoPorRodeo[rid] || 0;
     totales.mellizos += res.mellizos || 0;
     totales.ternerosParidos += res.ternerosParidos || 0;
     totales.abortadas += res.abortos;
@@ -1666,7 +1669,7 @@ function attachPageEvents(page) {
 function aggregateKpis_(rodeosArr) {
   let totServ = 0, prenIatf = 0, prenToro = 0, totPren = 0;
   let totTacteadasIatf = 0, totTacteadasToro = 0;
-  let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0, parBase = 0, vacParidas = 0;
+  let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0, parBase = 0, vacParidas = 0, madGuacho = 0;
   rodeosArr.forEach(r => {
     const k = r.kpis;
     parBase += (k.paricion.base != null ? k.paricion.base : (k.servicio.total_prenadas || 0));
@@ -1679,6 +1682,7 @@ function aggregateKpis_(rodeosArr) {
     nacVivos += k.paricion.nacidos_vivos || 0;
     nacMuertos += k.paricion.nacidos_muertos || 0;
     vacParidas += k.paricion.vacas_paridas || 0;
+    madGuacho += k.paricion.madres_guacho || 0;
     abortos += k.gestacion.abortos || 0;
     totDest += k.destete.total_destetados || 0;
     mortTerneros += k.destete.mortandad_terneros || 0;
@@ -1695,7 +1699,7 @@ function aggregateKpis_(rodeosArr) {
       indice_prenez_toro: totTacteadasToro > 0 ? round1_(prenToro / totTacteadasToro * 100) : null,
     },
     gestacion: { abortos },
-    paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, vacas_paridas: vacParidas, base: parBase, indice_paricion: parBase > 0 ? round1_((vacParidas + abortos) / parBase * 100) : null },
+    paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, vacas_paridas: vacParidas, madres_guacho: madGuacho, base: parBase, indice_paricion: parBase > 0 ? round1_((vacParidas + abortos) / parBase * 100) : null },
     destete: { total_destetados: totDest, mortandad_terneros: mortTerneros, indice_destete: nacVivos > 0 ? round1_(totDest / nacVivos * 100) : null },
   };
 }
@@ -1716,7 +1720,7 @@ function buildKpiRow(k) {
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
       <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
-      <div class="kpi-sub">${fn(k.paricion.vacas_paridas || 0)} paridas + ${fn((k.gestacion && k.gestacion.abortos) || 0)} abortos de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} preñadas</div>
+      <div class="kpi-sub">${fn(k.paricion.vacas_paridas || 0)} paridas${k.paricion.madres_guacho ? ` (incl. ${fn(k.paricion.madres_guacho)} madres de guacho)` : ''} + ${fn((k.gestacion && k.gestacion.abortos) || 0)} abortos de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} preñadas</div>
     </div>
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⊞</div><div class="kpi-label">Índice de destete</div>
@@ -1747,6 +1751,7 @@ function tactoCampanaId_(t) {
 }
 function datosReproduccionCampana_(campanaId) {
   return {
+    campanaId: String(campanaId),
     servicios: (S.cache.servicios||[]).filter(s => campanaEfectiva_(s.fecha_inicio, s.campana_id) === String(campanaId)),
     tactos: (S.cache.tactos||[]).filter(t => tactoCampanaId_(t) === String(campanaId)),
     pariciones: (S.cache.pariciones||[]).filter(p => campanaEfectiva_(p.fecha, p.campana_id) === String(campanaId)),
@@ -1760,6 +1765,16 @@ function datosReproduccionCampana_(campanaId) {
 // getKpis()/getDashboard() en Apps Script) — mismo criterio, para que estos
 // números por campaña coincidan siempre con la metodología ya usada en el
 // snapshot "a hoy" que sigue dando el backend.
+// v251: vacas que PARIERON pero su ternero quedó como guacho y ellas salieron a venta ("madre de guacho"): su parto no está en Pariciones
+// (el guacho se cargó aparte como saldo inicial), pero son vacas paridas. Solo aplica a la campaña en curso (la cuenta es "a hoy").
+function madresGuachoPorRodeoId_() {
+  const key = [(S.cache.movimientos||[]).length, (S.cache.tactos||[]).length, (S.cache.pariciones||[]).length, today()].join('|');
+  if (S._mgCache && S._mgCache.key === key) return S._mgCache.map;
+  const map = {};
+  try { (calcularVacasReproductivas_('', today()).filas || []).forEach(f => { if (f.madresGuacho) map[String(f.rodeoId)] = f.madresGuacho; }); } catch (e) { console.warn('madres de guacho no disponible', e); }
+  S._mgCache = { key, map };
+  return map;
+}
 function calcKpisReproduccionJS_(datos, rodeoFiltro) {
   const porRodeo = arr => rodeoFiltro ? arr.filter(x => String(x.rodeo_id) === String(rodeoFiltro)) : arr;
   const sum = (arr, key) => arr.reduce((s, x) => s + (Number(x[key]) || 0), 0);
@@ -1778,7 +1793,13 @@ function calcKpisReproduccionJS_(datos, rodeoFiltro) {
   const pariF = porRodeo(datos.pariciones);
   const nacidosVivos = sum(pariF, 'nacidos_vivos');
   const nacidosMuertos = sum(pariF, 'nacidos_muertos');
-  const vacasParidas = Math.max(0, nacidosVivos + nacidosMuertos - Math.floor(sum(pariF, 'mellizos'))); // 1 vaca con mellizos = 1 parto
+  const _act = campanaActivaGet_();
+  let madresGuacho = 0;
+  if (_act && String(datos.campanaId) === String(_act.campana_id)) {
+    const _mg = madresGuachoPorRodeoId_();
+    madresGuacho = rodeoFiltro ? (_mg[String(rodeoFiltro)] || 0) : Object.values(_mg).reduce((a, b) => a + b, 0);
+  }
+  const vacasParidas = Math.max(0, nacidosVivos + nacidosMuertos - Math.floor(sum(pariF, 'mellizos'))) + madresGuacho; // 1 vaca con mellizos = 1 parto; + madres de guacho
   const destF = porRodeo(datos.destetes);
   const totalDestetados = sum(destF, 'total');
   const abortosF = porRodeo(datos.abortos).length;
@@ -1794,7 +1815,7 @@ function calcKpisReproduccionJS_(datos, rodeoFiltro) {
     rodeo_id: rodeoFiltro,
     servicio: { total_serviciadas: totalServiciadas, prenadas_iatf: prenadasIatf, prenadas_toro: prenadasToro, total_prenadas: totalPrenadas, total_tacteadas_iatf: totalTacteadasIatf, total_tacteadas_toro: Math.max(0, totalTacteadasFinal - totalTacteadasIatf), indice_prenez: round1(indicePrenez), indice_prenez_iatf: round1(indicePrenezIatf), indice_prenez_toro: round1(indicePrenezToro) },
     gestacion: { abortos: abortosF },
-    paricion: { nacidos_vivos: nacidosVivos, nacidos_muertos: nacidosMuertos, vacas_paridas: vacasParidas, indice_paricion: round1(indiceParicion) },
+    paricion: { nacidos_vivos: nacidosVivos, nacidos_muertos: nacidosMuertos, vacas_paridas: vacasParidas, madres_guacho: madresGuacho, indice_paricion: round1(indiceParicion) },
     destete: { total_destetados: totalDestetados, mortandad_terneros: mortF, indice_destete: round1(indiceDestete) },
   };
 }
