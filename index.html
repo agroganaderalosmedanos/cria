@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_257';
+const APP_VERSION = 'index_consolidado_4_6_155_258';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1552,7 +1552,7 @@ function pageSubtitle(p) {
     insumos: 'Compras y consumos de alimentación y veterinaria',
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
-    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — primera versión: rollos',
+    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — rollos y sales con magnesio',
   };
   return subs[p] || '';
 }
@@ -20750,16 +20750,28 @@ function fdSugerirRodeo_(campoId, nota) {
   return (mejor && mejorScore >= 1 && !empate) ? String(mejor.rodeo_id) : '';
 }
 
+// v258 -- Insumos que sabe importar. 'magnesio': todo lo que en Fielddata
+// diga magnesio/magnesiado ("Concentrado Magnesiado Fortificado", "Sales
+// Magnesiadas") va al producto del sistema que tenga "magnes" en el nombre
+// (Sales Magnesio). Regla de Crist, 23/10/2026.
+const FD_RUBROS_ = {
+  rollos:   { label: 'Rollos', unidad: 'Rollos', esDelRubro: n => n === 'rollos', producto: p => fdNorm_(p.nombre) === 'rollos' },
+  magnesio: { label: 'Sales con magnesio', unidad: 'Bolsas', esDelRubro: n => /magnes/.test(n), producto: p => /magnes/.test(fdNorm_(p.nombre)) },
+};
 function fdEquivKey_(campoId, nota) { return String(campoId) + '|' + fdNorm_(nota); }
 
 // Arma la lista de movimientos (traslados y consumos de rollos) con su estado.
 function fdAnalizar_() {
   const st = S.fd;
   st.error = '';
+  const rubro = FD_RUBROS_[st.rubro || 'rollos'];
   const productos = (S.catalogs && S.catalogs.productos) || [];
-  const prod = productos.find(p => fdNorm_(p.nombre) === 'rollos');
-  if (!prod) { st.error = 'No encuentro el producto "Rollos" en el catálogo.'; st.items = []; return; }
+  const prodsRubro = productos.filter(rubro.producto);
+  if (prodsRubro.length !== 1) { st.error = prodsRubro.length ? 'Hay más de un producto del catálogo que corresponde a "' + rubro.label + '": ' + prodsRubro.map(p => p.nombre).join(', ') + '.' : 'No encuentro en el catálogo el producto de "' + rubro.label + '".'; st.items = []; return; }
+  const prod = prodsRubro[0];
   const prodId = String(prod.producto_id);
+  // Producto de stock común (no por campo): los traslados entre campos no se cargan.
+  const porCampo = esPorCampo_(prod.por_campo);
   const desde = st.desde || '2026-09-01';
 
   // Huellas ya registradas
@@ -20780,7 +20792,7 @@ function fdAnalizar_() {
     camposCargados.add(String(a.campo_id));
     const ocurr = {};
     a.filas.forEach(f => {
-      if (fdNorm_(f.area) !== 'insumos' || fdNorm_(f.insumo) !== 'rollos') return;
+      if (fdNorm_(f.area) !== 'insumos' || !rubro.esDelRubro(fdNorm_(f.insumo))) return;
       if (!f.fecha || f.fecha < desde || !f.cantidad) return;
       const tipo = /ingreso/i.test(f.tipo) ? 'ingreso' : (/salida/i.test(f.tipo) ? 'salida' : '');
       if (!tipo) return;
@@ -20806,6 +20818,7 @@ function fdAnalizar_() {
     });
     const it = { clase: 'traslado', fecha: o.fecha, campo_id: o.campo_id, origen: o.campo_id, destino: o.otroCampoId,
       cantidad: o.cantidad, nota: o.nota, fuentes: [o] };
+    if (!porCampo) it.noAplica = true;
     if (mejor !== null) {
       usadosIn.add(mejor);
       it.fuentes.push(ins[mejor]);
@@ -20820,7 +20833,7 @@ function fdAnalizar_() {
   ins.forEach((i, k) => {
     if (usadosIn.has(k)) return;
     items.push({ clase: 'traslado', fecha: i.fecha, campo_id: i.campo_id, origen: i.otroCampoId, destino: i.campo_id, cantidad: i.cantidad,
-      nota: i.nota, fuentes: [i],
+      nota: i.nota, fuentes: [i], noAplica: !porCampo,
       revisar: camposCargados.has(i.otroCampoId)
         ? 'No encuentro la salida de ' + i.cantidad + ' en ' + fdCampoNombre_(i.otroCampoId) + ' (±' + FD_TOLERANCIA_DIAS_TRASLADO_ + ' días).'
         : 'Falta subir el archivo de ' + fdCampoNombre_(i.otroCampoId) + ' para cerrar el traslado.' });
@@ -20856,6 +20869,7 @@ function fdAnalizar_() {
       it.motivo = h.estado === 'grabado' ? 'Grabado por el importador' + (h.registro_id ? ' (id ' + h.registro_id + ')' : '') + '.' : (h.estado === 'ya_cargado' ? 'Ya estaba en el sistema.' : 'Descartado.');
       return;
     }
+    if (it.noAplica) { it.estado = 'no_aplica'; it.motivo = prod.nombre + ' es de stock común: los traslados entre campos no se cargan.'; return; }
     if (it.revisar) { it.estado = 'revisar'; it.motivo = it.revisar; return; }
     if (it.clase === 'traslado') {
       let mejor = null, mejorD = 99;
@@ -20902,29 +20916,32 @@ function fdAnalizar_() {
 
 function fdEstadoPill_(e) {
   const m = { nuevo: ['pill-green', 'Nuevo'], pendiente: ['pill-gold', 'Falta rodeo'], revisar: ['pill-red', 'Revisar'],
-    ya_cargado: ['pill-gray', 'Ya cargado'], importado: ['pill-blue', 'Importado'], descartado: ['pill-gray', 'Descartado'] };
+    ya_cargado: ['pill-gray', 'Ya cargado'], importado: ['pill-blue', 'Importado'], descartado: ['pill-gray', 'Descartado'], no_aplica: ['pill-gray', 'No se carga'] };
   const x = m[e] || ['pill-gray', e];
   return `<span class="pill ${x[0]}">${x[1]}</span>`;
 }
 
 function buildImportarFielddata() {
-  if (!S.fd) S.fd = { archivos: [], desde: '2026-09-01', equiv: {}, items: null, sel: {}, filtro: 'pendientes', grabando: false, log: [] };
+  if (!S.fd) S.fd = { archivos: [], desde: '2026-09-01', rubro: 'rollos', equiv: {}, items: null, sel: {}, filtro: 'pendientes', grabando: false, log: [] };
   const st = S.fd;
+  if (!st.rubro) st.rubro = 'rollos';
+  const rub = FD_RUBROS_[st.rubro];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Esta versión importa <b>solo rollos</b>: traslados entre campos y consumos por rodeo. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo) y <b>sales con magnesio</b> (solo consumos: es stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid">
+      <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
       <div class="fg"><label>Desde</label><input type="date" id="fd-desde" value="${fdEsc_(st.desde)}"></div>
     </div>`;
   if (st.archivos.length) {
-    h += `<table class="dt" style="margin-top:10px"><thead><tr><th>Archivo</th><th>Campo</th><th class="tc">Filas</th><th class="tc">Filas de rollos</th><th></th></tr></thead><tbody>` +
+    h += `<table class="dt" style="margin-top:10px"><thead><tr><th>Archivo</th><th>Campo</th><th class="tc">Filas</th><th class="tc">Filas de ${fdEsc_(rub.label.toLowerCase())}</th><th></th></tr></thead><tbody>` +
       st.archivos.map((a, i) => `<tr>
         <td>${fdEsc_(a.nombre)}</td>
         <td><select class="fd-campo-archivo" data-i="${i}"><option value="">— Elegí el campo —</option>${campos.map(c => `<option value="${c.campo_id}" ${String(c.campo_id) === String(a.campo_id) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></td>
         <td class="tc">${a.filas.length}</td>
-        <td class="tc">${a.filas.filter(f => fdNorm_(f.area) === 'insumos' && fdNorm_(f.insumo) === 'rollos').length}</td>
+        <td class="tc">${a.filas.filter(f => fdNorm_(f.area) === 'insumos' && rub.esDelRubro(fdNorm_(f.insumo))).length}</td>
         <td><button class="btn btn-secondary btn-sm fd-quitar" data-i="${i}">Quitar</button></td></tr>`).join('') + `</tbody></table>`;
   }
   h += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" id="fd-analizar" ${st.archivos.length ? '' : 'disabled'}>Analizar</button></div></div>`;
@@ -20957,21 +20974,21 @@ function buildImportarFielddata() {
     // 3. Movimientos
     const cuenta = {};
     st.items.forEach(it => { cuenta[it.estado] = (cuenta[it.estado] || 0) + 1; });
-    const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar)', todos: 'Todos', nuevo: 'Nuevos', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados' };
+    const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar)', todos: 'Todos', nuevo: 'Nuevos', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados', no_aplica: 'No se cargan' };
     const visibles = st.items.filter(it => st.filtro === 'todos' ? true : st.filtro === 'pendientes' ? ['nuevo', 'pendiente', 'revisar'].includes(it.estado) : it.estado === st.filtro);
     const selIds = Object.keys(st.sel).filter(k => st.sel[k]);
     const selGrabar = st.items.filter(it => st.sel[it.id] && it.estado === 'nuevo').length;
     const selDescartar = st.items.filter(it => st.sel[it.id] && ['nuevo', 'pendiente', 'revisar'].includes(it.estado)).length;
     const yaCargadosSinHuella = st.items.filter(it => it.estado === 'ya_cargado' && it.registroId).length;
-    h += `<div class="panel"><div class="panel-title">3. Movimientos de rollos</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
+    h += `<div class="panel"><div class="panel-title">3. Movimientos de ${fdEsc_(rub.label.toLowerCase())}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado', 'no_aplica'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <select id="fd-filtro">${Object.keys(filtros).map(k => `<option value="${k}" ${st.filtro === k ? 'selected' : ''}>${filtros[k]}</option>`).join('')}</select>
         <button class="btn btn-primary" id="fd-grabar" ${selGrabar && !st.grabando ? '' : 'disabled'}>${st.grabando ? 'Grabando…' : 'Grabar seleccionados (' + selGrabar + ')'}</button>
         <button class="btn btn-secondary" id="fd-descartar" ${selDescartar && !st.grabando ? '' : 'disabled'}>Descartar seleccionados (${selDescartar})</button>
       </div>
       ${yaCargadosSinHuella ? `<p style="font-size:12px;color:var(--text3);margin:0 0 8px">Al grabar, los ${yaCargadosSinHuella} "Ya cargado" quedan registrados en la huella para no volver a ofrecerlos.</p>` : ''}
-      <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tc"><input type="checkbox" id="fd-sel-todos"></th><th>Estado</th><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="tc">Rollos</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
+      <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tc"><input type="checkbox" id="fd-sel-todos"></th><th>Estado</th><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="tc">${fdEsc_(rub.unidad)}</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
       (visibles.length ? visibles.map(it => {
         const seleccionable = ['nuevo', 'pendiente', 'revisar'].includes(it.estado);
         let detalle = '';
@@ -21006,7 +21023,7 @@ async function fdGrabar_(modo) {
   if (!sel.length) return;
   const nTras = sel.filter(it => it.clase === 'traslado').length, nCons = sel.filter(it => it.clase === 'consumo').length;
   const msg = modo === 'grabar'
-    ? '¿Grabar ' + sel.length + ' movimientos de rollos (' + nTras + ' traslados y ' + nCons + ' consumos)? Esto cambia el stock de rollos y el costo de alimentación.'
+    ? '¿Grabar ' + sel.length + ' movimientos de ' + FD_RUBROS_[st.rubro].label.toLowerCase() + ' (' + nTras + ' traslados y ' + nCons + ' consumos)? Esto cambia el stock del insumo y el costo de alimentación.'
     : '¿Descartar ' + sel.length + ' filas? No se graba nada en el sistema; solo quedan anotadas para no volver a ofrecerlas.';
   if (!confirm(msg)) return;
   const campanas = S.cache.campanas || [];
@@ -21014,7 +21031,7 @@ async function fdGrabar_(modo) {
   // Traslados primero, después consumos (por la validación de stock por campo)
   const orden = sel.slice().sort((a, b) => (a.clase === 'traslado' ? 0 : 1) - (b.clase === 'traslado' ? 0 : 1) || a.fecha.localeCompare(b.fecha));
   orden.forEach(it => {
-    const base = { huellas: it.huellas, campo_id: it.campo_id, fecha: it.fecha, rubro: 'rollos',
+    const base = { huellas: it.huellas, campo_id: it.campo_id, fecha: it.fecha, rubro: st.rubro,
       detalle: (it.clase === 'traslado' ? 'Traslado ' + fdCampoNombre_(it.origen) + ' → ' + fdCampoNombre_(it.destino) : 'Consumo ' + fdCampoNombre_(it.campo_id)) + ' ' + it.cantidad + ' — ' + it.fuentes.map(f => f.nota).join(' / ') };
     if (modo === 'descartar') { items.push(Object.assign(base, { accion: 'marcar', estado: 'descartado' })); return; }
     const camp = campanaDeFecha_(it.fecha);
@@ -21033,7 +21050,7 @@ async function fdGrabar_(modo) {
   if (modo === 'grabar') {
     st.items.filter(it => it.estado === 'ya_cargado' && it.registroId).forEach(it => {
       items.push({ accion: 'marcar', estado: 'ya_cargado', entity: it.entidad, registro_id: it.registroId, huellas: it.huellas,
-        campo_id: it.campo_id, fecha: it.fecha, rubro: 'rollos', detalle: 'Ya estaba en el sistema — ' + (it.nota || '') });
+        campo_id: it.campo_id, fecha: it.fecha, rubro: st.rubro, detalle: 'Ya estaba en el sistema — ' + (it.nota || '') });
     });
   }
   // Equivalencias confirmadas en esta sesión (las usadas por lo que se graba)
@@ -21099,6 +21116,8 @@ function attachImportarFielddataEvents() {
     }
     st.items = null; render();
   };
+  const rubSel = document.getElementById('fd-rubro');
+  if (rubSel) rubSel.onchange = () => { st.rubro = rubSel.value; st.items = null; st.sel = {}; st.log = []; st.filtro = 'pendientes'; render(); };
   const desde = document.getElementById('fd-desde');
   if (desde) desde.onchange = () => { st.desde = desde.value || '2026-09-01'; if (st.items) { fdAnalizar_(); render(); } };
   document.querySelectorAll('.fd-campo-archivo').forEach(s => s.onchange = () => { st.archivos[Number(s.dataset.i)].campo_id = s.value; st.items = null; render(); });
