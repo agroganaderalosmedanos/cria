@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_254';
+const APP_VERSION = 'index_consolidado_4_6_155_255';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -2026,6 +2026,21 @@ function buildIndicesReproduccion() {
         <td class="tc">${fn(k.destete.total_destetados)}</td>
       </tr>`;
     });
+    // v255: la tabla suma sola: fila de rodeos ocultos (sin animales hoy) + TOTAL
+    const _filaK = (nombre, campoTxt, k, estilo) => `<tr style="${estilo}">
+        <td><strong>${nombre}</strong></td><td>${campoTxt}</td>
+        <td class="tc">${pct(k.servicio.indice_prenez)}</td>
+        <td class="tc">${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)}</td>
+        <td class="tc">${fn(k.paricion.vacas_paridas || 0)}</td>
+        <td class="tc">${fn((k.gestacion && k.gestacion.abortos) || 0)}</td>
+        <td class="tc">${pct(k.paricion.indice_paricion)}</td>
+        <td class="tc">${pct(k.destete.indice_destete)}</td>
+        <td class="tc">${pct(k.destete.indice_destete_entorada)}</td>
+        <td class="tc">${fn(k.paricion.nacidos_vivos)}</td>
+        <td class="tc">${fn(k.destete.total_destetados)}</td></tr>`;
+    const _ocultos = rodeosFiltrados.filter(r => r.vacio);
+    if (_ocultos.length) h += _filaK('Rodeos sin animales hoy (' + _ocultos.map(r => r.rodeo.nombre).join(', ') + ')', '—', aggregateKpis_(_ocultos), 'color:var(--text3);font-style:italic');
+    if (rodeosFiltrados.length) h += _filaK('TOTAL', S.selectedCampoId ? campoNombre(S.selectedCampoId) : 'Todos los campos', aggregateKpis_(rodeosFiltrados), 'font-weight:700;background:var(--bg2)');
     h += '</tbody></table></div>';
   }
   return h;
