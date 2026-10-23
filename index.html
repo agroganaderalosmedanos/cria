@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_253';
+const APP_VERSION = 'index_consolidado_4_6_155_254';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1711,26 +1711,31 @@ function buildKpiRow(k) {
       <div class="kpi-icon">⚭</div><div class="kpi-label">Índice de preñez</div>
       <div class="kpi-value">${pct(k.servicio.indice_prenez)}</div>
       <div class="kpi-sub">${fn(k.servicio.total_prenadas)} de ${fn(k.servicio.total_serviciadas||k.servicio.total_tacteadas)} tacteadas</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Preñadas en el tacto ÷ vacas entoradas</div>
     </div>
     <div class="kpi-card accent-gold">
       <div class="kpi-icon">◔</div><div class="kpi-label">Preñez IATF</div>
       <div class="kpi-value">${pct(k.servicio.indice_prenez_iatf)}</div>
       <div class="kpi-sub">${fn(k.servicio.prenadas_iatf)} de ${fn(k.servicio.total_tacteadas_iatf)} vacas (IATF)</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Preñadas con IATF ÷ vacas inseminadas (solo las del IATF, no todas las entoradas)</div>
     </div>
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
       <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
       <div class="kpi-sub">${fn(k.paricion.vacas_paridas || 0)} paridas${k.paricion.madres_guacho ? ` (incl. ${fn(k.paricion.madres_guacho)} madres de guacho)` : ''} + ${fn((k.gestacion && k.gestacion.abortos) || 0)} abortos de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} preñadas${(k.paricion.base != null && k.paricion.base !== k.servicio.total_prenadas) ? ` <br>(${fn(k.servicio.total_prenadas)} del tacto ${k.paricion.base > k.servicio.total_prenadas ? '+' : '−'} ${fn(Math.abs(k.paricion.base - k.servicio.total_prenadas))} ${k.paricion.base > k.servicio.total_prenadas ? 'que llegaron de otros rodeos' : 'que pasaron a otros rodeos'})` : ''}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">(Vacas que parieron — con ternero vivo o muerto — + vacas que abortaron) ÷ vacas preñadas</div>
     </div>
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⊞</div><div class="kpi-label">Destete / vaca preñada</div>
       <div class="kpi-value">${pct(k.destete.indice_destete)}</div>
       <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} vacas preñadas${k.destete.total_destetados ? '' : ' · todavía sin destetes'}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Terneros destetados ÷ vacas preñadas</div>
     </div>
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⊞</div><div class="kpi-label">Destete / vaca entorada</div>
       <div class="kpi-value">${pct(k.destete.indice_destete_entorada)}</div>
       <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados de ${fn(k.servicio.total_serviciadas||k.servicio.total_tacteadas)} vacas entoradas${k.destete.total_destetados ? '' : ' · todavía sin destetes'}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Terneros destetados ÷ vacas entoradas</div>
     </div>
   </div>`;
 }
@@ -1827,6 +1832,54 @@ function calcKpisReproduccionJS_(datos, rodeoFiltro) {
   };
 }
 
+// v254: cuadros de cuentas que explican los índices (misma cuenta que el Excel de Pérdidas reproductivas). Solo campaña en curso ("a hoy").
+function buildEscalerasIR_(filas) {
+  const F = (filas || []).filter(f => !f.sinTactoFinal);
+  if (!F.length) return '';
+  const sum = (fn_) => F.reduce((a, f) => a + (Number(fn_(f)) || 0), 0);
+  const desc = sum(f => (f.salidasExternas && f.salidasExternas.cabezas) || 0);
+  const mg = sum(f => Math.min(f.madresGuacho || 0, (f.salidasExternas && f.salidasExternas.cabezas) || 0));
+  const base = sum(f => f.prenadasAjustadas) + desc;
+  const paridas = sum(f => f.yaParieron) + mg;
+  const abortos = sum(f => f.abortos);
+  const faltan = sum(f => f.pendientesAjustado);
+  const muertas = sum(f => f.muertas);
+  const sinTernero = desc - mg;
+  const ctl1 = base - paridas - abortos - faltan - muertas - sinTernero;
+  const mell = sum(f => f.mellizos);
+  const nacTot = paridas + mell;
+  const nacMuertos = sum(f => f.nacidosMuertos);
+  const nacVivos = nacTot - nacMuertos;
+  const muertosPost = sum(f => f.ternerosMuertosPostParto);
+  const alPieCuenta = nacVivos - muertosPost;
+  const alPieStock = sum(f => f.ternerosAlPie) + mg;
+  const ctl2 = alPieCuenta - alPieStock;
+  const fila = (lbl, val, op, strong, nota) => `<tr${strong ? ' style="font-weight:700;background:var(--bg2)"' : ''}><td style="padding:4px 8px;white-space:nowrap">${op || ''}</td><td style="padding:4px 8px">${lbl}${nota ? `<div style="font-size:11px;font-weight:400;color:var(--text3)">${nota}</div>` : ''}</td><td style="padding:4px 8px;text-align:right">${fn(val)}</td></tr>`;
+  const ctl = (v, txt) => `<div style="font-size:11px;margin-top:6px;color:${v === 0 ? 'var(--text3)' : 'var(--red)'}">${txt}: ${v === 0 ? '0 ✓' : fn(v) + ' ⚠ revisar'}</div>`;
+  return `<div class="panel" style="margin-top:12px"><div class="panel-title">🧮 Las cuentas detrás de los índices <span style="font-size:11px;font-weight:400;color:var(--text3)">(a hoy)</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+      <div><div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:4px">1) ¿Qué pasó con las ${fn(base)} vacas preñadas?</div>
+        <table style="width:100%;font-size:13px;border-collapse:collapse">
+          ${fila('Vacas preñadas (tacto, ajustadas por movimientos entre rodeos)', base, '', true)}
+          ${fila('Vacas paridas', paridas, '−', false, mg ? `incluye ${fn(mg)} madres de guacho (parieron y se vendieron)` : '')}
+          ${fila('Abortaron', abortos, '−')}
+          ${fila('Faltan parir', faltan, '−')}
+          ${fila('Murieron', muertas, '−')}
+          ${fila('Salieron sin ternero (venta / descarte / sanidad / posible aborto)', sinTernero, '−')}
+        </table>${ctl(ctl1, 'Diferencia sin explicar')}
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Índice de parición = (paridas + abortos) ÷ preñadas = (${fn(paridas)} + ${fn(abortos)}) ÷ ${fn(base)}</div></div>
+      <div><div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:4px">2) De las ${fn(paridas)} vacas paridas a los terneros al pie</div>
+        <table style="width:100%;font-size:13px;border-collapse:collapse">
+          ${fila('Vacas paridas', paridas, '', true)}
+          ${fila('Mellizos (cada vaca tuvo un ternero más)', mell, '+')}
+          ${fila('Terneros nacidos', nacTot, '=', true)}
+          ${fila('Nacidos muertos', nacMuertos, '−')}
+          ${fila('Murieron después de nacer', muertosPost, '−')}
+          ${fila('Terneros al pie (según la cuenta)', alPieCuenta, '=', true)}
+          ${fila('Terneros al pie según stock (incluye guachos)', alPieStock, '')}
+        </table>${ctl(ctl2, 'Diferencia cuenta − stock')}</div>
+    </div></div>`;
+}
 function buildIndicesReproduccion() {
   if (!S.cache.tactos || !S.cache.pariciones || !S.cache.destetes || !S.cache.abortos || !S.cache.mortandad || !S.cache.servicios || !S.cache.campanas) {
     return '<div class="loader"><div class="spinner"></div>Calculando índices reproductivos…</div>';
@@ -1846,7 +1899,8 @@ function buildIndicesReproduccion() {
   // acá, alguna actividad DENTRO de la campaña elegida.
   const rodeosAllIR = (S.catalogs && S.catalogs.rodeos) || [];
   const idsConActividadIR = new Set();
-  ['servicios','tactos','pariciones','destetes','abortos','mortandad'].forEach(k => {
+  // v254: la mortandad NO hace aparecer un rodeo (la muerte de una vaquillona de recría no es actividad reproductiva)
+  ['servicios','tactos','pariciones','destetes','abortos'].forEach(k => {
     datosCampIR[k].forEach(x => idsConActividadIR.add(String(x.rodeo_id)));
   });
   const rodeosList = rodeosAllIR
@@ -1857,9 +1911,11 @@ function buildIndicesReproduccion() {
   // el rodeo que las recibió mostraba más partos que preñadas (136%). Se usa la base real del rodeo: preñadas del tacto
   // ± movimientos entre rodeos de vacas (las que se vendieron después siguen en la base, igual que en el Excel).
   // Solo para la campaña en curso (la cuenta de Estado de Vientres es "a hoy").
-  if (campanaActivaIR && String(campSelecIR) === String(campanaActivaIR.campana_id)) {
+  const esCampActivaIR = !!(campanaActivaIR && String(campSelecIR) === String(campanaActivaIR.campana_id));
+  let filasIR = [];
+  if (esCampActivaIR) {
     try {
-      const filasIR = calcularVacasReproductivas_('', today()).filas || [];
+      filasIR = calcularVacasReproductivas_('', today()).filas || [];
       rodeosList.forEach(x => {
         const f = filasIR.find(ff => ff.nombre === x.rodeo.nombre && String(ff.campoId) === String(x.rodeo.campo_id));
         if (!f || f.sinTactoFinal) return;
@@ -1871,6 +1927,11 @@ function buildIndicesReproduccion() {
         }
       });
     } catch (e) { console.warn('Base de parición ajustada no disponible', e); }
+    // v254: rodeos que hoy están en cero (se movió o vendió todo, ej. Vacas 2022): no se listan en chips ni tabla, pero siguen sumando en los totales
+    try {
+      const stockHoyIR = stockPorRodeoACorte_(today());
+      rodeosList.forEach(x => { x.vacio = (stockHoyIR[String(x.rodeo.rodeo_id)] || 0) <= 0; });
+    } catch (e) { console.warn('Stock por rodeo no disponible', e); }
   }
 
   const campos     = (S.catalogs && S.catalogs.campos) || [];
@@ -1907,6 +1968,7 @@ function buildIndicesReproduccion() {
 
   h += '<div class="section-label">Establecimiento — índices generales</div>';
   h += buildKpiRow(g);
+  h += esCampActivaIR ? buildEscalerasIR_(filasIR) : '<div style="font-size:11px;color:var(--text3);margin:-8px 0 12px">Las cuentas detrás de los índices se muestran solo para la campaña en curso.</div>';
 
   h += '<div class="section-label">Filtrar por campo</div>';
   h += '<div class="rodeo-strip">';
@@ -1924,34 +1986,39 @@ function buildIndicesReproduccion() {
     return cmp !== 0 ? cmp : a.rodeo.nombre.localeCompare(b.rodeo.nombre, 'es', { sensitivity: 'base' });
   });
 
+  const rodeosVisibles = rodeosFiltrados.filter(r => !r.vacio);
   if (S.selectedCampoId) {
     const campoSel = campos.find(c => String(c.campo_id) === String(S.selectedCampoId));
-    h += `<div class="panel"><div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosFiltrados.length} rodeo${rodeosFiltrados.length===1?'':'s'}</span></div>${buildKpiRow(aggregateKpis_(rodeosFiltrados))}</div>`;
+    h += `<div class="panel"><div class="panel-title">${campoSel ? campoSel.nombre : ''} <span class="pill pill-gray">${rodeosVisibles.length} rodeo${rodeosVisibles.length===1?'':'s'}</span></div>${buildKpiRow(aggregateKpis_(rodeosFiltrados))}</div>`;
+    if (esCampActivaIR) h += buildEscalerasIR_(filasIR.filter(f => String(f.campoId) === String(S.selectedCampoId)));
   }
 
   h += '<div class="section-label">Por rodeo</div>';
   h += '<div class="rodeo-strip">';
   h += `<div class="rodeo-chip ${!S.selectedRodeoId ? 'active' : ''}" data-rodeo=""><div class="rc-name">Todos</div><div class="rc-meta">vista general</div></div>`;
-  rodeosFiltrados.forEach(r => {
+  rodeosVisibles.forEach(r => {
     h += `<div class="rodeo-chip ${String(S.selectedRodeoId) === String(r.rodeo.rodeo_id) ? 'active' : ''}" data-rodeo="${r.rodeo.rodeo_id}"><div class="rc-name">${r.rodeo.nombre}</div><div class="rc-meta">${campoNombre(r.rodeo.campo_id)}</div></div>`;
   });
   h += '</div>';
 
   if (S.selectedRodeoId) {
     const sel = rodeosFiltrados.find(r => String(r.rodeo.rodeo_id) === String(S.selectedRodeoId));
-    if (sel) h += `<div class="panel"><div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>${buildKpiRow(sel.kpis)}</div>`;
+    if (sel) h += `<div class="panel"><div class="panel-title">${sel.rodeo.nombre} <span class="pill pill-gray">${campoNombre(sel.rodeo.campo_id)}</span></div>${buildKpiRow(sel.kpis)}</div>` + (esCampActivaIR ? buildEscalerasIR_(filasIR.filter(f => String(f.rodeoId) === String(S.selectedRodeoId))) : '');
   } else {
     h += `<div class="tw"><table class="dt"><thead><tr>
       <th>Rodeo</th><th>Campo</th>
-      <th class="tc">Preñez</th><th class="tc">Parición</th><th class="tc">Destete / preñada</th><th class="tc">Destete / entorada</th>
+      <th class="tc">Preñez</th><th class="tc">Preñadas (base)</th><th class="tc">Paridas</th><th class="tc">Abortos</th><th class="tc">Parición</th><th class="tc">Destete / preñada</th><th class="tc">Destete / entorada</th>
       <th class="tc">Nacidos vivos</th><th class="tc">Destetados</th>
     </tr></thead><tbody>`;
-    rodeosFiltrados.forEach(r => {
+    rodeosVisibles.forEach(r => {
       const k = r.kpis;
       h += `<tr>
         <td><strong>${r.rodeo.nombre}</strong></td>
         <td>${campoNombre(r.rodeo.campo_id)}</td>
         <td class="tc">${pct(k.servicio.indice_prenez)}</td>
+        <td class="tc">${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)}</td>
+        <td class="tc">${fn(k.paricion.vacas_paridas || 0)}</td>
+        <td class="tc">${fn((k.gestacion && k.gestacion.abortos) || 0)}</td>
         <td class="tc">${pct(k.paricion.indice_paricion)}</td>
         <td class="tc">${pct(k.destete.indice_destete)}</td>
         <td class="tc">${pct(k.destete.indice_destete_entorada)}</td>
