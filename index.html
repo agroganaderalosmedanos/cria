@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_243';
+const APP_VERSION = 'index_consolidado_4_6_155_244';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6455,7 +6455,7 @@ async function exportarPerdidasReproductivasExcel_() {
         else put(ws, R.difStock-1, c, null, ST_NUM, `${cl}${R.alPie}-${cl}${R.stock}`);
       });
       // ── Composición explícita de "Salieron sin parir" + control (fórmulas sobre la hoja 'No van a nacer') ──
-      const X = { h:27, g:28, a:29, sr:30, tot:31, ctl:32, pr:33, dsg:34 };
+      const X = { h:27, g:28, a:29, sr:30, tot:31, ctl:32, pr:33, dsg:34, mz:35, res:36 };
       put(ws, X.h-1, 0, 'CÓMO SE COMPONE "SALIERON SIN PARIR" (fila 8) — detalle en la hoja "No van a nacer"', ST_SUBLBL);
       for (let c = 1; c <= cPct; c++) put(ws, X.h-1, c, '', ST_SUB);
       put(ws, X.g-1, 0, '• Madres de guacho (parieron, pero su ternero guacho no está en Pariciones)', ST_LBL);
@@ -6464,7 +6464,9 @@ async function exportarPerdidasReproductivasExcel_() {
       put(ws, X.tot-1, 0, '= Total (debe coincidir con la fila 8)', ST_SUBLBL);
       put(ws, X.ctl-1, 0, 'Control: fila 8 − total (debe dar 0)', ST_LBL);
       put(ws, X.pr-1, 0, 'Vacas que parieron y se vendieron — NO se restan de las preñadas (ya están en "Vacas paridas")', ST_LBL);
-      put(ws, X.dsg-1, 0, 'Diferencia terneros nacidos − vacas paridas, SIN contar los guachos (mellizos / ajuste)', ST_SUBLBL);
+      put(ws, X.dsg-1, 0, 'Diferencia terneros nacidos − vacas paridas, SIN contar los guachos', ST_LBL);
+      put(ws, X.mz-1, 0, '− Vacas con mellizos (1 vaca = 2 terneros, por eso hay 1 ternero de más por cada una)', ST_LBL);
+      put(ws, X.res-1, 0, '= Diferencia que queda sin explicar (debe dar 0)', ST_SUBLBL);
       cols.forEach((f, i) => {
         const c = 1 + i, cl = L(c);
         const sf = (clase) => `SUMIFS(${nvR('E')},${nvR('B')},${cl}$4,${nvR('G')},"${clase}",${nvR('F')},"Sí")`;
@@ -6474,9 +6476,11 @@ async function exportarPerdidasReproductivasExcel_() {
         put(ws, X.tot-1, c, null, ST_SUB, `${cl}${X.g}+${cl}${X.a}+${cl}${X.sr}`);
         put(ws, X.ctl-1, c, null, ST_NUM, `${cl}${R.salieron}-${cl}${X.tot}`);
         put(ws, X.pr-1, c, null, ST_NUM, sf('Parió'));
-        put(ws, X.dsg-1, c, null, ST_SUB, `${cl}${R.dif}-${cl}${R.guachos}`);
+        put(ws, X.dsg-1, c, null, ST_NUM, `${cl}${R.dif}-${cl}${R.guachos}`);
+        put(ws, X.mz-1, c, f.mellizos || 0, ST_DATO);
+        put(ws, X.res-1, c, null, ST_SUB, `${cl}${X.dsg}-${cl}${X.mz}`);
       });
-      [X.g, X.a, X.sr, X.tot, X.ctl, X.pr, X.dsg].forEach(r => put(ws, r-1, cTot, null, r === X.tot || r === X.dsg ? ST_SUB : ST_NUM, `SUM(${L(1)}${r}:${L(NC)}${r})`));
+      [X.g, X.a, X.sr, X.tot, X.ctl, X.pr, X.dsg, X.mz, X.res].forEach(r => put(ws, r-1, cTot, null, r === X.tot || r === X.res ? ST_SUB : ST_NUM, `SUM(${L(1)}${r}:${L(NC)}${r})`));
       const c1 = L(1), cN = L(NC);
       Object.keys(R).forEach(k => {
         if (k === 'stock' || k === 'difStock') return;
@@ -6491,7 +6495,7 @@ async function exportarPerdidasReproductivasExcel_() {
         'Notas',
         '• Preñadas, movidas, salieron, faltan parir, abortadas y muertas vienen de Estado de Vientres (cuenta de hoy). Nacidos vivos, nacidos muertos y muertos después de nacer son del período indicado arriba.',
         '• SALIERON SIN PARIR (fila 8) = preñadas confirmadas por el tacto que se fueron del rodeo después del último tacto final. No incluye a las que ya parieron y se vendieron con la observación "parió" (esas ya están en Vacas paridas: restarlas también sería contarlas dos veces; se muestran en la fila "Vacas que parieron y se vendieron").',
-        '• Madres de guacho: SÍ se restan de las preñadas porque su nacimiento no está en Pariciones (el guacho se cargó aparte como saldo inicial). Por eso en la fila 18 la diferencia incluye a los guachos; la fila 34 la muestra sin ellos y debería quedar en 0 (los partos de mellizos ya se descuentan con el campo "Vacas con mellizos" de la Parición; si todavía no los cargaste, quedan acá).',
+        '• Madres de guacho: SÍ se restan de las preñadas porque su nacimiento no está en Pariciones (el guacho se cargó aparte como saldo inicial). Por eso en la fila 18 la diferencia incluye a los guachos; la fila 34 la muestra sin ellos. Lo que sobra son los mellizos (una vaca con 2 terneros cuenta 1 en "Vacas paridas" y 2 en "Terneros nacidos"): la fila 35 los resta y la fila 36 debe dar 0. Si no da 0, revisá el campo "Vacas con mellizos" de las Pariciones.',
         '• Guachos: son terneros cuyas madres salieron a venta después de parir; el sistema los tiene juntos en el rodeo "Terneros guachos". El reparto por rodeo sale solo de los traslados de vacas con motivo "madre de guacho". En "Terneros al pie según stock" se les suman los guachos asignados.',
         '• "Diferencia (cuenta − stock)": si no da 0 hay ventas/cesiones de terneros o un registro faltante.',
         '• Nacidos muertos y muertos después de nacer salen de la hoja Detalle (si cambiás una causa o borrás una fila ahí, se actualiza todo).',
@@ -6506,10 +6510,10 @@ async function exportarPerdidasReproductivasExcel_() {
       if (madresFueraDeColumnas.length) notas.push('• Hay registros de pérdida de rodeos que no tienen columna acá (sin Tacto final o sin preñadas): ' + madresFueraDeColumnas.join(', ') + '. Están en la hoja Detalle.');
       if (hayHuerfanos) notas.push('• ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026") NO entran en los totales de ninguna hoja; están en Detalle marcados como "sin vínculo".');
       notas.push('• Si en un rodeo "Terneros nacidos − vacas paridas" da positivo (ej. Rodeo 1, Rodeo 3), suele ser porque hubo vacas que parieron y después murieron o salieron: Estado de Vientres las resta dos veces como "pendientes" (pendiente de diseño).');
-      notas.forEach((t, i) => put(ws, X.dsg + 1 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
+      notas.forEach((t, i) => put(ws, X.res + 1 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
       ws['!cols'] = [{wch:58}, ...cols.map(() => ({wch:15})), {wch:11}, {wch:12}];
       ws['!rows'] = []; ws['!rows'][3] = { hpt: 32 };
-      cerrar(ws, X.dsg + 1 + notas.length, cPct);
+      cerrar(ws, X.res + 1 + notas.length, cPct);
       cuentaRef = { col: L(cTot), R, X };
       XLSX.utils.book_append_sheet(wb, ws, 'Cuenta por rodeo');
     }
