@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_237';
+const APP_VERSION = 'index_consolidado_4_6_155_238';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -5858,6 +5858,10 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
   // en sí ya se cuenta aparte en "Abortos"; esta columna es la vaca que se fue
   // por sanidad/descarte sin haber parido ni abortado formalmente.
   const idxAbortosCaravanaMA = indiceAbortosPorCaravana_();
+  // Solo cuentan los rodeos que alguna vez tuvieron preñadas en un Tacto final: un rodeo sin
+  // tacto (ej. Vaquillonas 2025) nunca estuvo entre las preñadas, así que sus salidas no
+  // son "preñadas que no van a nacer".
+  const rodeosConPrenadas_ = new Set((S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto final' && (Number(t.prenadas) || 0) > 0).map(t => String(t.rodeo_id)));
   const trasladasPorMadre = {};
   const detalleTrasladas = []; // detalle de cada traslado/venta que suma a "No van a nacer"
   (S.cache.movimientos||[]).forEach(m => {
@@ -5866,6 +5870,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     if (!rodeoMatch_(m.rodeo_origen_id)) return;
     const rOrig = rodeosAll.find(r=>String(r.rodeo_id)===String(m.rodeo_origen_id));
     if (!rOrig) return;
+    if (!rodeosConPrenadas_.has(String(rOrig.rodeo_id))) return;
     const catOrig = (rOrig.categoria||'').toLowerCase();
     if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
     // Si el DESTINO también es un rodeo de vacas/vaquillonas, es una
@@ -5886,6 +5891,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     if (!rodeoMatch_(v.rodeo_id)) return;
     const rOrig = rodeosAll.find(r=>String(r.rodeo_id)===String(v.rodeo_id));
     if (!rOrig) return;
+    if (!rodeosConPrenadas_.has(String(rOrig.rodeo_id))) return;
     const catOrig = (rOrig.categoria||'').toLowerCase();
     if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
     trasladasPorMadre[String(v.rodeo_id)] = (trasladasPorMadre[String(v.rodeo_id)]||0) + (Number(v.cant_animales)||0);
