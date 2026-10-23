@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_239';
+const APP_VERSION = 'index_consolidado_4_6_155_240';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6383,6 +6383,7 @@ async function exportarPerdidasReproductivasExcel_() {
     const filtroSrc = 'Fuente: Estado de Vientres (hoy) + Análisis de Mortandad. Período de nacimientos y muertes: ' + periodoTxt + '. Generado el ' + fd(today()) + ' (' + APP_VERSION + '). Azul = dato de la app; negro = fórmula.';
 
     // ══════════ HOJA 1: Cuenta por rodeo ══════════
+    let cuentaRef = null;
     {
       const ws = {}; const NC = cols.length; const cTot = 1 + NC, cPct = cTot + 1;
       put(ws, 0, 0, 'De las preñadas del tacto a los terneros al pie — ' + periodoTxt, ST_TITULO);
@@ -6424,7 +6425,7 @@ async function exportarPerdidasReproductivasExcel_() {
         put(ws, R.t2-1, c, null, ST_NUM, `${cl}${R.nacM}`);
         put(ws, R.t3-1, c, null, ST_NUM, `SUMIFS(${rgD('E')},${rgD('B')},${cl}$4,${rgD('D')},"Muerto después de nacer")`);
         put(ws, R.alPie-1, c, null, ST_SUB, `${cl}${R.t1}-${cl}${R.t2}-${cl}${R.t3}`);
-        if (f.ternerosAlPie == null) put(ws, R.stock-1, c, 'sin rodeo de terneros', ST_NUM);
+        if (f.ternerosAlPie == null) put(ws, R.stock-1, c, 'n/d', ST_NUM);
         else put(ws, R.stock-1, c, f.ternerosAlPie + (GUACHOS_POR_MADRE_[f.nombre] || 0), ST_DATO);
         if (f.ternerosAlPie == null) put(ws, R.difStock-1, c, '', ST_NUM);
         else put(ws, R.difStock-1, c, null, ST_NUM, `${cl}${R.alPie}-${cl}${R.stock}`);
@@ -6485,6 +6486,7 @@ async function exportarPerdidasReproductivasExcel_() {
       ws['!cols'] = [{wch:58}, ...cols.map(() => ({wch:15})), {wch:11}, {wch:12}];
       ws['!rows'] = []; ws['!rows'][3] = { hpt: 32 };
       cerrar(ws, X.dsg + 1 + notas.length, cPct);
+      cuentaRef = { col: L(cTot), R, X };
       XLSX.utils.book_append_sheet(wb, ws, 'Cuenta por rodeo');
     }
 
@@ -6564,7 +6566,40 @@ async function exportarPerdidasReproductivasExcel_() {
       XLSX.utils.book_append_sheet(wb, ws, 'Detalle');
     }
 
-    XLSX.utils.book_append_sheet(wb, hojaNoVanANacer_(XLSX, trasl, 'todas las fechas (se cuenta lo posterior al último tacto final de cada rodeo)', { titulo: ST_TITULO, header: ST_HEADER, row: ST_NUM, total: ST_SUB }), 'No van a nacer');
+    const wsNV = hojaNoVanANacer_(XLSX, trasl, 'todas las fechas (se cuenta lo posterior al último tacto final de cada rodeo)', { titulo: ST_TITULO, header: ST_HEADER, row: ST_NUM, total: ST_SUB });
+    // ── Resumen "¿Qué pasó con las vacas preñadas?" debajo de los subtotales (fórmulas sobre Cuenta por rodeo) ──
+    {
+      const ref = cuentaRef, cc = (row) => `'Cuenta por rodeo'!$${ref.col}$${row}`;
+      let r = 4 + NV + 7 + 2; // fila 0-based: deja una fila en blanco después de los subtotales
+      const filas = [
+        ['Vacas preñadas (tacto, ajustadas por movimientos entre rodeos)', cc(ref.R.prenRodeo), ST_SUB, ST_SUBLBL],
+        ['− Faltan parir', cc(ref.R.faltan), ST_NUM, ST_LBL],
+        ['− Abortadas (tabla Abortos)', cc(ref.R.abort), ST_NUM, ST_LBL],
+        ['− Vacas muertas', cc(ref.R.muertas), ST_NUM, ST_LBL],
+        ['− Salieron sin parir y sin ternero (posible aborto no detectado + salidas reales)', `${cc(ref.X.a)}+${cc(ref.X.sr)}`, ST_NUM, ST_LBL],
+        ['− Terneros al pie (incluye los guachos)', cc(ref.R.alPie), ST_NUM, ST_LBL],
+        ['− Terneros muertos después de nacer', cc(ref.R.t3), ST_NUM, ST_LBL],
+        ['− Nacidos muertos', cc(ref.R.t2), ST_NUM, ST_LBL],
+      ];
+      put(wsNV, r, 0, '¿QUÉ PASÓ CON LAS VACAS PREÑADAS? — cuenta resumida (mismos números de la hoja "Cuenta por rodeo")', ST_TITULO);
+      for (let c = 1; c <= 8; c++) put(wsNV, r, c, '', ST_TITULO);
+      r++;
+      const rIni = r;
+      filas.forEach(([lbl, f, sNum, sLbl]) => {
+        put(wsNV, r, 0, lbl, sLbl); for (let c = 1; c <= 3; c++) put(wsNV, r, c, '', sLbl);
+        put(wsNV, r, 4, null, sNum, f);
+        r++;
+      });
+      put(wsNV, r, 0, '= DIFERENCIA (0 = todo explicado · negativo = ternero de más · positivo = vaca sin explicar)', ST_SUBLBL); for (let c = 1; c <= 3; c++) put(wsNV, r, c, '', ST_SUBLBL);
+      put(wsNV, r, 4, null, ST_SUB, `E${rIni+1}-SUM(E${rIni+2}:E${rIni+filas.length})`);
+      r++;
+      [
+        'Las madres de guacho NO se restan en esta cuenta: su ternero ya está contado dentro de "Terneros al pie". Restarlas también las contaría dos veces.',
+        'Si la diferencia es negativa, hay un ternero de más (mellizo, o una vaca que ya había parido y después murió o se vendió). Ver la fila "Diferencia sin guachos" de la hoja "Cuenta por rodeo".',
+      ].forEach(t => { put(wsNV, r, 0, t, ST_NOTA); wsNV['!merges'].push({ s:{r,c:0}, e:{r,c:8} }); r++; });
+      wsNV['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:r,c:8} });
+    }
+    XLSX.utils.book_append_sheet(wb, wsNV, 'No van a nacer');
 
     const buf = XLSX.write(wb, { bookType:'xlsx', type:'array' });
     const blob = new Blob([buf], { type:'application/octet-stream' });
