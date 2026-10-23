@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_242';
+const APP_VERSION = 'index_consolidado_4_6_155_243';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -766,7 +766,7 @@ function vacasPendientesDeParir_(rodeoId) {
   // v241: "Parieron" cuenta VACAS, no terneros. Un parto de mellizos aporta 2 terneros pero es 1 sola vaca:
   // el campo 'mellizos' de la Parición dice cuántas vacas tuvieron mellizos y se descuentan acá.
   const ternerosParidos = nacidosVivos + nacidosMuertos;
-  const mellizos = pariciones.reduce((s, p) => s + (Number(p.mellizos) || 0), 0);
+  const mellizos = pariciones.reduce((s, p) => s + Math.max(0, Math.floor(Number(p.mellizos) || 0)), 0);
   const yaParieron = Math.max(0, ternerosParidos - mellizos);
 
   const fechaTacto = ultimoTactoFinal ? ultimoTactoFinal.fecha : null;
@@ -4694,7 +4694,7 @@ function buildPariciones() {  const _criaTabs = [
       </div>
       <div class="fg"><label>Nacidos vivos</label><input type="number" id="pa-vivos" placeholder="Ej: 12" min="0"></div>
       <div class="fg"><label>Nacidos muertos</label><input type="number" id="pa-muertos" placeholder="Ej: 0" min="0" value="0"></div>
-      <div class="fg"><label>Vacas con mellizos <span class="opt">(cuántas vacas, no terneros)</span></label><input type="number" id="pa-mellizos" placeholder="Ej: 1" min="0" value="0"></div>
+      <div class="fg"><label>Vacas con mellizos <span class="opt">(cuántas vacas, no terneros)</span></label><input type="number" id="pa-mellizos" placeholder="Ej: 1" min="0" step="1" value="0"></div>
       <div class="fg" style="min-width:240px"><label>Observación</label><input type="text" id="pa-obs" placeholder="Opcional"></div>
     </div>
     <p class="helper-text" style="margin-top:6px">¿Cuántas faltan parir en este rodeo? Mirá el detalle en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:12px;padding:0 4px">🐮 Estado de Vientres</button>.</p>
@@ -5187,6 +5187,7 @@ function attachParicionesEvents() {
       observacion: document.getElementById('pa-obs').value.trim(),
     };
     if (!data.fecha || !data.rodeo_id) { toast('Completá fecha y rodeo.', 'err'); return; }
+    if (data.mellizos < 0 || !Number.isInteger(data.mellizos)) { toast('"Vacas con mellizos" tiene que ser 0 (parto normal) o un número entero positivo (1, 2…).', 'err'); return; }
     if (data.mellizos > 0 && data.nacidos_vivos + data.nacidos_muertos < data.mellizos * 2) { toast('Cada vaca con mellizos aporta 2 terneros: con ' + data.mellizos + ' vaca(s) con mellizos tienen que ser al menos ' + (data.mellizos * 2) + ' terneros entre vivos y muertos.', 'err'); return; }
     save.disabled = true; save.textContent = '⏳ Guardando...';
     try {
@@ -20615,7 +20616,7 @@ function openEditModal(entity, idCol, id) {
     } else if (type === 'date') {
       fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="date" id="${fid}" value="${item[k]||''}"></div>`;
     } else if (type === 'number') {
-      fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="number" id="${fid}" value="${item[k]!=null?item[k]:''}"></div>`;
+      fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="number" id="${fid}" ${k==='mellizos'?'min="0" step="1"':''} value="${item[k]!=null?item[k]:''}"></div>`;
     } else {
       fieldsHtml += `<div class="fg"><label>${labelText}</label><input type="text" id="${fid}" value="${(item[k]!=null?item[k]:'').toString().replace(/"/g,'&quot;')}"></div>`;
     }
@@ -20740,6 +20741,13 @@ function openEditModal(entity, idCol, id) {
       if (type === 'boolean') { data[k] = el.value === 'true'; return; }
       data[k] = el.tagName === 'SELECT' ? el.value : (el.type === 'number' ? Number(el.value) : el.value.trim());
     });
+    if (entity === 'pariciones') {
+      const mz = Number(document.getElementById('edit-mellizos').value);
+      const vv = Number(document.getElementById('edit-nacidos_vivos').value) || 0;
+      const mm = Number(document.getElementById('edit-nacidos_muertos').value) || 0;
+      if (isNaN(mz) || mz < 0 || !Number.isInteger(mz)) { toast('"Vacas con mellizos" tiene que ser 0 (parto normal) o un número entero positivo (1, 2…).', 'err'); return; }
+      if (mz > 0 && vv + mm < mz * 2) { toast('Cada vaca con mellizos aporta 2 terneros: con ' + mz + ' vaca(s) con mellizos tienen que ser al menos ' + (mz * 2) + ' terneros entre vivos y muertos.', 'err'); return; }
+    }
     // Si es Saldo inicial, limpiar explícitamente los campos de origen (no se editaron
     // porque están ocultos, pero pueden tener un valor sobrante de antes — se borra
     // para que la planilla no quede con un dato confuso e inerte).
