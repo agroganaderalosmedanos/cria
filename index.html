@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_246';
+const APP_VERSION = 'index_consolidado_4_6_155_247';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3367,9 +3367,12 @@ function buildDashboard() {
   } else {
   const { totales: totVacaDash } = calcularVacasReproductivas_(campSelecField, corteCria);
   if (totVacaDash) {
-    const preñadasMayorQueEntoradas = totVacaDash.prenadas > totVacaDash.entoradas;
-    const vacias = Math.max(0, totVacaDash.entoradas - totVacaDash.prenadas);
-    const indicePrenez = totVacaDash.entoradas > 0 ? (totVacaDash.prenadas / totVacaDash.entoradas * 100) : null;
+    // v247: 'Preñadas' = las del tacto (ajustadas solo por movimientos ENTRE rodeos de vacas). Las que salieron a venta/sanidad después del tacto
+    // ya están en 'Descartadas'; si además se restaran acá, se contarían dos veces y 'Vacías' (entoradas − preñadas) las inflaba con vacas que SÍ estaban preñadas.
+    const prenadasDash = totVacaDash.prenadas + (totVacaDash.descartadas || 0);
+    const preñadasMayorQueEntoradas = prenadasDash > totVacaDash.entoradas;
+    const vacias = Math.max(0, totVacaDash.entoradas - prenadasDash);
+    const indicePrenez = totVacaDash.entoradas > 0 ? (prenadasDash / totVacaDash.entoradas * 100) : null;
     const sumaApertura = totVacaDash.paridas + totVacaDash.pendientes + totVacaDash.abortadas + totVacaDash.muertas + totVacaDash.descartadas;
     // Terneros vivos en stock HOY (al corte) — rodeos de categoría ternero/a de Cría.
     const stockTerneros = rodeosCriaFilt
@@ -3377,16 +3380,16 @@ function buildDashboard() {
       .reduce((s,r) => s + Math.max(0, stockPorRodeo[String(r.rodeo_id)]||0), 0);
     h += `<div class="panel">
       <div class="panel-title">🐮 Estado reproductivo — Campaña ${campSelecObj?.nombre || campSelec}${campSelecField ? ' · '+campoNombre(campSelecField) : ''}</div>
-      ${preñadasMayorQueEntoradas ? `<div style="background:rgba(220,50,50,0.08);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--red);font-weight:600">⚠ Preñadas (${fn(totVacaDash.prenadas)}) es mayor que Entoradas (${fn(totVacaDash.entoradas)}) — matemáticamente imposible. Revisá en algún rodeo si el campo "Preñadas" del Tacto final quedó cargado más alto que "Total tacteadas".</div>` : ''}
+      ${preñadasMayorQueEntoradas ? `<div style="background:rgba(220,50,50,0.08);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--red);font-weight:600">⚠ Preñadas (${fn(prenadasDash)}) es mayor que Entoradas (${fn(totVacaDash.entoradas)}) — matemáticamente imposible. Revisá en algún rodeo si el campo "Preñadas" del Tacto final quedó cargado más alto que "Total tacteadas".</div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
         <div class="kpi"><div class="kpi-label">Vacas entoradas</div><div class="kpi-val">${fn(totVacaDash.entoradas)}</div></div>
-        <div class="kpi"><div class="kpi-label">Vacas preñadas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.prenadas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Vacas preñadas</div><div class="kpi-val kpi-pos">${fn(prenadasDash)}</div></div>
         <div class="kpi"><div class="kpi-label">Vacías</div><div class="kpi-val" style="color:var(--text2)">${fn(vacias)}</div></div>
         <div class="kpi"><div class="kpi-label">Índice de preñez</div><div class="kpi-val" style="color:${preñadasMayorQueEntoradas?'var(--red)':'var(--green-text)'}">${indicePrenez!==null?fn(indicePrenez,1)+' %':'—'}</div></div>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:8px">Entoradas − Preñadas = Vacías → ${fn(totVacaDash.entoradas)} − ${fn(totVacaDash.prenadas)} = ${fn(vacias)}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">Entoradas − Preñadas = Vacías → ${fn(totVacaDash.entoradas)} − ${fn(prenadasDash)} = ${fn(vacias)}</div>
 
-      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿A dónde van las ${fn(totVacaDash.prenadas)} preñadas?</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿A dónde van las ${fn(prenadasDash)} preñadas?</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:8px">
         <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.paridas)}</div></div>
         <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(totVacaDash.pendientes)}</div></div>
@@ -3394,8 +3397,8 @@ function buildDashboard() {
         <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(totVacaDash.muertas)}</div></div>
         <div class="kpi"><div class="kpi-label">Descartadas</div><div class="kpi-val" style="color:var(--text2)">${fn(totVacaDash.descartadas)}</div></div>
       </div>
-      <div style="font-size:11px;color:${sumaApertura===totVacaDash.prenadas?'var(--text3)':'var(--red)'};margin-top:8px">
-        Paridas + Pendientes + Abortadas + Muertas + Descartadas = Preñadas → ${fn(totVacaDash.paridas)} + ${fn(totVacaDash.pendientes)} + ${fn(totVacaDash.abortadas)} + ${fn(totVacaDash.muertas)} + ${fn(totVacaDash.descartadas)} = ${fn(sumaApertura)}${sumaApertura===totVacaDash.prenadas?' ✓':' ⚠ no cierra contra '+fn(totVacaDash.prenadas)+' preñadas — revisar en Estado de Vientres'}
+      <div style="font-size:11px;color:${sumaApertura===prenadasDash?'var(--text3)':'var(--red)'};margin-top:8px">
+        Paridas + Pendientes + Abortadas + Muertas + Descartadas = Preñadas → ${fn(totVacaDash.paridas)} + ${fn(totVacaDash.pendientes)} + ${fn(totVacaDash.abortadas)} + ${fn(totVacaDash.muertas)} + ${fn(totVacaDash.descartadas)} = ${fn(sumaApertura)}${sumaApertura===prenadasDash?' ✓':' ⚠ no cierra contra '+fn(prenadasDash)+' preñadas — revisar en Estado de Vientres'}
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:6px">Detalle rodeo por rodeo en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:11px;padding:0 4px">🐮 Estado de Vientres</button>.</div>
 
