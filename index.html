@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_247';
+const APP_VERSION = 'index_consolidado_4_6_155_248';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1664,9 +1664,10 @@ function attachPageEvents(page) {
 function aggregateKpis_(rodeosArr) {
   let totServ = 0, prenIatf = 0, prenToro = 0, totPren = 0;
   let totTacteadasIatf = 0, totTacteadasToro = 0;
-  let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0;
+  let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0, parBase = 0;
   rodeosArr.forEach(r => {
     const k = r.kpis;
+    parBase += (k.paricion.base != null ? k.paricion.base : (k.servicio.total_prenadas || 0));
     totServ += k.servicio.total_serviciadas || 0;
     prenIatf += k.servicio.prenadas_iatf || 0;
     prenToro += k.servicio.prenadas_toro || 0;
@@ -1691,7 +1692,7 @@ function aggregateKpis_(rodeosArr) {
       indice_prenez_toro: totTacteadasToro > 0 ? round1_(prenToro / totTacteadasToro * 100) : null,
     },
     gestacion: { abortos },
-    paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, indice_paricion: totPren > 0 ? round1_(nacVivos / totPren * 100) : null },
+    paricion: { nacidos_vivos: nacVivos, nacidos_muertos: nacMuertos, base: parBase, indice_paricion: parBase > 0 ? round1_(nacVivos / parBase * 100) : null },
     destete: { total_destetados: totDest, mortandad_terneros: mortTerneros, indice_destete: nacVivos > 0 ? round1_(totDest / nacVivos * 100) : null },
   };
 }
@@ -1712,7 +1713,7 @@ function buildKpiRow(k) {
     <div class="kpi-card accent-clay">
       <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
       <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
-      <div class="kpi-sub">${fn(k.paricion.nacidos_vivos)} de ${fn(k.servicio.total_prenadas)} vacas parieron</div>
+      <div class="kpi-sub">${fn(k.paricion.nacidos_vivos)} terneros vivos de ${fn(k.paricion.base != null ? k.paricion.base : k.servicio.total_prenadas)} vacas preñadas</div>
     </div>
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⊞</div><div class="kpi-label">Índice de destete</div>
@@ -1818,6 +1819,25 @@ function buildIndicesReproduccion() {
   const rodeosList = rodeosAllIR
     .filter(r => (r.categoria === 'vaca' || r.categoria === 'vaquillona') && idsConActividadIR.has(String(r.rodeo_id)))
     .map(r => ({ rodeo: r, kpis: calcKpisReproduccionJS_(datosCampIR, r.rodeo_id) }));
+  // v248: el índice de parición por rodeo usaba las preñadas del TACTO de ese rodeo, pero los partos se cargan en el rodeo
+  // donde está la vaca al parir. Si se movieron vacas preñadas de un rodeo a otro (ej. 100 de Vacas 2023 a Vacas Rodeo 3)
+  // el rodeo que las recibió mostraba más partos que preñadas (136%). Se usa la base real del rodeo: preñadas del tacto
+  // ± movimientos entre rodeos de vacas (las que se vendieron después siguen en la base, igual que en el Excel).
+  // Solo para la campaña en curso (la cuenta de Estado de Vientres es "a hoy").
+  if (campanaActivaIR && String(campSelecIR) === String(campanaActivaIR.campana_id)) {
+    try {
+      const filasIR = calcularVacasReproductivas_('', today()).filas || [];
+      rodeosList.forEach(x => {
+        const f = filasIR.find(ff => ff.nombre === x.rodeo.nombre && String(ff.campoId) === String(x.rodeo.campo_id));
+        if (!f || f.sinTactoFinal) return;
+        const base = (f.prenadasAjustadas || 0) + ((f.salidasExternas && f.salidasExternas.cabezas) || 0);
+        if (base > 0) {
+          x.kpis.paricion.base = base;
+          x.kpis.paricion.indice_paricion = round1_((x.kpis.paricion.nacidos_vivos || 0) / base * 100);
+        }
+      });
+    } catch (e) { console.warn('Base de parición ajustada no disponible', e); }
+  }
 
   const campos     = (S.catalogs && S.catalogs.campos) || [];
   const criaTabs2 = [
