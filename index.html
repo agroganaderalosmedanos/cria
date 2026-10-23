@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_244';
+const APP_VERSION = 'index_consolidado_4_6_155_245';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -6615,15 +6615,22 @@ async function exportarPerdidasReproductivasExcel_() {
       const rIni = r;
       filas.forEach(([lbl, f, sNum, sLbl]) => {
         put(wsNV, r, 0, lbl, sLbl); for (let c = 1; c <= 3; c++) put(wsNV, r, c, '', sLbl);
+        wsNV['!merges'].push({ s:{r,c:0}, e:{r,c:3} });
         put(wsNV, r, 4, null, sNum, f);
         r++;
       });
-      put(wsNV, r, 0, '= DIFERENCIA (0 = todo explicado · negativo = ternero de más · positivo = vaca sin explicar)', ST_SUBLBL); for (let c = 1; c <= 3; c++) put(wsNV, r, c, '', ST_SUBLBL);
-      put(wsNV, r, 4, null, ST_SUB, `E${rIni+1}-SUM(E${rIni+2}:E${rIni+filas.length})`);
+      const rMz = r;
+      put(wsNV, r, 0, '+ Vacas con mellizos (1 vaca con 2 terneros: hay 1 ternero de más por cada una)', ST_LBL); for (let c = 1; c <= 3; c++) put(wsNV, r, c, '', ST_LBL);
+      wsNV['!merges'].push({ s:{r,c:0}, e:{r,c:3} });
+      put(wsNV, r, 4, null, ST_NUM, cc(ref.X.mz));
+      r++;
+      put(wsNV, r, 0, '= DIFERENCIA (0 = todo explicado · positivo = vaca sin explicar · negativo = ternero de más)', ST_SUBLBL); for (let c = 1; c <= 3; c++) put(wsNV, r, c, '', ST_SUBLBL);
+      wsNV['!merges'].push({ s:{r,c:0}, e:{r,c:3} });
+      put(wsNV, r, 4, null, ST_SUB, `E${rIni+1}-SUM(E${rIni+2}:E${rIni+filas.length})+E${rMz+1}`);
       r++;
       [
         'Las madres de guacho NO se restan en esta cuenta: su ternero ya está contado dentro de "Terneros al pie". Restarlas también las contaría dos veces.',
-        'Si la diferencia es negativa, hay un ternero de más (mellizo, o una vaca que ya había parido y después murió o se vendió). Ver la fila "Diferencia sin guachos" de la hoja "Cuenta por rodeo".',
+        'Los mellizos se suman porque una vaca con 2 terneros se resta una sola vez como vaca, pero sus 2 terneros están en "Terneros al pie" / "muertos". Si después de sumarlos queda negativo, hay un ternero de más (por ejemplo una vaca que ya había parido y después murió o se vendió). Ver la hoja "Cuenta por rodeo".',
       ].forEach(t => { put(wsNV, r, 0, t, ST_NOTA); wsNV['!merges'].push({ s:{r,c:0}, e:{r,c:8} }); r++; });
       wsNV['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:r,c:8} });
     }
