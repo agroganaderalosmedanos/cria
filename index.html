@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_241';
+const APP_VERSION = 'index_consolidado_4_6_155_242';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -20541,7 +20541,7 @@ function openEditModal(entity, idCol, id) {
   if (['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria','mortandad','pariciones','abortos','destetes'].includes(entity)) {
     if (!('campana_id' in item)) item.campana_id = '';
   }
-  if (entity === 'pariciones' && !('mellizos' in item)) item.mellizos = 0;
+  if (entity === 'pariciones' && (!('mellizos' in item) || item.mellizos === '' || isNaN(Number(item.mellizos)))) item.mellizos = 0;
   if (entity === 'mortandad') { if (!('causa' in item)) item.causa = ''; if (!('ya_habia_parido' in item)) item.ya_habia_parido = ''; }
   const ocultarCampanaTexto = ['ventas','movimientos','consumos_insumos','compras_hacienda','egresos_recria'].includes(entity);
   const keys = Object.keys(item).filter(k => k !== idCol && !(ocultarCampanaTexto && k === 'campana'));
@@ -20586,7 +20586,7 @@ function openEditModal(entity, idCol, id) {
     : mismaActividadSinPrecio ? ['precio_cabeza', 'precio_kg'] : [];
   keys.forEach(k => {
     if (camposAOcultar.includes(k)) return;
-    const type = fieldInputType_(k, item[k]);
+    const type = (entity === 'pariciones' && k === 'mellizos') ? 'number' : fieldInputType_(k, item[k]);
     const fid = 'edit-' + k;
     const labelText = FIELD_LABELS_[k] || k;
     if (entity === 'mortandad' && k === 'causa') {
