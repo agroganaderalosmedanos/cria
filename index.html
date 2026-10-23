@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_251';
+const APP_VERSION = 'index_consolidado_4_6_155_252';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3419,7 +3419,11 @@ function buildDashboard() {
     const preñadasMayorQueEntoradas = prenadasDash > totVacaDash.entoradas;
     const vacias = Math.max(0, totVacaDash.entoradas - prenadasDash);
     const indicePrenez = totVacaDash.entoradas > 0 ? (prenadasDash / totVacaDash.entoradas * 100) : null;
-    const sumaApertura = totVacaDash.paridas + totVacaDash.pendientes + totVacaDash.abortadas + totVacaDash.muertas + totVacaDash.descartadas;
+    // v252: las madres de guacho (parieron, su ternero quedó como guacho y ellas se vendieron) son vacas PARIDAS, no descartadas.
+    const mgDash = Math.min(totVacaDash.madresGuacho || 0, totVacaDash.descartadas || 0);
+    const paridasDash = totVacaDash.paridas + mgDash;
+    const descartadasDash = (totVacaDash.descartadas || 0) - mgDash;
+    const sumaApertura = paridasDash + totVacaDash.pendientes + totVacaDash.abortadas + totVacaDash.muertas + descartadasDash;
     // Terneros vivos en stock HOY (al corte) — rodeos de categoría ternero/a de Cría.
     const stockTerneros = rodeosCriaFilt
       .filter(r => normAct_(r.categoria).includes('ternero'))
@@ -3437,14 +3441,14 @@ function buildDashboard() {
 
       <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿A dónde van las ${fn(prenadasDash)} preñadas?</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:8px">
-        <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(totVacaDash.paridas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(paridasDash)}</div>${mgDash ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">incl. ${fn(mgDash)} madres de guacho</div>` : ''}</div>
         <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(totVacaDash.pendientes)}</div></div>
         <div class="kpi"><div class="kpi-label">Abortadas</div><div class="kpi-val" style="color:var(--clay-text)">${fn(totVacaDash.abortadas)}</div></div>
         <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(totVacaDash.muertas)}</div></div>
-        <div class="kpi"><div class="kpi-label">Descartadas</div><div class="kpi-val" style="color:var(--text2)">${fn(totVacaDash.descartadas)}</div></div>
+        <div class="kpi"><div class="kpi-label">Descartadas</div><div class="kpi-val" style="color:var(--text2)">${fn(descartadasDash)}</div></div>
       </div>
       <div style="font-size:11px;color:${sumaApertura===prenadasDash?'var(--text3)':'var(--red)'};margin-top:8px">
-        Paridas + Pendientes + Abortadas + Muertas + Descartadas = Preñadas → ${fn(totVacaDash.paridas)} + ${fn(totVacaDash.pendientes)} + ${fn(totVacaDash.abortadas)} + ${fn(totVacaDash.muertas)} + ${fn(totVacaDash.descartadas)} = ${fn(sumaApertura)}${sumaApertura===prenadasDash?' ✓':' ⚠ no cierra contra '+fn(prenadasDash)+' preñadas — revisar en Estado de Vientres'}
+        Paridas + Pendientes + Abortadas + Muertas + Descartadas = Preñadas → ${fn(paridasDash)} + ${fn(totVacaDash.pendientes)} + ${fn(totVacaDash.abortadas)} + ${fn(totVacaDash.muertas)} + ${fn(descartadasDash)} = ${fn(sumaApertura)}${sumaApertura===prenadasDash?' ✓':' ⚠ no cierra contra '+fn(prenadasDash)+' preñadas — revisar en Estado de Vientres'}
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:6px">Detalle rodeo por rodeo en <button class="btn btn-ghost btn-sm" onclick="goto('estado_vientres')" style="font-size:11px;padding:0 4px">🐮 Estado de Vientres</button>.</div>
 
@@ -4013,23 +4017,26 @@ function buildEstadoVientres() {
         kpiTerneroProyectado = totVaca.terneroProyectado, kpiDescartadas = totVaca.descartadas,
         kpiTernerosAlPie = totVaca.ternerosAlPie, kpiTernerosMuertosPostParto = totVaca.ternerosMuertosPostParto,
         kpiNacidosMuertos = totVaca.nacidosMuertos, kpiMellizos = totVaca.mellizos || 0,
-        kpiTernerosParidos = (totVaca.paridas || 0) + (totVaca.mellizos || 0);
+        kpiMg = Math.min(totVaca.madresGuacho || 0, totVaca.descartadas || 0);
+  const kpiParidasTot = kpiParidas + kpiMg, kpiDescartadasNeto = kpiDescartadas - kpiMg,
+        kpiTernerosParidos = kpiParidasTot + (totVaca.mellizos || 0);
   h += `<div class="panel"><div class="panel-title">🐮 Vacas — resumen de la campaña</div>`;
   h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
     <div class="kpi"><div class="kpi-label">Preñadas (tacto, ajustado por movimientos entre rodeos)</div><div class="kpi-val">${fn(kpiPrenadas + kpiDescartadas)}</div></div>
-    <div class="kpi"><div class="kpi-label">Paridas</div><div class="kpi-val kpi-pos">${fn(kpiParidas)}</div></div>
+    <div class="kpi"><div class="kpi-label">Paridas${kpiMg ? ` <span style="font-weight:400">(incl. ${fn(kpiMg)} madres de guacho)</span>` : ''}</div><div class="kpi-val kpi-pos">${fn(kpiParidasTot)}</div></div>
     <div class="kpi"><div class="kpi-label">Abortadas</div><div class="kpi-val" style="color:var(--clay-text)">${fn(kpiAbortadas)}</div></div>
-    <div class="kpi"><div class="kpi-label">Trasladadas (sanidad/venta, sin contar abortos)</div><div class="kpi-val" style="color:var(--text2)">${fn(kpiDescartadas)}</div></div>
+    <div class="kpi"><div class="kpi-label">Trasladadas (sanidad/venta, sin contar abortos)</div><div class="kpi-val" style="color:var(--text2)">${fn(kpiDescartadasNeto)}</div></div>
     <div class="kpi"><div class="kpi-label">Muertas</div><div class="kpi-val kpi-neg">${fn(kpiMuertas)}</div></div>
     <div class="kpi"><div class="kpi-label">Pendientes de parir</div><div class="kpi-val" style="color:var(--gold-text)">${fn(kpiPendientes)}</div></div>
   </div>
-  <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿Cómo se componen los ${fn(kpiTernerosParidos)} terneros nacidos?${kpiMellizos>0?` <span style="font-weight:400;color:var(--text3)">(${fn(kpiParidas)} vacas paridas + ${fn(kpiMellizos)} con mellizos)</span>`:''}</div>
+  <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:2px">¿Cómo se componen los ${fn(kpiTernerosParidos)} terneros nacidos?${kpiMellizos>0?` <span style="font-weight:400;color:var(--text3)">(${fn(kpiParidasTot)} vacas paridas + ${fn(kpiMellizos)} con mellizos)</span>`:''}</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:8px">
     <div class="kpi"><div class="kpi-label">Terneros al pie</div><div class="kpi-val kpi-pos">${fn(kpiTernerosAlPie)}</div></div>
     <div class="kpi"><div class="kpi-label">Terneros muertos (post-parto)</div><div class="kpi-val kpi-neg">${fn(kpiTernerosMuertosPostParto)}<span style="font-size:13px;font-weight:600;color:var(--text3)"> (${kpiTernerosParidos>0?fn(kpiTernerosMuertosPostParto/kpiTernerosParidos*100,1):'—'}%)</span></div></div>
     <div class="kpi"><div class="kpi-label">Nacidos muertos</div><div class="kpi-val kpi-neg">${fn(kpiNacidosMuertos)}<span style="font-size:13px;font-weight:600;color:var(--text3)"> (${kpiTernerosParidos>0?fn(kpiNacidosMuertos/kpiTernerosParidos*100,1):'—'}%)</span></div></div>
+    ${kpiMg ? `<div class="kpi"><div class="kpi-label">Terneros guacho (madres vendidas)</div><div class="kpi-val kpi-pos">${fn(kpiMg)}</div></div>` : ''}
   </div>
-  <div style="font-size:11px;color:var(--text3);margin-top:6px">Porcentaje sobre el total de terneros nacidos (${fn(kpiTernerosParidos)}; una vaca con mellizos aporta 2). Terneros al pie + Terneros muertos + Nacidos muertos = Terneros nacidos, si no hay algún caso sin cargar bien (ver detalle ⚠ en las tarjetas de abajo).</div>`;
+  <div style="font-size:11px;color:var(--text3);margin-top:6px">Porcentaje sobre el total de terneros nacidos (${fn(kpiTernerosParidos)}; una vaca con mellizos aporta 2). Terneros al pie + Terneros muertos + Nacidos muertos + Guachos = Terneros nacidos, si no hay algún caso sin cargar bien (ver detalle ⚠ en las tarjetas de abajo).</div>`;
   // Proyección: cuántos terneros VIVOS se pueden llegar a tener en total al
   // cierre de la parición — lo que ya nació vivo, más una estimación de lo
   // que falta (asumiendo ~1 cría viva por vaca pendiente, mismo criterio que
@@ -4048,7 +4055,7 @@ function buildEstadoVientres() {
   if (rodeosExcluidosKpi > 0) {
     h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">ℹ ${rodeosExcluidosKpi} rodeo(s) de vacas sin stock actual — sus preñadas ya se redistribuyeron a los rodeos que las recibieron (ver "de [rodeo]" en las tarjetas de abajo), así que no se pierden ni se duplican en el total.</div>`;
   }
-  h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas − Trasladadas − Abortadas − Muertas − Paridas = Pendientes (${fn(kpiPrenadas + kpiDescartadas)} − ${fn(kpiDescartadas)} − ${fn(kpiAbortadas)} − ${fn(kpiMuertas)} − ${fn(kpiParidas)} = ${fn(kpiPendientes)}). "Ajustado" resta SIEMPRE del rodeo de origen toda vaca que sale (vacía, abortada, enferma, sanidad, venta — sin importar destino: si salió del rodeo, ya no va a parir ahí), y solo la vuelve a sumar como pendiente en el rodeo de DESTINO si ese destino también es un rodeo de vacas/vaquillonas (ahí sigue siendo preñada, solo que en otro lado). Se toma siempre el 100% exacto de la cantidad, nunca una tasa. Las vendidas/trasladadas a un rodeo que no es de vacas (venta/descarte/enfermas) restan igual del origen, pero no se vuelven a sumar como pendientes en ningún lado — se muestran como cabezas en "Descartadas" a modo informativo.</div>`;
+  h += `<div style="font-size:11px;color:var(--text3);margin-top:4px">Preñadas − Trasladadas − Abortadas − Muertas − Paridas = Pendientes (${fn(kpiPrenadas + kpiDescartadas)} − ${fn(kpiDescartadasNeto)} − ${fn(kpiAbortadas)} − ${fn(kpiMuertas)} − ${fn(kpiParidasTot)} = ${fn(kpiPendientes)}). "Ajustado" resta SIEMPRE del rodeo de origen toda vaca que sale (vacía, abortada, enferma, sanidad, venta — sin importar destino: si salió del rodeo, ya no va a parir ahí), y solo la vuelve a sumar como pendiente en el rodeo de DESTINO si ese destino también es un rodeo de vacas/vaquillonas (ahí sigue siendo preñada, solo que en otro lado). Se toma siempre el 100% exacto de la cantidad, nunca una tasa. Las vendidas/trasladadas a un rodeo que no es de vacas (venta/descarte/enfermas) restan igual del origen, pero no se vuelven a sumar como pendientes en ningún lado — se muestran como cabezas en "Descartadas" a modo informativo.</div>`;
 
   // Auditoría por rodeo, en formato de cuenta — para poder chequear rodeo
   // por rodeo si los datos cargados tienen sentido, en vez de un solo total.
@@ -16479,7 +16486,8 @@ async function exportarAuditoriaReproductivaExcel_() {
     ];
     if (totVacaRepro) {
       aoa2.push(['Preñadas (tacto, ajustado por movimientos entre rodeos)', totVacaRepro.prenadas + (totVacaRepro.descartadas || 0)]);
-      aoa2.push(['Trasladadas / vendidas (sanidad, venta)', totVacaRepro.descartadas || 0]);
+      aoa2.push(['Trasladadas / vendidas (sanidad, venta; sin las madres de guacho)', (totVacaRepro.descartadas || 0) - Math.min(totVacaRepro.madresGuacho || 0, totVacaRepro.descartadas || 0)]);
+      if (totVacaRepro.madresGuacho) aoa2.push(['Madres de guacho (parieron y se vendieron: SÍ son vacas paridas, su parto no está en Pariciones)', totVacaRepro.madresGuacho]);
       aoa2.push(['Paridas (vacas)', totVacaRepro.paridas]);
       if (totVacaRepro.mellizos) aoa2.push(['Vacas con mellizos (incluidas en Paridas; aportan 2 terneros)', totVacaRepro.mellizos]);
       aoa2.push(['Abortadas', totVacaRepro.abortadas]);
