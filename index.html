@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_238';
+const APP_VERSION = 'index_consolidado_4_6_155_239';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -420,6 +420,11 @@ function trasladoNoRestaPrenadas_(m, idxAbortosCaravana) {
   if (/\[pid:\d+\]/.test(obs)) return true;
   if (/vac[ií]a/i.test(obs)) return true;
   if (/terneros?\s*muert[oa]s?/i.test(obs)) return true;
+  // v239: "parió" (sin mencionar guacho) = la vaca ya parió y su parición SÍ está cargada
+  // (cuenta en "Parieron"): restarla también de las preñadas la descuenta dos veces.
+  // Si dice "guacho", el nacimiento NO está en Pariciones (el guacho se cargó como saldo
+  // inicial aparte), así que esa vaca sigue restando de las preñadas.
+  if (/pari[óo](?![a-záéíóúñ])/i.test(obs) && !/guach/i.test(obs)) return true;
   if (idxAbortosCaravana && m.caravana) {
     const key = String(m.rodeo_origen_id) + '|' + String(m.caravana).trim().toUpperCase();
     const fechaAborto = idxAbortosCaravana[key];
@@ -5816,6 +5821,14 @@ function abortosCompletos_() {
 // Motor de cálculo compartido entre la pantalla y el export a Excel — así los
 // dos SIEMPRE dan el mismo número (mismo criterio que ya se usa en el resto
 // del sistema para Dashboard/Auditoría, ver nota de calcularVacasReproductivas_).
+// Clasifica una salida de vacas según lo que dice la observación del traslado.
+function clasePerdidaTraslado_(obs) {
+  const o = String(obs || '');
+  if (/guach/i.test(o)) return 'Madre de guacho';
+  if (/pari[óo](?![a-záéíóúñ])/i.test(o)) return 'Parió';
+  if (/posible aborto/i.test(o)) return 'Posible aborto no detectado';
+  return 'Salida real';
+}
 function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, incluirOtros) {
   const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
   const pariciones = S.cache.pariciones || [];
@@ -5880,11 +5893,16 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     const rDest = rodeosAll.find(r=>String(r.rodeo_id)===String(m.rodeo_destino_id));
     const catDest = (rDest?.categoria||'').toLowerCase();
     if (catDest==='vaca' || catDest==='vaquillona') return;
-    if (trasladoNoRestaPrenadas_(m, idxAbortosCaravanaMA)) return;
     const cant = Number(m.cantidad)||0;
+    if (trasladoNoRestaPrenadas_(m, idxAbortosCaravanaMA)) {
+      // Parió y salió después: no se cuenta en "No van a nacer" ni se resta de las preñadas,
+      // pero se lista (clase "Parió") para que el Excel muestre dónde quedó.
+      if (cant > 0 && clasePerdidaTraslado_(m.observaciones) === 'Parió') detalleTrasladas.push({ fecha: m.fecha, rodeoId: m.rodeo_origen_id, origen: rOrig.nombre, destino: rDest ? rDest.nombre : rodeoNombre(m.rodeo_destino_id), tipo: m.tipo, cant, obs: m.observaciones || '', id: m.movimiento_id, clase: 'Parió' });
+      return;
+    }
     if (cant<=0) return;
     trasladasPorMadre[String(m.rodeo_origen_id)] = (trasladasPorMadre[String(m.rodeo_origen_id)]||0) + cant;
-    detalleTrasladas.push({ fecha: m.fecha, rodeoId: m.rodeo_origen_id, origen: rOrig.nombre, destino: rDest ? rDest.nombre : rodeoNombre(m.rodeo_destino_id), tipo: m.tipo, cant, obs: m.observaciones || '', id: m.movimiento_id });
+    detalleTrasladas.push({ fecha: m.fecha, rodeoId: m.rodeo_origen_id, origen: rOrig.nombre, destino: rDest ? rDest.nombre : rodeoNombre(m.rodeo_destino_id), tipo: m.tipo, cant, obs: m.observaciones || '', id: m.movimiento_id, clase: clasePerdidaTraslado_(m.observaciones) });
   });
   (S.cache.ventas||[]).forEach(v => {
     if (!fechaMatch_(v.fecha_salida)) return;
@@ -5895,7 +5913,7 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
     const catOrig = (rOrig.categoria||'').toLowerCase();
     if (catOrig!=='vaca' && catOrig!=='vaquillona') return;
     trasladasPorMadre[String(v.rodeo_id)] = (trasladasPorMadre[String(v.rodeo_id)]||0) + (Number(v.cant_animales)||0);
-    if ((Number(v.cant_animales)||0) > 0) detalleTrasladas.push({ fecha: v.fecha_salida, rodeoId: v.rodeo_id, origen: rOrig.nombre, destino: 'Venta directa' + (v.comprador ? ' — ' + v.comprador : ''), tipo: 'Venta', cant: Number(v.cant_animales)||0, obs: v.observaciones || v.observacion || '', id: v.venta_id });
+    if ((Number(v.cant_animales)||0) > 0) detalleTrasladas.push({ fecha: v.fecha_salida, rodeoId: v.rodeo_id, origen: rOrig.nombre, destino: 'Venta directa' + (v.comprador ? ' — ' + v.comprador : ''), tipo: 'Venta', cant: Number(v.cant_animales)||0, obs: v.observaciones || v.observacion || '', id: v.venta_id, clase: 'Salida real' });
   });
   const totalTrasladas = Object.values(trasladasPorMadre).reduce((s,n)=>s+n,0);
 
@@ -5974,46 +5992,62 @@ function calcularMortandadAnalisis_(campFiltro, rodeoFiltro, desde, hasta, inclu
   };
 }
 
-// Hoja "No van a nacer": cada traslado/venta de vacas que suma a ese KPI, con la fecha
-// del último Tacto final del rodeo para ver cuáles son realmente "preñadas que se fueron".
+// Hoja "No van a nacer": cada salida de vacas/vaquillonas (traslado o venta), con una
+// CLASIFICACIÓN que dice si se resta o no de las preñadas y por qué, y subtotales por clase.
+// Columnas: A Fecha · B Rodeo origen · C Destino · D Tipo · E Cabezas · F ¿Después del último
+// tacto? · G Clasificación · H Observación · I ID. (El Excel de Pérdidas reproductivas usa
+// estas columnas en sus fórmulas: no moverlas.)
+const CLASES_SALIDA_ = {
+  'Parió': 'Parió y salió después — NO se resta de las preñadas (su parición ya está en "Parieron")',
+  'Madre de guacho': 'Madre de guacho — se resta (parió, pero su ternero guacho no está en Pariciones)',
+  'Posible aborto no detectado': 'Posible aborto no detectado — se resta (no está en la tabla Abortos)',
+  'Salida real': 'Salida real (sanidad, descarte, flaca, tuberculina, venta…) — se resta',
+};
 function hojaNoVanANacer_(XLSX, detalle, filtroTxt, st) {
   const fechaTactoFinal = {};
   (S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto final').forEach(t => {
     const k = String(t.rodeo_id);
     if (!fechaTactoFinal[k] || String(t.fecha) > fechaTactoFinal[k]) fechaTactoFinal[k] = String(t.fecha);
   });
-  const hd = ['Fecha','Rodeo origen','Destino','Tipo','Cabezas','¿Después del último tacto?','Observación','ID'];
+  const hd = ['Fecha','Rodeo origen','Destino','Tipo','Cabezas','¿Después del último tacto?','Clasificación','Observación','ID'];
+  const NCOL = hd.length;
   const aoa = [
-    ['No van a nacer — vacas/vaquillonas que salieron del rodeo (traslado a un rodeo que no es de vacas, o venta)'],
-    ['Qué es: toda salida de cabezas de rodeos de vacas/vaquillonas en el período, sin contar las ya explicadas por otro concepto (vacías, abortos, vacas que ya parieron). OJO: incluye también salidas ANTERIORES al tacto o de vacas que nunca estuvieron preñadas (descarte, vacías); solo las marcadas "Sí" en la columna F son preñadas confirmadas que se fueron. Filtros: ' + filtroTxt],
+    ['No van a nacer — vacas/vaquillonas que salieron de un rodeo con preñadas (traslado a un rodeo que no es de vacas, o venta)'],
+    ['Cómo leerla: la columna G dice qué es cada salida y si se resta o no de las preñadas. "Parió" NO se resta (la vaca ya figura como parida); "Madre de guacho", "Posible aborto no detectado" y "Salida real" SÍ se restan. Solo cuentan las marcadas "Sí" en F (preñadas confirmadas por el último tacto final). Filtros: ' + filtroTxt],
     [],
     hd,
   ];
-  detalle.forEach(d => {
+  const orden = ['Parió','Madre de guacho','Posible aborto no detectado','Salida real'];
+  const det = detalle.slice().sort((a,b) => orden.indexOf(a.clase) - orden.indexOf(b.clase) || String(a.origen).localeCompare(String(b.origen)) || String(b.fecha).localeCompare(String(a.fecha)));
+  det.forEach(d => {
     const ft = fechaTactoFinal[String(d.rodeoId)];
     const desp = !ft ? 'Sin tacto final' : (String(d.fecha) >= ft ? 'Sí' : 'No');
-    aoa.push([fd(d.fecha), d.origen, d.destino, d.tipo, d.cant, desp, d.obs, d.id == null ? '' : d.id]);
+    aoa.push([fd(d.fecha), d.origen, d.destino, d.tipo, d.cant, desp, d.clase || 'Salida real', d.obs, d.id == null ? '' : d.id]);
   });
-  const n = detalle.length, r0 = 5, rl = 4 + n;
-  aoa.push(['TOTAL','','','', n ? { f: `SUM(E${r0}:E${rl})` } : 0,'','','']);
-  aoa.push(['Después del último tacto (preñadas confirmadas que se fueron)','','','', n ? { f: `SUMIF(F${r0}:F${rl},"Sí",E${r0}:E${rl})` } : 0,'','','']);
-  aoa.push(['Antes del tacto (ya contempladas en el tacto)','','','', n ? { f: `SUMIF(F${r0}:F${rl},"No",E${r0}:E${rl})` } : 0,'','','']);
-  aoa.push(['Rodeo sin tacto final','','','', n ? { f: `SUMIF(F${r0}:F${rl},"Sin tacto final",E${r0}:E${rl})` } : 0,'','','']);
+  const n = det.length, r0 = 5, rl = 4 + n;
+  const suma = (clase) => n ? { f: `SUMIFS(E${r0}:E${rl},G${r0}:G${rl},"${clase}",F${r0}:F${rl},"Sí")` } : 0;
+  aoa.push(['TOTAL de la lengüeta (todas las filas)','','','', n ? { f: `SUM(E${r0}:E${rl})` } : 0,'','','','']);
+  aoa.push(['Parió y salió — NO se resta de las preñadas','','','', suma('Parió'),'','','','']);
+  aoa.push(['Madre de guacho — se resta','','','', suma('Madre de guacho'),'','','','']);
+  aoa.push(['Posible aborto no detectado — se resta','','','', suma('Posible aborto no detectado'),'','','','']);
+  aoa.push(['Salida real — se resta','','','', suma('Salida real'),'','','','']);
+  const f0 = 4 + n + 3; // fila (1-based) de "Madre de guacho"
+  aoa.push(['= SALIERON SIN PARIR (lo que se resta de las preñadas)','','','', n ? { f: `SUM(E${f0}:E${f0+2})` } : 0,'','','','']);
+  aoa.push(['Salidas ANTES del último tacto (ya contempladas en el tacto, no se restan)','','','', n ? { f: `SUMIFS(E${r0}:E${rl},F${r0}:F${rl},"No")` } : 0,'','','','']);
   const ws = XLSX.utils.aoa_to_sheet(aoa.map(r => r.map(v => (v && typeof v === 'object') ? '' : v)));
-  // fórmulas (aoa_to_sheet no las toma como objeto)
   aoa.forEach((r, i) => r.forEach((v, c) => {
     if (v && typeof v === 'object' && v.f) ws[XLSX.utils.encode_cell({ r:i, c })] = { t:'n', f: v.f };
   }));
-  ws['!cols'] = [{wch:12},{wch:20},{wch:34},{wch:18},{wch:9},{wch:16},{wch:60},{wch:8}];
-  ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:7} }, { s:{r:1,c:0}, e:{r:1,c:7} }];
+  ws['!cols'] = [{wch:12},{wch:20},{wch:30},{wch:18},{wch:9},{wch:15},{wch:46},{wch:46},{wch:8}];
+  ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:NCOL-1} }, { s:{r:1,c:0}, e:{r:1,c:NCOL-1} }];
   ws['!rows'] = []; ws['!rows'][1] = { hpt: 62 };
-  const estilar = (r, style) => { for (let c = 0; c < 8; c++) { const a = XLSX.utils.encode_cell({ r, c }); if (!ws[a]) ws[a] = { t:'s', v:'' }; ws[a].s = style; } };
+  const estilar = (r, style) => { for (let c = 0; c < NCOL; c++) { const a = XLSX.utils.encode_cell({ r, c }); if (!ws[a]) ws[a] = { t:'s', v:'' }; ws[a].s = style; } };
   estilar(0, st.titulo); estilar(3, st.header);
   ws[XLSX.utils.encode_cell({r:1,c:0})].s = { alignment:{ wrapText:true, vertical:'top' } };
   for (let i = 0; i < n; i++) estilar(4 + i, st.row);
-  for (let k = 0; k < 4; k++) estilar(4 + n + k, st.total);
-  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:4+n+3,c:7} });
-  ws['!autofilter'] = { ref: `A4:H${Math.max(5, rl)}` };
+  for (let k = 0; k < 7; k++) estilar(4 + n + k, st.total);
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:4+n+6,c:NCOL-1} });
+  ws['!autofilter'] = { ref: `A4:I${Math.max(5, rl)}` };
   return ws;
 }
 
@@ -6267,6 +6301,10 @@ async function exportarPerdidasReproductivasExcel_() {
 
     // ── Datos base ──
     const mort = calcularMortandadAnalisis_('', '', desde, hasta, true);
+    // Salidas de vacas: SIN filtro de fechas (lo que cuenta es si fue después del último tacto del rodeo)
+    const trasl = calcularMortandadAnalisis_('', '', '', '', true).detalleTrasladas || [];
+    const NV = trasl.length; // filas de la hoja 'No van a nacer' (datos en filas 5..4+NV)
+    const nvR = (col) => `'No van a nacer'!$${col}$5:$${col}$${4 + Math.max(1, NV)}`;
     const rep = calcularVacasReproductivas_('', today());
     const cols = rep.filas.filter(f => !f.sinTactoFinal && (Number(f.prenadas) || 0) > 0);
     const rodeosCat = (S.catalogs && S.catalogs.rodeos) || [];
@@ -6391,6 +6429,29 @@ async function exportarPerdidasReproductivasExcel_() {
         if (f.ternerosAlPie == null) put(ws, R.difStock-1, c, '', ST_NUM);
         else put(ws, R.difStock-1, c, null, ST_NUM, `${cl}${R.alPie}-${cl}${R.stock}`);
       });
+      // ── Composición explícita de "Salieron sin parir" + control (fórmulas sobre la hoja 'No van a nacer') ──
+      const X = { h:27, g:28, a:29, sr:30, tot:31, ctl:32, pr:33, dsg:34 };
+      put(ws, X.h-1, 0, 'CÓMO SE COMPONE "SALIERON SIN PARIR" (fila 8) — detalle en la hoja "No van a nacer"', ST_SUBLBL);
+      for (let c = 1; c <= cPct; c++) put(ws, X.h-1, c, '', ST_SUB);
+      put(ws, X.g-1, 0, '• Madres de guacho (parieron, pero su ternero guacho no está en Pariciones)', ST_LBL);
+      put(ws, X.a-1, 0, '• Posible aborto no detectado (preñadas que no parieron ni figuran en Abortos)', ST_LBL);
+      put(ws, X.sr-1, 0, '• Salidas reales (sanidad, descarte, vaca flaca, tuberculina…)', ST_LBL);
+      put(ws, X.tot-1, 0, '= Total (debe coincidir con la fila 8)', ST_SUBLBL);
+      put(ws, X.ctl-1, 0, 'Control: fila 8 − total (debe dar 0)', ST_LBL);
+      put(ws, X.pr-1, 0, 'Vacas que parieron y se vendieron — NO se restan de las preñadas (ya están en "Vacas paridas")', ST_LBL);
+      put(ws, X.dsg-1, 0, 'Diferencia terneros nacidos − vacas paridas, SIN contar los guachos (mellizos / ajuste)', ST_SUBLBL);
+      cols.forEach((f, i) => {
+        const c = 1 + i, cl = L(c);
+        const sf = (clase) => `SUMIFS(${nvR('E')},${nvR('B')},${cl}$4,${nvR('G')},"${clase}",${nvR('F')},"Sí")`;
+        put(ws, X.g-1, c, null, ST_NUM, sf('Madre de guacho'));
+        put(ws, X.a-1, c, null, ST_NUM, sf('Posible aborto no detectado'));
+        put(ws, X.sr-1, c, null, ST_NUM, sf('Salida real'));
+        put(ws, X.tot-1, c, null, ST_SUB, `${cl}${X.g}+${cl}${X.a}+${cl}${X.sr}`);
+        put(ws, X.ctl-1, c, null, ST_NUM, `${cl}${R.salieron}-${cl}${X.tot}`);
+        put(ws, X.pr-1, c, null, ST_NUM, sf('Parió'));
+        put(ws, X.dsg-1, c, null, ST_SUB, `${cl}${R.dif}-${cl}${R.guachos}`);
+      });
+      [X.g, X.a, X.sr, X.tot, X.ctl, X.pr, X.dsg].forEach(r => put(ws, r-1, cTot, null, r === X.tot || r === X.dsg ? ST_SUB : ST_NUM, `SUM(${L(1)}${r}:${L(NC)}${r})`));
       const c1 = L(1), cN = L(NC);
       Object.keys(R).forEach(k => {
         if (k === 'stock' || k === 'difStock') return;
@@ -6404,7 +6465,8 @@ async function exportarPerdidasReproductivasExcel_() {
       const notas = [
         'Notas',
         '• Preñadas, movidas, salieron, faltan parir, abortadas y muertas vienen de Estado de Vientres (cuenta de hoy). Nacidos vivos, nacidos muertos y muertos después de nacer son del período indicado arriba.',
-        '• "Diferencia terneros nacidos − vacas paridas": los guachos suman terneros pero sus madres figuran en "Salieron sin parir", por eso la diferencia los incluye. Las vacas paridas salen de Estado de Vientres (cuenta terneros, no vacas) y los terneros nacidos son los del período elegido. Si da distinto de 0 puede ser por mellizos (la app todavía no tiene campo de mellizos), partos de otro período o guachos asignados a otro rodeo.',
+        '• SALIERON SIN PARIR (fila 8) = preñadas confirmadas por el tacto que se fueron del rodeo después del último tacto final. No incluye a las que ya parieron y se vendieron con la observación "parió" (esas ya están en Vacas paridas: restarlas también sería contarlas dos veces; se muestran en la fila "Vacas que parieron y se vendieron").',
+        '• Madres de guacho: SÍ se restan de las preñadas porque su nacimiento no está en Pariciones (el guacho se cargó aparte como saldo inicial). Por eso en la fila 18 la diferencia incluye a los guachos; la fila 34 la muestra sin ellos y debería quedar en 0 o en el número de mellizos.',
         '• Guachos: son terneros cuyas madres salieron a venta después de parir; el sistema los tiene juntos en el rodeo "Terneros guachos". El reparto por rodeo madre (fila azul) viene de una tabla fija de la app: si cambia, editá la fila acá. En "Terneros al pie según stock" se les suman los guachos asignados.',
         '• "Diferencia (cuenta − stock)": si no da 0 hay ventas/cesiones de terneros o un registro faltante.',
         '• Nacidos muertos y muertos después de nacer salen de la hoja Detalle (si cambiás una causa o borrás una fila ahí, se actualiza todo).',
@@ -6419,10 +6481,10 @@ async function exportarPerdidasReproductivasExcel_() {
       if (madresFueraDeColumnas.length) notas.push('• Hay registros de pérdida de rodeos que no tienen columna acá (sin Tacto final o sin preñadas): ' + madresFueraDeColumnas.join(', ') + '. Están en la hoja Detalle.');
       if (hayHuerfanos) notas.push('• ' + huerfanos.reduce((s,d)=>s+d.cab,0) + ' terneros muertos en rodeos sin vínculo a una madre (ej. "Terneros 2026") NO entran en los totales de ninguna hoja; están en Detalle marcados como "sin vínculo".');
       notas.push('• Si en un rodeo "Terneros nacidos − vacas paridas" da positivo (ej. Rodeo 1, Rodeo 3), suele ser porque hubo vacas que parieron y después murieron o salieron: Estado de Vientres las resta dos veces como "pendientes" (pendiente de diseño).');
-      notas.forEach((t, i) => put(ws, R.difStock + 2 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
+      notas.forEach((t, i) => put(ws, X.dsg + 1 + i, 0, t, i === 0 ? { font:{bold:true} } : ST_NOTA));
       ws['!cols'] = [{wch:58}, ...cols.map(() => ({wch:15})), {wch:11}, {wch:12}];
       ws['!rows'] = []; ws['!rows'][3] = { hpt: 32 };
-      cerrar(ws, R.difStock + 2 + notas.length, cPct);
+      cerrar(ws, X.dsg + 1 + notas.length, cPct);
       XLSX.utils.book_append_sheet(wb, ws, 'Cuenta por rodeo');
     }
 
@@ -6502,7 +6564,7 @@ async function exportarPerdidasReproductivasExcel_() {
       XLSX.utils.book_append_sheet(wb, ws, 'Detalle');
     }
 
-    XLSX.utils.book_append_sheet(wb, hojaNoVanANacer_(XLSX, mort.detalleTrasladas || [], periodoTxt, { titulo: ST_TITULO, header: ST_HEADER, row: ST_NUM, total: ST_SUB }), 'No van a nacer');
+    XLSX.utils.book_append_sheet(wb, hojaNoVanANacer_(XLSX, trasl, 'todas las fechas (se cuenta lo posterior al último tacto final de cada rodeo)', { titulo: ST_TITULO, header: ST_HEADER, row: ST_NUM, total: ST_SUB }), 'No van a nacer');
 
     const buf = XLSX.write(wb, { bookType:'xlsx', type:'array' });
     const blob = new Blob([buf], { type:'application/octet-stream' });
