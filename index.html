@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_258';
+const APP_VERSION = 'index_consolidado_4_6_155_259';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -20713,10 +20713,29 @@ async function fdLeerArchivo_(file) {
   if (!aoa.length) return [];
   const headers = aoa[0].map(h => fdNorm_(h));
   const idx = n => headers.indexOf(n);
+  // v259 -- Reporte de Insumos de Fielddata (el que se baja desde la pantalla
+  // de Insumos): Fecha · Potrero · Hectáreas · Producto · Categoría · Cantidad
+  // · Unidad · Usuario · Nota. No trae Área ni Tipo: el signo de la cantidad
+  // dice si es ingreso (+) o salida (-). Se convierte al mismo formato del
+  // export unificado, así el resto del importador (y la huella) no cambia.
+  if (idx('area') < 0 && idx('producto') >= 0 && idx('cantidad') >= 0 && idx('fecha') >= 0) {
+    const c = { fecha: idx('fecha'), potrero: idx('potrero'), ha: idx('hectareas'), producto: idx('producto'),
+      categoria: idx('categoria'), cantidad: idx('cantidad'), unidad: idx('unidad'), nota: idx('nota') };
+    const v = (r, k) => c[k] >= 0 ? r[c[k]] : '';
+    return aoa.slice(1).filter(r => r.some(x => x !== '' && x != null)).map(r => {
+      const cant = Number(v(r, 'cantidad')) || 0;
+      return {
+        fecha: fdFechaISO_(v(r, 'fecha')), area: 'Insumos', tipo: cant < 0 ? 'Salida de insumo' : 'Ingreso de insumo',
+        lote: String(v(r, 'potrero') || ''), hectareas: Number(v(r, 'ha')) || null, rodeo: '',
+        insumo: String(v(r, 'producto') || ''), cantidad: Math.abs(cant), unidad: String(v(r, 'unidad') || ''),
+        categoria: String(v(r, 'categoria') || ''), nota: String(v(r, 'nota') || '').trim(), formato: 'reporte_insumos',
+      };
+    });
+  }
   const col = { fecha: idx('fecha'), area: idx('area'), tipo: idx('tipo'), lote: idx('lote'), rodeo: idx('rodeo'),
     insumo: idx('insumo'), cantidad: idx('cantidad'), unidad: idx('unidad'), categoria: idx('categoria'), nota: idx('nota') };
   if (col.fecha < 0 || col.area < 0 || col.tipo < 0 || col.insumo < 0 || col.cantidad < 0) {
-    throw new Error('El archivo "' + file.name + '" no tiene el formato de Fielddata (faltan columnas Fecha, Área, Tipo, Insumo o Cantidad).');
+    throw new Error('El archivo "' + file.name + '" no tiene el formato de Fielddata (ni el export unificado con Área/Tipo/Insumo, ni el reporte de Insumos con Producto/Cantidad).');
   }
   const g = (r, k) => col[k] >= 0 ? r[col[k]] : '';
   return aoa.slice(1).filter(r => r.some(c => c !== '' && c != null)).map(r => ({
@@ -20929,7 +20948,7 @@ function buildImportarFielddata() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo) y <b>sales con magnesio</b> (solo consumos: es stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo) y <b>sales con magnesio</b> (solo consumos: es stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid">
       <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
