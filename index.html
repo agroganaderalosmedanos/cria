@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_266';
+const APP_VERSION = 'index_consolidado_4_6_155_267';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -21002,16 +21002,16 @@ function fdSugerirRodeo_(campoId, nota) {
 // Sales Magnesiadas de Fielddata -> "Sales Magnesio" del sistema; Concentrado
 // Magnesiado Fortificado -> el producto del sistema con ese nombre.
 const FD_RUBROS_ = {
-  rollos:      { label: 'Rollos', unidad: 'Rollos', esDelRubro: n => n === 'rollos', producto: p => fdNorm_(p.nombre) === 'rollos' },
-  sales_mg:    { label: 'Sales Magnesiadas', unidad: 'Bolsas', esDelRubro: n => /^sales magnes/.test(n), producto: p => /^sales magnes/.test(fdNorm_(p.nombre)) },
-  concentrado_mg: { label: 'Concentrado Magnesiado Fortificado', unidad: 'Bolsas', esDelRubro: n => /concentrado magnes/.test(n), producto: p => /concentrado magnes/.test(fdNorm_(p.nombre)) },
+  rollos:      { label: 'Rollos', unidad: 'Rollos', corte: '2026-09-01', esDelRubro: n => n === 'rollos', producto: p => fdNorm_(p.nombre) === 'rollos' },
+  sales_mg:    { label: 'Sales Magnesiadas', unidad: 'Bolsas', corte: '2026-07-01', esDelRubro: n => /^sales magnes/.test(n), producto: p => /^sales magnes/.test(fdNorm_(p.nombre)) },
+  concentrado_mg: { label: 'Concentrado Magnesiado Fortificado', unidad: 'Bolsas', corte: '2026-07-01', esDelRubro: n => /concentrado magnes/.test(n), producto: p => /concentrado magnes/.test(fdNorm_(p.nombre)) },
   // v262 -- Sales Proteicas (stock común, solo consumos).
-  sales_prot:  { label: 'Sales Proteicas', unidad: 'Bolsas', esDelRubro: n => /^sales proteic/.test(n), producto: p => /^sales proteic/.test(fdNorm_(p.nombre)) },
+  sales_prot:  { label: 'Sales Proteicas', unidad: 'Bolsas', corte: '2026-06-01', esDelRubro: n => /^sales proteic/.test(n), producto: p => /^sales proteic/.test(fdNorm_(p.nombre)) },
   // v266 -- Calostro y Rumex: por campo (entran a El Clavo Chico y se
   // trasladan). 'compras': los ingresos sin campo de origen se graban como
   // compra SIN PRECIO (en Insumos quedan marcadas "Falta precio").
-  calostro:    { label: 'Calostro', unidad: 'Bolsas', compras: true, esDelRubro: n => /^calostro/.test(n), producto: p => /^calostro/.test(fdNorm_(p.nombre)) },
-  rumex:       { label: 'Rumex', unidad: 'Unidades', compras: true, esDelRubro: n => /^rumex/.test(n), producto: p => /^rumex/.test(fdNorm_(p.nombre)) },
+  calostro:    { label: 'Calostro', unidad: 'Bolsas', corte: '2026-01-01', compras: true, esDelRubro: n => /^calostro/.test(n), producto: p => /^calostro/.test(fdNorm_(p.nombre)) },
+  rumex:       { label: 'Rumex', unidad: 'Unidades', corte: '2026-07-27', compras: true, esDelRubro: n => /^rumex/.test(n), producto: p => /^rumex/.test(fdNorm_(p.nombre)) },
 };
 // v266 -- Todos los campos mencionados en un texto (para detectar traslados
 // repartidos entre varios campos en una sola fila).
@@ -21019,6 +21019,10 @@ function fdCamposEnTexto_(texto, excluirCampoId) {
   const t = ' ' + fdNorm_(texto) + ' ';
   return ((S.catalogs && S.catalogs.campos) || []).filter(c => String(c.campo_id) !== String(excluirCampoId || '') && fdClaveCampo_(c.nombre) && t.indexOf(' ' + fdClaveCampo_(c.nombre) + ' ') !== -1).map(c => String(c.campo_id));
 }
+// v267 -- Fecha de corte de cada insumo: desde ahí el sistema y Fielddata
+// están cruzados. "Desde" no puede ser anterior (Crist, 07/11/2026).
+function fdCorte_(rubroKey) { const r = FD_RUBROS_[rubroKey]; return (r && r.corte) || '2026-09-01'; }
+function fdDesdeValido_(rubroKey, desde) { const c = fdCorte_(rubroKey); return (!desde || desde < c) ? c : desde; }
 function fdEquivKey_(campoId, nota) { return String(campoId) + '|' + fdNorm_(nota); }
 
 // v261 -- Busca el registro del sistema que grabó (o marcó como ya cargado)
@@ -21054,7 +21058,8 @@ function fdAnalizar_() {
   const prodId = String(prod.producto_id);
   // Producto de stock común (no por campo): los traslados entre campos no se cargan.
   const porCampo = esPorCampo_(prod.por_campo);
-  const desde = st.desde || '2026-09-01';
+  st.desde = fdDesdeValido_(st.rubro, st.desde);
+  const desde = st.desde;
 
   // Huellas ya registradas
   const huellaEstado = {};
@@ -21312,9 +21317,9 @@ function fdEstadoPill_(e) {
 }
 
 function buildImportarFielddata() {
-  if (!S.fd) S.fd = { archivos: [], desde: '2026-09-01', rubro: 'rollos', equiv: {}, items: null, sel: {}, filtro: 'pendientes', grabando: false, log: [] };
+  if (!S.fd) S.fd = { archivos: [], desde: fdCorte_('rollos'), rubro: 'rollos', equiv: {}, items: null, sel: {}, filtro: 'pendientes', grabando: false, log: [] };
   const st = S.fd;
-  if (!st.rubro) st.rubro = 'rollos';
+  if (!FD_RUBROS_[st.rubro]) st.rubro = 'rollos';
   const rub = FD_RUBROS_[st.rubro];
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
@@ -21323,7 +21328,7 @@ function buildImportarFielddata() {
     <div class="fgrid">
       <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
-      <div class="fg"><label>Desde</label><input type="date" id="fd-desde" value="${fdEsc_(st.desde)}"></div>
+      <div class="fg"><label>Desde <span style="font-weight:400;color:var(--text3)">(no antes del ${fd(fdCorte_(st.rubro))})</span></label><input type="date" id="fd-desde" min="${fdCorte_(st.rubro)}" value="${fdEsc_(fdDesdeValido_(st.rubro, st.desde))}"></div>
     </div>`;
   if (st.archivos.length) {
     h += `<table class="dt" style="margin-top:10px"><thead><tr><th>Archivo</th><th>Campo</th><th class="tc">Filas</th><th class="tc">Filas de ${fdEsc_(rub.label.toLowerCase())}</th><th></th></tr></thead><tbody>` +
@@ -21623,9 +21628,15 @@ function attachImportarFielddataEvents() {
     st.items = null; render();
   };
   const rubSel = document.getElementById('fd-rubro');
-  if (rubSel) rubSel.onchange = () => { st.rubro = rubSel.value; st.items = null; st.sel = {}; st.log = []; st.filtro = 'pendientes'; render(); };
+  if (rubSel) rubSel.onchange = () => { st.rubro = rubSel.value; st.desde = fdCorte_(st.rubro); st.items = null; st.sel = {}; st.log = []; st.filtro = 'pendientes'; render(); };
   const desde = document.getElementById('fd-desde');
-  if (desde) desde.onchange = () => { st.desde = desde.value || '2026-09-01'; if (st.items) { fdAnalizar_(); render(); } };
+  if (desde) desde.onchange = () => {
+    const pedido = desde.value;
+    st.desde = fdDesdeValido_(st.rubro, pedido);
+    if (pedido && pedido !== st.desde) toast(FD_RUBROS_[st.rubro].label + ': no se puede importar antes del ' + fd(fdCorte_(st.rubro)) + ' (antes de esa fecha el sistema tiene otra historia).', 'err');
+    if (st.items) fdAnalizar_();
+    render();
+  };
   document.querySelectorAll('.fd-campo-archivo').forEach(s => s.onchange = () => { st.archivos[Number(s.dataset.i)].campo_id = s.value; st.items = null; render(); });
   document.querySelectorAll('.fd-quitar').forEach(b => b.onclick = () => { st.archivos.splice(Number(b.dataset.i), 1); st.items = null; render(); });
   const an = document.getElementById('fd-analizar');
