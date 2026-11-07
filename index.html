@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_264';
+const APP_VERSION = 'index_consolidado_4_6_155_265';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -21280,14 +21280,16 @@ function buildImportarFielddata() {
   if (st.items) {
     // 2. Equivalencias de rodeo por nota
     const usadas = {};
-    st.items.filter(it => it.clase === 'consumo').forEach(it => { usadas[it.equivKey] = (usadas[it.equivKey] || 0) + 1; });
+    // v265 -- Solo las notas de filas que faltan resolver: las ya importadas,
+    // ya cargadas o descartadas no necesitan rodeo y confundían al reaparecer.
+    st.items.filter(it => it.clase === 'consumo' && ['nuevo', 'pendiente', 'posible_dup'].includes(it.estado)).forEach(it => { usadas[it.equivKey] = (usadas[it.equivKey] || 0) + 1; });
     const keys = Object.keys(usadas).sort((a, b) => {
       const ea = st.equiv[a], eb = st.equiv[b];
       return (ea.confirmado === eb.confirmado ? 0 : ea.confirmado ? 1 : -1) || fdCampoNombre_(ea.campo_id).localeCompare(fdCampoNombre_(eb.campo_id)) || ea.texto.localeCompare(eb.texto);
     });
     const sinConfirmar = keys.filter(k => !st.equiv[k].confirmado).length;
     const sugeridasListas = keys.filter(k => !st.equiv[k].confirmado && st.equiv[k].rodeo_id).length;
-    h += `<div class="panel"><div class="panel-title">2. Rodeo según la nota de Fielddata <span class="pill ${sinConfirmar ? 'pill-gold' : 'pill-green'}">${sinConfirmar ? sinConfirmar + ' sin confirmar' : 'todas confirmadas'}</span></div>
+    if (keys.length) h += `<div class="panel"><div class="panel-title">2. Rodeo según la nota de Fielddata <span class="pill ${sinConfirmar ? 'pill-gold' : 'pill-green'}">${sinConfirmar ? sinConfirmar + ' sin confirmar' : 'todas confirmadas'}</span></div>
       <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Cada nota distinta se confirma una sola vez y queda guardada para las próximas importaciones. Las sugeridas las propone la app: revisalas antes de confirmar.</p>
       ${sugeridasListas ? `<button class="btn btn-secondary btn-sm" id="fd-confirmar-sugeridas" style="margin-bottom:8px">Confirmar las ${sugeridasListas} sugeridas</button>` : ''}
       <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Campo</th><th>Nota en Fielddata</th><th class="tc">Filas</th><th>Rodeo del sistema</th><th>Estado</th><th></th></tr></thead><tbody>` +
