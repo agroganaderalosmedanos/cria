@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_267';
+const APP_VERSION = 'index_consolidado_4_6_155_268';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1553,7 +1553,7 @@ function pageSubtitle(p) {
     insumos: 'Compras y consumos de alimentación y veterinaria',
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
-    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — rollos, sales magnesiadas, concentrado magnesiado y sales proteicas',
+    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — insumos (rollos, sales, concentrado, calostro, rumex) y hacienda',
   };
   return subs[p] || '';
 }
@@ -20960,7 +20960,9 @@ async function fdLeerArchivo_(file) {
     });
   }
   const col = { fecha: idx('fecha'), area: idx('area'), tipo: idx('tipo'), lote: idx('lote'), rodeo: idx('rodeo'),
-    insumo: idx('insumo'), cantidad: idx('cantidad'), unidad: idx('unidad'), categoria: idx('categoria'), nota: idx('nota') };
+    insumo: idx('insumo'), cantidad: idx('cantidad'), unidad: idx('unidad'), categoria: idx('categoria'), nota: idx('nota'),
+    // v268 -- columnas de hacienda del export unificado
+    catAnimal: idx('categoria animal'), cabezas: idx('cabezas'), movimiento: idx('movimiento'), peso: idx('peso') };
   if (col.fecha < 0 || col.area < 0 || col.tipo < 0 || col.insumo < 0 || col.cantidad < 0) {
     throw new Error('El archivo "' + file.name + '" no tiene el formato de Fielddata (ni el export unificado con Área/Tipo/Insumo, ni el reporte de Insumos con Producto/Cantidad).');
   }
@@ -20970,6 +20972,7 @@ async function fdLeerArchivo_(file) {
     lote: String(g(r, 'lote') || ''), rodeo: String(g(r, 'rodeo') || ''), insumo: String(g(r, 'insumo') || ''),
     cantidad: Number(g(r, 'cantidad')) || 0, unidad: String(g(r, 'unidad') || ''), categoria: String(g(r, 'categoria') || ''),
     nota: String(g(r, 'nota') || '').trim(),
+    catAnimal: String(g(r, 'catAnimal') || ''), cabezas: Number(g(r, 'cabezas')) || 0, movimiento: String(g(r, 'movimiento') || ''), peso: Number(g(r, 'peso')) || 0,
   }));
 }
 
@@ -21012,6 +21015,8 @@ const FD_RUBROS_ = {
   // compra SIN PRECIO (en Insumos quedan marcadas "Falta precio").
   calostro:    { label: 'Calostro', unidad: 'Bolsas', corte: '2026-01-01', compras: true, esDelRubro: n => /^calostro/.test(n), producto: p => /^calostro/.test(fdNorm_(p.nombre)) },
   rumex:       { label: 'Rumex', unidad: 'Unidades', corte: '2026-07-27', compras: true, esDelRubro: n => /^rumex/.test(n), producto: p => /^rumex/.test(fdNorm_(p.nombre)) },
+  // v268 -- Hacienda (nacimientos, muertes, abortos, ventas, recategorizaciones): solo cruce.
+  hacienda:    { label: 'Hacienda', unidad: 'Cabezas', corte: '2026-09-01', hacienda: true, esDelRubro: () => false, producto: () => false },
 };
 // v266 -- Todos los campos mencionados en un texto (para detectar traslados
 // repartidos entre varios campos en una sola fila).
@@ -21051,6 +21056,7 @@ function fdAnalizar_() {
   st.error = '';
   if (!FD_RUBROS_[st.rubro]) st.rubro = 'rollos';
   const rubro = FD_RUBROS_[st.rubro];
+  if (rubro.hacienda) return fdAnalizarHacienda_(); // v268
   const productos = (S.catalogs && S.catalogs.productos) || [];
   const prodsRubro = productos.filter(rubro.producto);
   if (prodsRubro.length !== 1) { st.error = prodsRubro.length ? 'Hay más de un producto del catálogo que corresponde a "' + rubro.label + '": ' + prodsRubro.map(p => p.nombre).join(', ') + '.' : 'No encuentro en el catálogo el producto de "' + rubro.label + '".'; st.items = []; return; }
@@ -21309,6 +21315,282 @@ function fdAnalizar_() {
   st.prodId = prodId;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// v268 -- HACIENDA: CRUCE (solo lectura; no graba nada)
+// ══════════════════════════════════════════════════════════════════════
+// Lee del export unificado de Fielddata los nacimientos, muertes, abortos,
+// ventas y recategorizaciones, y los cruza contra Pariciones, Mortandad,
+// Abortos, Ventas y Movimientos (traslados) del sistema. Los cambios de lote
+// no son stock: se ignoran. Esta versión es de control: muestra qué está ya
+// cargado, qué hay que revisar y qué falta, para verificar el cruce antes de
+// armar la grabación (Crist, 07/11/2026).
+// - Rodeo: sale de la columna Rodeo de Fielddata; si viene vacía, de la
+//   categoría (y del lote, si es un ternero: en El Clavo Chico los
+//   nacimientos no traen rodeo). Se confirma una vez por campo.
+// - Nacido muerto = Nacimiento + Muerte del mismo día y rodeo, misma cantidad,
+//   con "muert" en la nota del nacimiento -> una Parición con nacidos muertos (mellizos si la
+//   nota lo dice).
+// - Muerte de ternero -> Mortandad en "Terneros (<rodeo madre>)". Las
+//   mortandades [pid:...] (nacidos muertos de una Parición) no se cruzan acá:
+//   ya van con su Parición.
+// - Recategorización -> traslado desde el rodeo de origen (Fielddata no trae
+//   el destino). Los traslados [abid:...] (por aborto) no se cruzan.
+const FD_HAC_MOVS_ = { nacimiento: 1, muerte: 1, aborto: 1, venta: 1, recategorizacion: 1 };
+const FD_HAC_CLASE_LABEL_ = { paricion: 'Nacimiento', nacido_muerto: 'Nacido muerto', muerte_ternero: 'Muerte de ternero', muerte: 'Muerte', aborto: 'Aborto', venta: 'Venta', recat: 'Recategorización' };
+
+function fdHacKey_(campoId, f) {
+  const r = fdNorm_(f.rodeo);
+  if (r) return 'hac|' + campoId + '|r:' + r;
+  const c = fdNorm_(f.catAnimal);
+  return 'hac|' + campoId + '|c:' + c + (/terner/.test(c) ? '|l:' + fdNorm_(f.lote) : '');
+}
+function fdHacKeyTexto_(f) {
+  if (String(f.rodeo || '').trim()) return String(f.rodeo).trim();
+  const c = String(f.catAnimal || '').trim() || '(sin categoría)';
+  return '(sin rodeo) ' + c + (/terner/.test(fdNorm_(c)) ? ' — ' + (f.lote || 'sin lote') : '');
+}
+function fdHacRodeoTerneros_(madreId) {
+  const m = rodeosTodos().find(r => String(r.rodeo_id) === String(madreId));
+  if (!m) return null;
+  return rodeosTodos().find(r => r.nombre === 'Terneros (' + m.nombre + ')' && String(r.campo_id) === String(m.campo_id)) || null;
+}
+function fdHacCampoDeRodeo_(id) {
+  const r = rodeosTodos().find(x => String(x.rodeo_id) === String(id));
+  return r ? String(r.campo_id) : '';
+}
+
+function fdAnalizarHacienda_() {
+  const st = S.fd;
+  st.error = '';
+  st.desde = fdDesdeValido_('hacienda', st.desde);
+  const desde = st.desde;
+  const huellaEstado = {};
+  (S.cache.fielddata_importados || []).forEach(h => { huellaEstado[String(h.huella)] = h; });
+  const equivG = {};
+  (S.cache.fielddata_equivalencias || []).filter(e => e.tipo === 'hac_rodeo').forEach(e => { equivG['hac|' + e.campo_id + '|' + e.texto] = String(e.destino_id); });
+
+  // 1. Filas fuente
+  const fuentes = [];
+  const camposCargados = new Set();
+  const sinFormato = [];
+  st.hacCambiosLote = 0;
+  st.archivos.forEach(a => {
+    if (!a.campo_id) return;
+    if (a.filas.length && a.filas[0].formato === 'reporte_insumos') { sinFormato.push(a.nombre); return; }
+    camposCargados.add(String(a.campo_id));
+    const ocurr = {};
+    a.filas.forEach(f => {
+      if (fdNorm_(f.area) !== 'movimientos de hacienda') return;
+      const mov = fdNorm_(f.movimiento);
+      if (!f.fecha || f.fecha < desde) return;
+      if (mov === 'cambio de lote') { st.hacCambiosLote++; return; }
+      if (!FD_HAC_MOVS_[mov]) return;
+      const cab = Number(f.cabezas) || 0;
+      if (!cab) return;
+      const key = fdHacKey_(a.campo_id, f);
+      const base = ['fdh', a.campo_id, f.fecha, mov, fdNorm_(f.rodeo), fdNorm_(f.catAnimal), cab, fdNorm_(f.nota), fdNorm_(f.lote)].join('|');
+      ocurr[base] = (ocurr[base] || 0) + 1;
+      fuentes.push({ huella: base + '|' + ocurr[base], campo_id: String(a.campo_id), fecha: f.fecha, mov, cab, peso: Number(f.peso) || 0,
+        rodeoFd: f.rodeo, catFd: f.catAnimal, lote: f.lote, nota: f.nota, equivKey: key });
+      if (!st.equiv[key]) {
+        const g = equivG[key];
+        const esTernSinRodeo = !fdNorm_(f.rodeo) && /terner/.test(fdNorm_(f.catAnimal));
+        st.equiv[key] = g
+          ? { campo_id: String(a.campo_id), texto: key.split('|').slice(2).join('|'), notaOriginal: fdHacKeyTexto_(f), rodeo_id: g, origen: 'guardado', confirmado: true, hac: true }
+          : { campo_id: String(a.campo_id), texto: key.split('|').slice(2).join('|'), notaOriginal: fdHacKeyTexto_(f), rodeo_id: esTernSinRodeo ? '' : fdSugerirRodeo_(a.campo_id, f.rodeo || f.catAnimal), origen: 'sugerido', confirmado: false, hac: true };
+      }
+    });
+  });
+  if (sinFormato.length) st.error = 'Para hacienda hace falta el export unificado de Fielddata (con Movimiento y Cabezas). Estos archivos son el reporte de Insumos y no se leen: ' + sinFormato.join(', ') + '.';
+
+  // 2. Items: nacidos muertos (Nacimiento + Muerte) y el resto
+  const items = [];
+  const usadosF = new Set();
+  const nacs = fuentes.filter(f => f.mov === 'nacimiento');
+  const muertes = fuentes.filter(f => f.mov === 'muerte' && /terner/.test(fdNorm_(f.catFd)));
+  nacs.forEach(n => {
+    const m = muertes.find(m => !usadosF.has(m) && m.campo_id === n.campo_id && m.fecha === n.fecha && m.equivKey === n.equivKey && m.cab === n.cab
+      && /muert/.test(fdNorm_(n.nota))); // la nota del NACIMIENTO dice muerto (si solo lo dice la muerte, puede ser un ternero de días)
+    if (!m) return;
+    usadosF.add(n); usadosF.add(m);
+    const notas = fdNorm_(n.nota) + ' ' + fdNorm_(m.nota);
+    items.push({ clase: 'nacido_muerto', fecha: n.fecha, campo_id: n.campo_id, cab: n.cab, peso: 0, equivKey: n.equivKey, fuentes: [n, m],
+      mellizos: /mellizo/.test(notas) && n.cab >= 2 ? Math.floor(n.cab / 2) : 0 });
+  });
+  fuentes.forEach(f => {
+    if (usadosF.has(f)) return;
+    const clase = f.mov === 'nacimiento' ? 'paricion' : f.mov === 'muerte' ? (/terner/.test(fdNorm_(f.catFd)) ? 'muerte_ternero' : 'muerte')
+      : f.mov === 'aborto' ? 'aborto' : f.mov === 'venta' ? 'venta' : 'recat';
+    items.push({ clase, fecha: f.fecha, campo_id: f.campo_id, cab: f.cab, peso: f.peso, equivKey: f.equivKey, fuentes: [f] });
+  });
+
+  // 3. Registros del sistema (de los campos de los archivos subidos)
+  const enCampos = id => camposCargados.has(fdHacCampoDeRodeo_(id));
+  const minFecha = d => String(d || '') >= desde || fdDias_(desde, String(d || '1900-01-01')) <= FD_TOLERANCIA_DIAS_CERCA_;
+  const sis = { pariciones: [], mortandad: [], abortos: [], ventas: [], movimientos: [] };
+  (S.cache.pariciones || []).forEach(p => { if (enCampos(p.rodeo_id) && minFecha(p.fecha)) sis.pariciones.push({ ent: 'pariciones', id: String(p.paricion_id), fecha: String(p.fecha || ''), rodeo: String(p.rodeo_id), qty: (Number(p.nacidos_vivos) || 0) + (Number(p.nacidos_muertos) || 0),
+    desc: 'Parición ' + (Number(p.nacidos_vivos) || 0) + ' vivos' + (Number(p.nacidos_muertos) ? ' / ' + p.nacidos_muertos + ' muertos' : '') }); });
+  (S.cache.mortandad || []).forEach(m => { if (/\[pid:\d+\]/.test(String(m.observacion || ''))) return; if (enCampos(m.rodeo_id) && minFecha(m.fecha)) sis.mortandad.push({ ent: 'mortandad', id: String(m.mortandad_id), fecha: String(m.fecha || ''), rodeo: String(m.rodeo_id), qty: Number(m.cantidad) || 1,
+    desc: 'Mortandad ' + (Number(m.cantidad) || 1) + (m.causa ? ' (' + m.causa + ')' : '') }); });
+  const abG = {};
+  (S.cache.abortos || []).forEach(a => { if (!enCampos(a.rodeo_id) || !minFecha(a.fecha)) return; const k = a.rodeo_id + '|' + a.fecha; (abG[k] = abG[k] || { ent: 'abortos', ids: [], fecha: String(a.fecha || ''), rodeo: String(a.rodeo_id), qty: 0 }); abG[k].ids.push(String(a.aborto_id)); abG[k].qty++; });
+  Object.values(abG).forEach(g => { g.id = g.ids.join(','); g.desc = 'Aborto' + (g.qty > 1 ? 's ' + g.qty : ''); sis.abortos.push(g); });
+  (S.cache.ventas || []).forEach(v => { if (enCampos(v.rodeo_id) && minFecha(v.fecha_salida)) sis.ventas.push({ ent: 'ventas', id: String(v.venta_id), fecha: String(v.fecha_salida || ''), rodeo: String(v.rodeo_id), qty: Number(v.cant_animales) || 0,
+    desc: 'Venta ' + (Number(v.cant_animales) || 0) + (v.comprador ? ' a ' + v.comprador : '') }); });
+  (S.cache.movimientos || []).forEach(m => {
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') return;
+    if (/\[abid:\d+\]/.test(String(m.observaciones || ''))) return;
+    if (enCampos(m.rodeo_origen_id) && minFecha(m.fecha)) sis.movimientos.push({ ent: 'movimientos', id: String(m.movimiento_id), fecha: String(m.fecha || ''), rodeo: String(m.rodeo_origen_id), qty: Number(m.cantidad) || 0,
+      desc: 'Traslado ' + (Number(m.cantidad) || 0) + ' → ' + fdRodeoNombre_(m.rodeo_destino_id) });
+  });
+  const entDeClase = { paricion: 'pariciones', nacido_muerto: 'pariciones', muerte_ternero: 'mortandad', muerte: 'mortandad', aborto: 'abortos', venta: 'ventas', recat: 'movimientos' };
+  const usados = new Set();
+  const rid = it => { const e = st.equiv[it.equivKey]; return e && e.rodeo_id ? String(e.rodeo_id) : ''; };
+  // Rodeos donde puede estar cargado en el sistema
+  const rodeosOk = it => {
+    const r = rid(it); if (!r) return [];
+    if (it.clase === 'muerte_ternero') { const t = fdHacRodeoTerneros_(r); return t ? [String(t.rodeo_id), r] : [r]; }
+    return [r];
+  };
+  const descSis = s => fd(s.fecha) + ' ' + s.desc + ' en ' + fdRodeoNombre_(s.rodeo);
+
+  // 4. Estado
+  items.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const porResolver = [];
+  items.forEach(it => {
+    it.huellas = it.fuentes.map(f => f.huella);
+    it.id = it.huellas.join('##');
+    it.nota = it.fuentes.map(f => f.nota || '—').join(' / ');
+    it.entidad = entDeClase[it.clase];
+    const h = it.huellas.map(x => huellaEstado[x]).find(Boolean);
+    if (h) {
+      it.estado = h.estado === 'grabado' ? 'importado' : (h.estado === 'ya_cargado' ? 'ya_cargado' : 'descartado');
+      it.motivo = h.estado === 'grabado' ? 'Grabado por el importador.' : (h.estado === 'ya_cargado' ? 'Ya estaba en el sistema.' : 'Descartado.');
+      if (h.registro_id) h.registro_id.toString().split(',').forEach(x => usados.add(it.entidad + '|' + x));
+      return;
+    }
+    porResolver.push(it);
+  });
+  const lista = it => sis[it.entidad].filter(s => !usados.has(s.ent + '|' + s.id));
+  // A. Igual: misma fecha, rodeo y cabezas
+  porResolver.forEach(it => {
+    const ok = rodeosOk(it); if (!ok.length) return;
+    const s = lista(it).find(s => s.fecha === it.fecha && ok.includes(s.rodeo) && s.qty === it.cab);
+    if (!s) return;
+    usados.add(s.ent + '|' + s.id);
+    it.estado = 'ya_cargado'; it.registroId = s.id; it.motivo = 'En el sistema: ' + descSis(s) + '.';
+  });
+  // B. Casi igual: mismas cabezas, hasta 3 días, mismo rodeo o mismo campo
+  porResolver.filter(it => !it.estado).forEach(it => {
+    const ok = rodeosOk(it);
+    let mejor = null, mejorSc = -99;
+    lista(it).forEach(s => {
+      if (s.qty !== it.cab) return;
+      const d = Math.abs(fdDias_(s.fecha, it.fecha));
+      if (d > FD_TOLERANCIA_DIAS_CASI_IGUAL_) return;
+      const mismoRodeo = ok.includes(s.rodeo);
+      if (!mismoRodeo && fdHacCampoDeRodeo_(s.rodeo) !== it.campo_id) return;
+      const sc = (mismoRodeo ? 10 : 0) - d;
+      if (sc > mejorSc) { mejor = s; mejorSc = sc; }
+    });
+    if (!mejor) return;
+    usados.add(mejor.ent + '|' + mejor.id);
+    const d = Math.abs(fdDias_(mejor.fecha, it.fecha));
+    const difs = [];
+    if (d) difs.push(d + (d === 1 ? ' día' : ' días') + ' de diferencia');
+    if (!ok.length) difs.push('falta confirmar el rodeo');
+    else if (!ok.includes(mejor.rodeo)) difs.push('distinto rodeo (Fielddata: ' + fdRodeoNombre_(ok[0]) + ')');
+    it.estado = 'posible_dup'; it.registroId = mejor.id;
+    it.motivo = '¿Ya cargado? En el sistema: ' + descSis(mejor) + (difs.length ? ' — ' + difs.join(', ') : '') + '.';
+  });
+  // C. Algo cerca del mismo rodeo (o campo) sin cruzar, ±15 días, cualquier cantidad
+  porResolver.filter(it => !it.estado).forEach(it => {
+    const ok = rodeosOk(it);
+    const cerca = lista(it).filter(s => (ok.length ? ok.includes(s.rodeo) : fdHacCampoDeRodeo_(s.rodeo) === it.campo_id)
+      && Math.abs(fdDias_(s.fecha, it.fecha)) <= FD_TOLERANCIA_DIAS_CERCA_)
+      .sort((a, b) => Math.abs(fdDias_(a.fecha, it.fecha)) - Math.abs(fdDias_(b.fecha, it.fecha)));
+    if (!cerca.length) return;
+    it.estado = 'posible_dup'; it.registroId = '';
+    it.motivo = '¿Cargado con otra fecha o cantidad? El sistema tiene sin cruzar: ' + cerca.slice(0, 4).map(descSis).join('; ') + (cerca.length > 4 ? ' y ' + (cerca.length - 4) + ' más' : '') + '.';
+  });
+  // Lo que queda
+  porResolver.filter(it => !it.estado).forEach(it => {
+    const e = st.equiv[it.equivKey];
+    if (!e || !e.rodeo_id) { it.estado = 'pendiente'; it.motivo = 'Falta el rodeo (arriba).'; return; }
+    if (it.clase === 'muerte_ternero' && !fdHacRodeoTerneros_(e.rodeo_id)) { it.estado = 'revisar'; it.motivo = 'No encuentro el rodeo "Terneros (' + fdRodeoNombre_(e.rodeo_id) + ')" en ' + fdCampoNombre_(it.campo_id) + '.'; return; }
+    it.estado = 'nuevo';
+    const r = fdRodeoNombre_(e.rodeo_id);
+    it.motivo = it.clase === 'paricion' ? 'No está en el sistema. Sería una Parición en ' + r + ': ' + it.cab + ' vivos.'
+      : it.clase === 'nacido_muerto' ? 'No está en el sistema. Sería una Parición en ' + r + ': ' + it.cab + ' nacido(s) muerto(s)' + (it.mellizos ? ', vaca con mellizos' : '') + '.'
+      : it.clase === 'muerte_ternero' ? 'No está en el sistema. Sería Mortandad en ' + fdHacRodeoTerneros_(e.rodeo_id).nombre + '.'
+      : it.clase === 'muerte' ? 'No está en el sistema. Sería Mortandad en ' + r + ' (falta indicar si estaba preñada o ya había parido).'
+      : it.clase === 'aborto' ? 'No está en el sistema. Sería un Aborto en ' + r + '.'
+      : it.clase === 'venta' ? 'No está en el sistema. Sería una Venta de ' + r + ', sin precio (sale de la liquidación).'
+      : 'No está en el sistema. Sería un traslado desde ' + r + ' (el destino lo elegís vos: Fielddata no lo trae).';
+    if (!campanaDeFecha_(it.fecha)) { it.estado = 'revisar'; it.motivo = 'La fecha no cae en ninguna campaña del catálogo.'; }
+  });
+  // 5. Solo en el sistema (desde la fecha elegida)
+  st.hacSolo = [];
+  Object.keys(sis).forEach(k => sis[k].forEach(s => { if (!usados.has(s.ent + '|' + s.id) && s.fecha >= desde) st.hacSolo.push(s); }));
+  st.hacSolo.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  st.items = items;
+  st.sel = {};
+}
+
+function fdBuildHacienda_(st) {
+  let h = '';
+  // 2. Rodeos
+  const usadas = {};
+  st.items.filter(it => ['nuevo', 'pendiente', 'posible_dup', 'revisar', 'ya_cargado'].includes(it.estado)).forEach(it => { usadas[it.equivKey] = (usadas[it.equivKey] || 0) + 1; });
+  const keys = Object.keys(usadas).sort((a, b) => {
+    const ea = st.equiv[a], eb = st.equiv[b];
+    return (ea.confirmado === eb.confirmado ? 0 : ea.confirmado ? 1 : -1) || fdCampoNombre_(ea.campo_id).localeCompare(fdCampoNombre_(eb.campo_id)) || ea.notaOriginal.localeCompare(eb.notaOriginal);
+  });
+  const sinConfirmar = keys.filter(k => !st.equiv[k].confirmado).length;
+  const sugeridas = keys.filter(k => !st.equiv[k].confirmado && st.equiv[k].rodeo_id).length;
+  if (keys.length) h += `<div class="panel"><div class="panel-title">2. Rodeo del sistema según Fielddata <span class="pill ${sinConfirmar ? 'pill-gold' : 'pill-green'}">${sinConfirmar ? sinConfirmar + ' sin confirmar' : 'todos confirmados'}</span></div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Cada rodeo (o categoría, cuando Fielddata no trae rodeo) se confirma una vez por campo. En los terneros es el rodeo de la madre. En esta versión la confirmación vale para esta sesión (se guarda cuando se arme la grabación).</p>
+    ${sugeridas ? `<button class="btn btn-secondary btn-sm" id="fd-confirmar-sugeridas" style="margin-bottom:8px">Confirmar los ${sugeridas} sugeridos</button>` : ''}
+    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Campo</th><th>En Fielddata</th><th class="tc">Filas</th><th>Rodeo del sistema</th><th>Estado</th><th></th></tr></thead><tbody>` +
+    keys.map(k => {
+      const e = st.equiv[k];
+      const opts = rodeosPorCampo(e.campo_id).map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id) === String(e.rodeo_id) ? 'selected' : ''}>${fdEsc_(r.nombre)}</option>`).join('');
+      const estado = e.confirmado ? `<span class="pill pill-green">${e.origen === 'guardado' ? 'Guardado' : 'Confirmado'}</span>` : (e.rodeo_id ? '<span class="pill pill-gold">Sugerido</span>' : '<span class="pill pill-red">Sin asignar</span>');
+      return `<tr><td>${fdEsc_(fdCampoNombre_(e.campo_id))}</td><td style="white-space:normal">${fdEsc_(e.notaOriginal)}</td><td class="tc">${usadas[k]}</td>
+        <td><select class="fd-equiv-sel" data-k="${fdEsc_(k)}"><option value="">— Elegí —</option>${opts}</select></td><td>${estado}</td>
+        <td>${!e.confirmado && e.rodeo_id ? `<button class="btn btn-secondary btn-sm fd-equiv-ok" data-k="${fdEsc_(k)}">Confirmar</button>` : ''}</td></tr>`;
+    }).join('') + `</tbody></table></div></div>`;
+  // 3. Movimientos
+  const cuenta = {};
+  st.items.forEach(it => { cuenta[it.estado] = (cuenta[it.estado] || 0) + 1; });
+  const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar)', todos: 'Todos', nuevo: 'Nuevos', posible_dup: '¿Ya cargado? (revisar)', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados' };
+  if (!filtros[st.filtro]) st.filtro = 'pendientes';
+  const visibles = st.items.filter(it => st.filtro === 'todos' ? true : st.filtro === 'pendientes' ? ['nuevo', 'pendiente', 'revisar', 'posible_dup'].includes(it.estado) : it.estado === st.filtro);
+  const porClase = {};
+  st.items.forEach(it => { porClase[it.clase] = (porClase[it.clase] || 0) + it.cab; });
+  h += `<div class="panel"><div class="panel-title">3. Movimientos de hacienda</div>
+    <div style="background:var(--green-bg);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--green-text);margin-bottom:10px">Versión de control: <b>no graba nada</b>. Solo muestra el cruce contra el sistema. ${st.hacCambiosLote ? st.hacCambiosLote + ' cambios de lote ignorados (no son stock).' : ''}</div>
+    <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">Cabezas en Fielddata: ${Object.keys(FD_HAC_CLASE_LABEL_).filter(k => porClase[k]).map(k => FD_HAC_CLASE_LABEL_[k] + ' ' + fn(porClase[k])).join(' · ') || '—'}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'posible_dup', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
+    <div style="margin-bottom:10px"><select id="fd-filtro">${Object.keys(filtros).map(k => `<option value="${k}" ${st.filtro === k ? 'selected' : ''}>${filtros[k]}</option>`).join('')}</select></div>
+    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Estado</th><th>Fecha</th><th>Campo</th><th>Movimiento</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tc">Kg</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
+    (visibles.length ? visibles.map(it => {
+      const e = st.equiv[it.equivKey];
+      return `<tr><td>${fdEstadoPill_(it.estado)}</td><td>${fd(it.fecha)}</td><td>${fdEsc_(fdCampoNombre_(it.campo_id))}</td><td>${FD_HAC_CLASE_LABEL_[it.clase]}</td>
+        <td>${e && e.rodeo_id ? fdEsc_(fdRodeoNombre_(e.rodeo_id)) : '<i>' + fdEsc_(e ? e.notaOriginal : '—') + '</i>'}</td><td class="tc">${fn(it.cab)}</td><td class="tc">${it.peso ? fn(it.peso) : '—'}</td>
+        <td style="white-space:normal;max-width:260px">${fdEsc_(it.nota)}</td>
+        <td style="white-space:normal;max-width:320px;font-size:12px;color:var(--text2)">${fdEsc_(it.motivo || '')}</td></tr>`;
+    }).join('') : `<tr><td colspan="9" style="color:var(--text3)">No hay filas con este filtro.</td></tr>`) + `</tbody></table></div></div>`;
+  // 4. Solo en el sistema
+  const solo = st.hacSolo || [];
+  h += `<div class="panel"><div class="panel-title">4. Solo en el sistema <span class="pill ${solo.length ? 'pill-gold' : 'pill-green'}">${solo.length ? solo.length + ' registros' : 'ninguno'}</span></div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Pariciones, mortandad, abortos, ventas y traslados del sistema, desde el ${fd(st.desde)} y en los campos de los archivos, que no coinciden con ninguna fila de Fielddata. No se cambia nada desde acá. Los traslados incluyen todos (también cesiones, destetes o pasajes entre campos), no solo recategorizaciones.</p>` +
+    (solo.length ? `<div style="overflow-x:auto"><table class="dt"><thead><tr><th>Fecha</th><th>Campo</th><th>Registro</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tc">Id</th></tr></thead><tbody>` +
+      solo.map(s => `<tr><td>${fd(s.fecha)}</td><td>${fdEsc_(fdCampoNombre_(fdHacCampoDeRodeo_(s.rodeo)))}</td><td>${fdEsc_(s.desc)}</td><td>${fdEsc_(fdRodeoNombre_(s.rodeo))}</td><td class="tc">${fn(s.qty)}</td><td class="tc">${fdEsc_(s.id)}</td></tr>`).join('') +
+      `</tbody></table></div>` : '') + `</div>`;
+  return h;
+}
+
 function fdEstadoPill_(e) {
   const m = { nuevo: ['pill-green', 'Nuevo'], pendiente: ['pill-gold', 'Falta rodeo'], revisar: ['pill-red', 'Revisar'],
     ya_cargado: ['pill-gray', 'Ya cargado'], importado: ['pill-blue', 'Importado'], descartado: ['pill-gray', 'Descartado'], no_aplica: ['pill-gray', 'No se carga'], otro_producto: ['pill-gold', 'Corregir producto'], posible_dup: ['pill-red', 'Revisar'] };
@@ -21324,7 +21606,7 @@ function buildImportarFielddata() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b>, <b>concentrado magnesiado fortificado</b> y <b>sales proteicas</b> (estos tres, solo consumos: son de stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b>, <b>concentrado magnesiado fortificado</b> y <b>sales proteicas</b> (estos tres, solo consumos: son de stock común), y <b>calostro</b> y <b>rumex</b> (por campo: compras, traslados y consumos). <b>Hacienda</b> (nacimientos, muertes, abortos, ventas y recategorizaciones) por ahora solo se cruza contra el sistema y necesita el export unificado. Se trabaja de a un rubro por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid">
       <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
@@ -21336,14 +21618,16 @@ function buildImportarFielddata() {
         <td>${fdEsc_(a.nombre)}</td>
         <td><select class="fd-campo-archivo" data-i="${i}"><option value="">— Elegí el campo —</option>${campos.map(c => `<option value="${c.campo_id}" ${String(c.campo_id) === String(a.campo_id) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></td>
         <td class="tc">${a.filas.length}</td>
-        <td class="tc">${a.filas.filter(f => fdNorm_(f.area) === 'insumos' && rub.esDelRubro(fdNorm_(f.insumo))).length}</td>
+        <td class="tc">${rub.hacienda ? a.filas.filter(f => fdNorm_(f.area) === 'movimientos de hacienda' && FD_HAC_MOVS_[fdNorm_(f.movimiento)]).length : a.filas.filter(f => fdNorm_(f.area) === 'insumos' && rub.esDelRubro(fdNorm_(f.insumo))).length}</td>
         <td><button class="btn btn-secondary btn-sm fd-quitar" data-i="${i}">Quitar</button></td></tr>`).join('') + `</tbody></table>`;
   }
   h += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" id="fd-analizar" ${st.archivos.length ? '' : 'disabled'}>Analizar</button></div></div>`;
 
   if (st.error) h += `<div class="panel" style="border-color:var(--red);color:var(--red)">${fdEsc_(st.error)}</div>`;
 
-  if (st.items) {
+  if (st.items && rub.hacienda) {
+    h += fdBuildHacienda_(st); // v268
+  } else if (st.items) {
     // 2. Equivalencias de rodeo por nota
     const usadas = {};
     // v265 -- Solo las notas de filas que faltan resolver: las ya importadas,
@@ -21426,6 +21710,10 @@ async function fdRecargarDatos_() {
     loadEntity('fielddata_importados', true).catch(() => { S.cache.fielddata_importados = []; }),
     loadEntity('fielddata_equivalencias', true).catch(() => { S.cache.fielddata_equivalencias = []; }),
   ]);
+  // v268 -- Hacienda: se cruza contra Pariciones, Mortandad, Abortos, Ventas y Movimientos
+  if (S.fd && FD_RUBROS_[S.fd.rubro] && FD_RUBROS_[S.fd.rubro].hacienda) {
+    await Promise.all(['pariciones', 'mortandad', 'abortos', 'ventas', 'movimientos'].map(e => loadEntity(e, true).catch(() => {})));
+  }
 }
 
 async function fdGrabar_(modo) {
