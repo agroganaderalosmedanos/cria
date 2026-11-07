@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_259';
+const APP_VERSION = 'index_consolidado_4_6_155_260';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -13692,6 +13692,21 @@ function buildInsumos() {
     }
   }
 
+  // v260 -- Stock de cada insumo a una fecha elegida (por campo si el
+  // producto se guarda por campo). Misma cuenta que el backend
+  // (getStockProductos_), pero solo con los movimientos hasta esa fecha.
+  h += `<div class="panel">
+    <div class="panel-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Stock de insumos a una fecha
+      <input type="date" id="in-stock-fecha" value="${S.insStockFecha || today()}" style="font-size:13px;padding:4px 8px;font-weight:400" onchange="S.insStockFecha=this.value; renderStockInsumosAFecha_()">
+      <select id="in-stock-cat" style="font-size:13px;padding:4px 8px;font-weight:400" onchange="S.insStockCat=this.value; renderStockInsumosAFecha_()">
+        <option value="">Todas las categorías</option>
+        ${[...new Set(productos.map(p => p.categoria).filter(Boolean))].map(c => `<option value="${c}" ${S.insStockCat === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>
+      <button class="btn btn-secondary btn-sm" onclick="exportarInsumosExcel_()" style="margin-left:auto">⬇ Descargar Excel</button>
+    </div>
+    <div id="in-stock-fecha-tabla">${buildStockInsumosAFecha_(S.insStockFecha || today(), S.insStockCat || '')}</div>
+  </div>`;
+
   const categoriasIns = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
   // ── Panel Precios Vigentes ──────────────────────────────────────────────
   h += `<div class="panel">
@@ -13788,6 +13803,7 @@ function buildInsumos() {
     </div>
     <div class="fg"><label>Desde</label><input type="date" id="in-hist-desde" onchange="renderInsumosHistorialFiltrado()"></div>
     <div class="fg"><label>Hasta</label><input type="date" id="in-hist-hasta" onchange="renderInsumosHistorialFiltrado()"></div>
+    <div class="fg" style="justify-content:flex-end"><label>&nbsp;</label><button class="btn btn-secondary" onclick="exportarInsumosExcel_()" title="Baja los movimientos con estos filtros, con el saldo de cada insumo">⬇ Descargar Excel</button></div>
   </div>
   </div>
   <div id="in-historial-tabla">${buildInsumosHistorial_(compras, consumos, '', '', '', '', '', '', S.cache.traslados_insumos || [], S.cache.ajustes_insumos || [])}</div>`;
@@ -13935,6 +13951,196 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
   h += '</tbody></table></div>';
   return h;
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// v260 — STOCK DE INSUMOS A UNA FECHA + EXCEL DE MOVIMIENTOS
+// ══════════════════════════════════════════════════════════════════════
+// Misma lógica que getStockProductos_ del backend (compras + ajustes suman,
+// consumos restan, traslados mueven entre campos sin cambiar el total),
+// pero contando solo los movimientos con fecha <= la fecha elegida.
+function insStockAFecha_(fecha) {
+  const productos = (S.catalogs && S.catalogs.productos) || [];
+  const res = {};
+  productos.forEach(p => { res[String(p.producto_id)] = { total: 0, porCampo: {} }; });
+  const sumar = (pid, cid, cant, alTotal) => {
+    const r = res[String(pid)]; if (!r) return;
+    if (alTotal) r.total += cant;
+    if (cid) r.porCampo[String(cid)] = (r.porCampo[String(cid)] || 0) + cant;
+  };
+  const ok = f => !fecha || String(f || '') <= fecha;
+  (S.cache.compras_insumos || []).forEach(c => { if (ok(c.fecha)) sumar(c.producto_id, c.campo_id, Number(c.cantidad) || 0, true); });
+  (S.cache.consumos_insumos || []).forEach(c => { if (ok(c.fecha)) sumar(c.producto_id, c.campo_id, -(Number(c.cantidad) || 0), true); });
+  (S.cache.traslados_insumos || []).forEach(t => {
+    if (!ok(t.fecha)) return;
+    const cant = Number(t.cantidad) || 0;
+    sumar(t.producto_id, t.campo_origen_id, -cant, false);
+    sumar(t.producto_id, t.campo_destino_id, cant, false);
+  });
+  (S.cache.ajustes_insumos || []).forEach(a => { if (ok(a.fecha)) sumar(a.producto_id, a.campo_id, Number(a.cantidad) || 0, true); });
+  return res;
+}
+
+function buildStockInsumosAFecha_(fecha, categoria) {
+  if (S.cache.compras_insumos === undefined || S.cache.consumos_insumos === undefined) {
+    return '<div class="empty-state"><span class="ico">◌</span><div class="msg">Cargando datos…</div></div>';
+  }
+  const productos = ((S.catalogs && S.catalogs.productos) || []).filter(p => !categoria || p.categoria === categoria);
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const st = insStockAFecha_(fecha);
+  // Control: a la fecha de hoy (o después) tiene que dar igual que el stock
+  // que calcula el backend. Si no da, se avisa en vez de mostrar otro número.
+  const controlar = fecha >= today() && (S.stockProductos || []).length;
+  const backend = {}; (S.stockProductos || []).forEach(p => { backend[String(p.producto_id)] = p; });
+  let difieren = 0;
+  const filas = productos.map(p => {
+    const pid = String(p.producto_id), r = st[pid] || { total: 0, porCampo: {} };
+    const pc = esPorCampo_(p.por_campo);
+    const total = pc ? Object.values(r.porCampo).reduce((a, b) => a + b, 0) : r.total;
+    let dif = false;
+    if (controlar && backend[pid]) {
+      const b = backend[pid];
+      if (pc) dif = campos.some(c => Math.abs(((b.stock_por_campo || {})[c.campo_id] || 0) - (r.porCampo[String(c.campo_id)] || 0)) > 0.001);
+      else dif = Math.abs((Number(b.stock) || 0) - r.total) > 0.001;
+    }
+    if (dif) difieren++;
+    return { p, pc, total, porCampo: r.porCampo, dif };
+  }).filter(f => f.total !== 0 || Object.values(f.porCampo).some(v => v !== 0) || String(f.p.activo).toUpperCase() === 'TRUE' || f.p.activo === true);
+  if (!filas.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay productos para mostrar.</div></div>';
+  const n = v => (v ? fn(v) : '—');
+  let h = '';
+  if (difieren) h += `<div style="font-size:12px;color:var(--red);margin-bottom:8px">⚠ ${difieren} producto(s) no coinciden con el stock actual del sistema (posible movimiento con fecha futura). Revisalos en el historial.</div>`;
+  h += `<div class="tw"><table class="dt"><thead><tr><th>Producto</th><th>Categoría</th><th class="tr">Total</th>${campos.map(c => `<th class="tr">${c.nombre}</th>`).join('')}<th>Unidad</th></tr></thead><tbody>`;
+  filas.forEach(f => {
+    h += `<tr${f.dif ? ' style="background:var(--red-bg,#fdecea)"' : ''}><td><strong>${f.p.nombre}</strong>${f.pc ? ' <span class="pill pill-gold" style="font-size:10px">por campo</span>' : ''}</td>
+      <td style="font-size:12px;color:var(--text2)">${f.p.categoria || '—'}</td>
+      <td class="tr"><strong>${fn(f.total)}</strong></td>
+      ${campos.map(c => `<td class="tr">${f.pc ? n(f.porCampo[String(c.campo_id)] || 0) : '<span style="color:var(--text3)">común</span>'}</td>`).join('')}
+      <td style="font-size:12px;color:var(--text2)">${f.p.unidad || ''}</td></tr>`;
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+window.renderStockInsumosAFecha_ = function () {
+  const el = document.getElementById('in-stock-fecha-tabla');
+  if (el) el.innerHTML = buildStockInsumosAFecha_(S.insStockFecha || today(), S.insStockCat || '');
+};
+
+// Excel: hoja "Stock" (a la fecha "Hasta" del historial, o a la fecha del
+// panel de stock, o a hoy) + hoja "Movimientos" con el saldo corrido de cada
+// insumo (por campo si el producto se guarda por campo). Respeta los filtros
+// del historial: categoría, producto, campo, rodeo, desde y hasta.
+window.exportarInsumosExcel_ = async function () {
+  try {
+    if (!window.XLSX || !window.__xlsxStyleLoaded) {
+      await new Promise((resolve, reject) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+        sc.onload = () => { window.__xlsxStyleLoaded = true; resolve(); };
+        sc.onerror = () => reject(new Error('No se pudo cargar la librería de Excel'));
+        document.head.appendChild(sc);
+      });
+    }
+    const X = window.XLSX;
+    const v = id => (document.getElementById(id) || {}).value || '';
+    const fCat = v('in-hist-filtro-categoria'), fProd = v('in-hist-filtro-producto'), fRodeo = v('in-hist-filtro-rodeo');
+    let fCampo = v('in-hist-filtro-campo');
+    if (fCampo && !((S.catalogs && S.catalogs.campos) || []).some(c => String(c.campo_id) === String(fCampo))) fCampo = '';
+    const desde = v('in-hist-desde'), hasta = v('in-hist-hasta');
+    const fechaStock = hasta || S.insStockFecha || today();
+    const campos = (S.catalogs && S.catalogs.campos) || [];
+    const productos = ((S.catalogs && S.catalogs.productos) || []).filter(p => (!fCat || p.categoria === fCat) && (!fProd || String(p.producto_id) === String(fProd)));
+    const prodMap = {}; productos.forEach(p => { prodMap[String(p.producto_id)] = p; });
+    // Fecha como número de serie de Excel (evita el corrimiento de un día por zona horaria)
+    const aFecha = s => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - Date.UTC(1899, 11, 30)) / 86400000 : (s || ''); };
+    const hdrStyle = { font: { bold: true, color: { rgb: 'FFFFFF' }, name: 'Arial', sz: 10 }, fill: { fgColor: { rgb: '3F5A2A' } }, alignment: { vertical: 'center', wrapText: true } };
+    const base = { font: { name: 'Arial', sz: 10 } };
+    const numFmt = '#,##0;-#,##0;"-"';
+
+    // ── Hoja Stock
+    const st = insStockAFecha_(fechaStock);
+    const aoaS = [['Stock de insumos al ' + fd(fechaStock)], [], ['Producto', 'Categoría', 'Unidad', 'Por campo', 'Total', ...campos.map(c => c.nombre)]];
+    productos.forEach(p => {
+      const r = st[String(p.producto_id)] || { total: 0, porCampo: {} };
+      const pc = esPorCampo_(p.por_campo);
+      const total = pc ? Object.values(r.porCampo).reduce((a, b) => a + b, 0) : r.total;
+      if (!total && !Object.values(r.porCampo).some(x => x) && !(String(p.activo).toUpperCase() === 'TRUE' || p.activo === true)) return;
+      aoaS.push([p.nombre, p.categoria || '', p.unidad || '', pc ? 'Sí' : 'Común', total, ...campos.map(c => pc ? (r.porCampo[String(c.campo_id)] || 0) : '')]);
+    });
+    const wsS = X.utils.aoa_to_sheet(aoaS);
+
+    // ── Hoja Movimientos (con saldo corrido por producto y, si es por campo, por campo)
+    const movs = [];
+    const add = (pid, cuentaCampo, m) => { if (prodMap[String(pid)]) movs.push(Object.assign({ pid: String(pid), cuenta: cuentaCampo }, m)); };
+    (S.cache.compras_insumos || []).forEach(c => {
+      if (!(Number(c.cantidad) > 0)) return; // los "cambio de precio" no mueven stock
+      const pc = prodMap[String(c.producto_id)] && esPorCampo_(prodMap[String(c.producto_id)].por_campo);
+      add(c.producto_id, pc ? String(c.campo_id || '') : '', { fecha: c.fecha, tipo: 'Compra', campo: c.campo_id, rodeo: '', entrada: Number(c.cantidad) || 0, salida: 0,
+        detalle: [c.precio_unitario ? 'P.Unit $ ' + fn(c.precio_unitario) : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') });
+    });
+    (S.cache.consumos_insumos || []).forEach(c => {
+      const pc = prodMap[String(c.producto_id)] && esPorCampo_(prodMap[String(c.producto_id)].por_campo);
+      add(c.producto_id, pc ? String(c.campo_id || '') : '', { fecha: c.fecha, tipo: 'Consumo', campo: c.campo_id, rodeo: c.rodeo_id, entrada: 0, salida: Number(c.cantidad) || 0, detalle: c.observaciones || '' });
+    });
+    (S.cache.traslados_insumos || []).forEach(t => {
+      const p = prodMap[String(t.producto_id)];
+      if (!p || !esPorCampo_(p.por_campo)) return; // en un producto común el traslado no cambia el stock
+      const cant = Number(t.cantidad) || 0;
+      add(t.producto_id, String(t.campo_origen_id || ''), { fecha: t.fecha, tipo: 'Traslado (sale)', campo: t.campo_origen_id, rodeo: '', entrada: 0, salida: cant, detalle: 'Hacia ' + campoNombre(t.campo_destino_id) + (t.observaciones ? ' — ' + t.observaciones : '') });
+      add(t.producto_id, String(t.campo_destino_id || ''), { fecha: t.fecha, tipo: 'Traslado (entra)', campo: t.campo_destino_id, rodeo: '', entrada: cant, salida: 0, detalle: 'Desde ' + campoNombre(t.campo_origen_id) + (t.observaciones ? ' — ' + t.observaciones : '') });
+    });
+    (S.cache.ajustes_insumos || []).forEach(a => {
+      const pc = prodMap[String(a.producto_id)] && esPorCampo_(prodMap[String(a.producto_id)].por_campo);
+      const cant = Number(a.cantidad) || 0;
+      add(a.producto_id, pc ? String(a.campo_id || '') : '', { fecha: a.fecha, tipo: 'Ajuste', campo: a.campo_id, rodeo: '', entrada: cant > 0 ? cant : 0, salida: cant < 0 ? -cant : 0, detalle: a.observaciones || '' });
+    });
+    // Saldo corrido por cuenta (producto + campo), sobre TODOS los movimientos;
+    // después se filtra lo que se muestra.
+    movs.sort((a, b) => a.pid.localeCompare(b.pid) || a.cuenta.localeCompare(b.cuenta) || String(a.fecha).localeCompare(String(b.fecha)) || (b.entrada - a.entrada));
+    const saldo = {};
+    movs.forEach(m => { const k = m.pid + '|' + m.cuenta; saldo[k] = (saldo[k] || 0) + m.entrada - m.salida; m.saldo = saldo[k]; });
+    const vis = movs.filter(m => (!desde || String(m.fecha) >= desde) && (!hasta || String(m.fecha) <= hasta)
+      && (!fCampo || String(m.campo || '') === String(fCampo)) && (!fRodeo || String(m.rodeo || '') === String(fRodeo)));
+    const conSaldo = !fRodeo; // con filtro de rodeo el saldo no tiene sentido (es un pedazo de la cuenta)
+    vis.sort((a, b) => (prodMap[a.pid].nombre || '').localeCompare(prodMap[b.pid].nombre || '', 'es') || (a.cuenta ? campoNombre(a.cuenta) : '').localeCompare(b.cuenta ? campoNombre(b.cuenta) : '', 'es') || String(a.fecha).localeCompare(String(b.fecha)));
+    const aoaM = [['Movimientos de insumos' + (desde || hasta ? ' — ' + (desde ? 'desde ' + fd(desde) : '') + (hasta ? ' hasta ' + fd(hasta) : '') : '')], [],
+      ['Producto', 'Unidad', 'Stock de', 'Fecha', 'Tipo', 'Campo', 'Rodeo', 'Entrada', 'Salida', conSaldo ? 'Saldo' : 'Saldo (no aplica con filtro de rodeo)', 'Detalle']];
+    vis.forEach(m => {
+      const p = prodMap[m.pid];
+      aoaM.push([p.nombre, p.unidad || '', m.cuenta ? campoNombre(m.cuenta) : 'Común', aFecha(m.fecha), m.tipo,
+        m.campo ? campoNombre(m.campo) : '', m.rodeo ? rodeoNombre(m.rodeo) : '', m.entrada || '', m.salida || '', conSaldo ? m.saldo : '', m.detalle || '']);
+    });
+    const wsM = X.utils.aoa_to_sheet(aoaM);
+
+    // Formato
+    const estilar = (ws, hdrRow, numCols, dateCols) => {
+      const rng = X.utils.decode_range(ws['!ref']);
+      for (let R = 0; R <= rng.e.r; R++) for (let C = 0; C <= rng.e.c; C++) {
+        const ref = X.utils.encode_cell({ r: R, c: C }); const cell = ws[ref]; if (!cell) continue;
+        if (R === 0) { cell.s = { font: { bold: true, name: 'Arial', sz: 13 } }; continue; }
+        if (R === hdrRow) { cell.s = hdrStyle; continue; }
+        cell.s = base;
+        if (numCols.includes(C) && typeof cell.v === 'number') cell.z = Number.isInteger(cell.v) ? numFmt : '#,##0.00;-#,##0.00;"-"';
+        if (dateCols.includes(C) && typeof cell.v === 'number') cell.z = 'dd/mm/yyyy';
+      }
+      ws['!freeze'] = { xSplit: 0, ySplit: hdrRow + 1 };
+      ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: hdrRow, c: 0 }, e: { r: rng.e.r, c: rng.e.c } }) };
+    };
+    estilar(wsS, 2, [4, ...campos.map((c, i) => 5 + i)], []);
+    wsS['!cols'] = [{ wch: 30 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, ...campos.map(() => ({ wch: 14 }))];
+    estilar(wsM, 2, [7, 8, 9], [3]);
+    wsM['!cols'] = [{ wch: 28 }, { wch: 9 }, { wch: 15 }, { wch: 11 }, { wch: 15 }, { wch: 15 }, { wch: 26 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 50 }];
+
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, wsS, 'Stock');
+    X.utils.book_append_sheet(wb, wsM, 'Movimientos');
+    const nombreProd = fProd && prodMap[String(fProd)] ? '_' + prodMap[String(fProd)].nombre.replace(/[^A-Za-z0-9]+/g, '_') : '';
+    X.writeFile(wb, 'Insumos' + nombreProd + '_' + fechaStock + '.xlsx');
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + e.message, 'err');
+  }
+};
+
 window.sortHistorialInsumos = function(key) {
   if (!S.sort) S.sort = {};
   const current = S.sort.historialInsumos;
@@ -14040,8 +14246,15 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
   const filas = movs.map(m => { saldo += m.entrada - m.salida; return { ...m, saldoCorrido: saldo }; });
   const saldoFinal = saldo;
 
-  let h = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px 16px;font-size:14px;font-weight:600;margin-bottom:10px">
-    Saldo inicial${desde ? ' al ' + fd(desde) : ''}: <strong>${fn(saldoInicial)} ${p.unidad || ''}</strong>
+  // v260 -- El saldo final se muestra también arriba, para no tener que bajar
+  // hasta el final de la tabla.
+  let h = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px 16px;font-size:14px;font-weight:600">
+      Saldo inicial${desde ? ' al ' + fd(desde) : ''}: <strong>${fn(saldoInicial)} ${p.unidad || ''}</strong>
+    </div>
+    <div style="background:var(--green-bg);color:var(--green-text);border-radius:9px;padding:10px 16px;font-size:14px;font-weight:700">
+      Saldo ${hasta ? 'al ' + fd(hasta) : 'actual'}${porCampo && campoFiltro ? ' en ' + campoNombre(campoFiltro) : ''}: ${fn(saldoFinal)} ${p.unidad || ''}
+    </div>
   </div>`;
 
   if (!filas.length) {
