@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_260';
+const APP_VERSION = 'index_consolidado_4_6_155_261';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1552,7 +1552,7 @@ function pageSubtitle(p) {
     insumos: 'Compras y consumos de alimentación y veterinaria',
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
-    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — rollos y sales con magnesio',
+    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — rollos, sales magnesiadas y concentrado magnesiado',
   };
   return subs[p] || '';
 }
@@ -20982,21 +20982,44 @@ function fdSugerirRodeo_(campoId, nota) {
   return (mejor && mejorScore >= 1 && !empate) ? String(mejor.rodeo_id) : '';
 }
 
-// v258 -- Insumos que sabe importar. 'magnesio': todo lo que en Fielddata
-// diga magnesio/magnesiado ("Concentrado Magnesiado Fortificado", "Sales
-// Magnesiadas") va al producto del sistema que tenga "magnes" en el nombre
-// (Sales Magnesio). Regla de Crist, 23/10/2026.
+// v258 -- Insumos que sabe importar.
+// v261 -- "Sales Magnesiadas" y "Concentrado Magnesiado Fortificado" son DOS
+// productos distintos (Crist, 06/11/2026; antes se juntaban en Sales Magnesio).
+// Sales Magnesiadas de Fielddata -> "Sales Magnesio" del sistema; Concentrado
+// Magnesiado Fortificado -> el producto del sistema con ese nombre.
 const FD_RUBROS_ = {
-  rollos:   { label: 'Rollos', unidad: 'Rollos', esDelRubro: n => n === 'rollos', producto: p => fdNorm_(p.nombre) === 'rollos' },
-  magnesio: { label: 'Sales con magnesio', unidad: 'Bolsas', esDelRubro: n => /magnes/.test(n), producto: p => /magnes/.test(fdNorm_(p.nombre)) },
+  rollos:      { label: 'Rollos', unidad: 'Rollos', esDelRubro: n => n === 'rollos', producto: p => fdNorm_(p.nombre) === 'rollos' },
+  sales_mg:    { label: 'Sales Magnesiadas', unidad: 'Bolsas', esDelRubro: n => /^sales magnes/.test(n), producto: p => /^sales magnes/.test(fdNorm_(p.nombre)) },
+  concentrado_mg: { label: 'Concentrado Magnesiado Fortificado', unidad: 'Bolsas', esDelRubro: n => /concentrado magnes/.test(n), producto: p => /concentrado magnes/.test(fdNorm_(p.nombre)) },
 };
 function fdEquivKey_(campoId, nota) { return String(campoId) + '|' + fdNorm_(nota); }
+
+// v261 -- Busca el registro del sistema que grabó (o marcó como ya cargado)
+// una fila importada: primero por el id guardado en la huella; si la huella
+// no lo tiene, por fecha + campo + cantidad + "Fielddata: <nota>".
+function fdRegistroDeHuella_(it, h, usados) {
+  const entidad = it.clase === 'traslado' ? 'traslados_insumos' : (it.clase === 'consumo' ? 'consumos_insumos' : '');
+  if (!entidad) return null;
+  const idCol = entidad === 'traslados_insumos' ? 'traslado_id' : 'consumo_id';
+  const lista = S.cache[entidad] || [];
+  let reg = null;
+  if (h.registro_id) reg = lista.find(r => String(r[idCol]) === String(h.registro_id)) || null;
+  if (!reg && !h.registro_id && it.clase === 'consumo') {
+    const obs = 'Fielddata: ' + (it.nota || '');
+    reg = lista.find(r => !usados.has(String(r[idCol])) && r.fecha === it.fecha && String(r.campo_id) === it.campo_id
+      && Number(r.cantidad) === it.cantidad && String(r.observaciones || '') === obs) || null;
+  }
+  if (!reg) return null;
+  usados.add(String(reg[idCol]));
+  return { entidad, id: reg[idCol], registro: reg };
+}
 
 // Arma la lista de movimientos (traslados y consumos de rollos) con su estado.
 function fdAnalizar_() {
   const st = S.fd;
   st.error = '';
-  const rubro = FD_RUBROS_[st.rubro || 'rollos'];
+  if (!FD_RUBROS_[st.rubro]) st.rubro = 'rollos';
+  const rubro = FD_RUBROS_[st.rubro];
   const productos = (S.catalogs && S.catalogs.productos) || [];
   const prodsRubro = productos.filter(rubro.producto);
   if (prodsRubro.length !== 1) { st.error = prodsRubro.length ? 'Hay más de un producto del catálogo que corresponde a "' + rubro.label + '": ' + prodsRubro.map(p => p.nombre).join(', ') + '.' : 'No encuentro en el catálogo el producto de "' + rubro.label + '".'; st.items = []; return; }
@@ -21090,13 +21113,25 @@ function fdAnalizar_() {
   // 5. Estado de cada item: huella -> ya en el sistema -> listo / pendiente
   const consSis = (S.cache.consumos_insumos || []).filter(c => String(c.producto_id) === prodId);
   const trasSis = (S.cache.traslados_insumos || []).filter(t => String(t.producto_id) === prodId);
-  const usadosC = new Set(), usadosT = new Set();
+  const usadosC = new Set(), usadosT = new Set(), usadosOtro = new Set();
   items.sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.clase === 'traslado' ? -1 : 1));
   items.forEach(it => {
     it.huellas = it.fuentes.map(f => f.huella);
     it.id = it.huellas.join('##');
     const h = it.huellas.map(x => huellaEstado[x]).find(Boolean);
     if (h) {
+      // v261 -- Ya importado, pero el registro del sistema quedó con OTRO
+      // producto (ej. concentrado grabado como Sales Magnesio): se ofrece
+      // corregir el producto de ese registro. No crea ni borra nada.
+      if (h.estado === 'grabado' || h.estado === 'ya_cargado') {
+        const reg = fdRegistroDeHuella_(it, h, usadosOtro);
+        if (reg && String(reg.registro.producto_id) !== prodId) {
+          it.estado = 'otro_producto'; it.registroId = reg.id; it.entidad = reg.entidad;
+          const pa = productos.find(p => String(p.producto_id) === String(reg.registro.producto_id));
+          it.motivo = 'Está en el sistema como ' + (pa ? pa.nombre : 'otro producto') + ' (id ' + reg.id + '). Según Fielddata es ' + prod.nombre + '.';
+          return;
+        }
+      }
       it.estado = h.estado === 'grabado' ? 'importado' : (h.estado === 'ya_cargado' ? 'ya_cargado' : 'descartado');
       it.motivo = h.estado === 'grabado' ? 'Grabado por el importador' + (h.registro_id ? ' (id ' + h.registro_id + ')' : '') + '.' : (h.estado === 'ya_cargado' ? 'Ya estaba en el sistema.' : 'Descartado.');
       return;
@@ -21141,14 +21176,14 @@ function fdAnalizar_() {
   // Selección por defecto: todo lo nuevo
   const prevSel = st.sel || {};
   st.sel = {};
-  items.forEach(it => { if (it.estado === 'nuevo') st.sel[it.id] = prevSel[it.id] !== undefined ? prevSel[it.id] : true; else if (prevSel[it.id] && it.estado !== 'importado' && it.estado !== 'ya_cargado' && it.estado !== 'descartado') st.sel[it.id] = true; });
+  items.forEach(it => { if (it.estado === 'nuevo' || it.estado === 'otro_producto') st.sel[it.id] = prevSel[it.id] !== undefined ? prevSel[it.id] : true; else if (prevSel[it.id] && it.estado !== 'importado' && it.estado !== 'ya_cargado' && it.estado !== 'descartado') st.sel[it.id] = true; });
   st.items = items;
   st.prodId = prodId;
 }
 
 function fdEstadoPill_(e) {
   const m = { nuevo: ['pill-green', 'Nuevo'], pendiente: ['pill-gold', 'Falta rodeo'], revisar: ['pill-red', 'Revisar'],
-    ya_cargado: ['pill-gray', 'Ya cargado'], importado: ['pill-blue', 'Importado'], descartado: ['pill-gray', 'Descartado'], no_aplica: ['pill-gray', 'No se carga'] };
+    ya_cargado: ['pill-gray', 'Ya cargado'], importado: ['pill-blue', 'Importado'], descartado: ['pill-gray', 'Descartado'], no_aplica: ['pill-gray', 'No se carga'], otro_producto: ['pill-gold', 'Corregir producto'] };
   const x = m[e] || ['pill-gray', e];
   return `<span class="pill ${x[0]}">${x[1]}</span>`;
 }
@@ -21161,7 +21196,7 @@ function buildImportarFielddata() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo) y <b>sales con magnesio</b> (solo consumos: es stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b> y <b>concentrado magnesiado fortificado</b> (estos dos, solo consumos: son de stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid">
       <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
@@ -21206,23 +21241,25 @@ function buildImportarFielddata() {
     // 3. Movimientos
     const cuenta = {};
     st.items.forEach(it => { cuenta[it.estado] = (cuenta[it.estado] || 0) + 1; });
-    const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar)', todos: 'Todos', nuevo: 'Nuevos', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados', no_aplica: 'No se cargan' };
-    const visibles = st.items.filter(it => st.filtro === 'todos' ? true : st.filtro === 'pendientes' ? ['nuevo', 'pendiente', 'revisar'].includes(it.estado) : it.estado === st.filtro);
+    const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar, corregir producto)', todos: 'Todos', nuevo: 'Nuevos', otro_producto: 'Corregir producto', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados', no_aplica: 'No se cargan' };
+    const visibles = st.items.filter(it => st.filtro === 'todos' ? true : st.filtro === 'pendientes' ? ['nuevo', 'pendiente', 'revisar', 'otro_producto'].includes(it.estado) : it.estado === st.filtro);
     const selIds = Object.keys(st.sel).filter(k => st.sel[k]);
     const selGrabar = st.items.filter(it => st.sel[it.id] && it.estado === 'nuevo').length;
     const selDescartar = st.items.filter(it => st.sel[it.id] && ['nuevo', 'pendiente', 'revisar'].includes(it.estado)).length;
+    const selCorregir = st.items.filter(it => st.sel[it.id] && it.estado === 'otro_producto').length;
     const yaCargadosSinHuella = st.items.filter(it => it.estado === 'ya_cargado' && it.registroId).length;
     h += `<div class="panel"><div class="panel-title">3. Movimientos de ${fdEsc_(rub.label.toLowerCase())}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado', 'no_aplica'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'otro_producto', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado', 'no_aplica'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <select id="fd-filtro">${Object.keys(filtros).map(k => `<option value="${k}" ${st.filtro === k ? 'selected' : ''}>${filtros[k]}</option>`).join('')}</select>
         <button class="btn btn-primary" id="fd-grabar" ${selGrabar && !st.grabando ? '' : 'disabled'}>${st.grabando ? 'Grabando…' : 'Grabar seleccionados (' + selGrabar + ')'}</button>
         <button class="btn btn-secondary" id="fd-descartar" ${selDescartar && !st.grabando ? '' : 'disabled'}>Descartar seleccionados (${selDescartar})</button>
+        ${cuenta.otro_producto ? `<button class="btn btn-primary" id="fd-corregir" ${selCorregir && !st.grabando ? '' : 'disabled'}>Corregir producto (${selCorregir})</button>` : ''}
       </div>
       ${yaCargadosSinHuella ? `<p style="font-size:12px;color:var(--text3);margin:0 0 8px">Al grabar, los ${yaCargadosSinHuella} "Ya cargado" quedan registrados en la huella para no volver a ofrecerlos.</p>` : ''}
       <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tc"><input type="checkbox" id="fd-sel-todos"></th><th>Estado</th><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="tc">${fdEsc_(rub.unidad)}</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
       (visibles.length ? visibles.map(it => {
-        const seleccionable = ['nuevo', 'pendiente', 'revisar'].includes(it.estado);
+        const seleccionable = ['nuevo', 'pendiente', 'revisar', 'otro_producto'].includes(it.estado);
         let detalle = '';
         if (it.clase === 'traslado') detalle = fdEsc_(fdCampoNombre_(it.origen)) + ' → ' + fdEsc_(fdCampoNombre_(it.destino));
         else if (it.clase === 'consumo') { const eq = st.equiv[it.equivKey]; detalle = fdEsc_(fdCampoNombre_(it.campo_id)) + ' — ' + (eq && eq.rodeo_id ? fdEsc_(fdRodeoNombre_(eq.rodeo_id)) : '<i>sin rodeo</i>'); }
@@ -21329,6 +21366,40 @@ async function fdGrabar_(modo) {
   }
 }
 
+// v261 -- Corrige el producto de registros ya importados (ver 'otro_producto'
+// en fdAnalizar_). Solo cambia producto_id del registro: misma fecha, campo,
+// rodeo y cantidad; la huella queda igual.
+async function fdCorregirProducto_() {
+  const st = S.fd;
+  const sel = st.items.filter(it => st.sel[it.id] && it.estado === 'otro_producto' && it.registroId);
+  if (!sel.length) return;
+  const prod = ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(st.prodId));
+  if (!confirm('¿Pasar ' + sel.length + ' registros ya importados al producto ' + (prod ? prod.nombre : '') + '? Cambia el stock de los dos productos y el costo de esos consumos.')) return;
+  st.grabando = true; st.log = []; render();
+  let ok = 0, err = 0;
+  try {
+    for (const it of sel) {
+      try {
+        await apiCall('update', { body: { entity: it.entidad, id: it.registroId, data: { producto_id: st.prodId } } });
+        ok++;
+      } catch (e) {
+        err++;
+        st.log.push({ ok: false, txt: fd(it.fecha) + ' — id ' + it.registroId + ' (' + (it.nota || '') + '): ' + e.message });
+      }
+    }
+    st.log.unshift({ ok: !err, txt: 'Producto corregido: ' + ok + (err ? ' · con error: ' + err : '') });
+    toast('Producto corregido en ' + ok + ' registros' + (err ? ', ' + err + ' con error' : ''), err ? 'err' : 'ok');
+  } finally {
+    st.grabando = false;
+    S.stockProductos = null;
+    S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
+    invalidateCache('consumos_insumos'); invalidateCache('traslados_insumos');
+    await fdRecargarDatos_();
+    fdAnalizar_();
+    render();
+  }
+}
+
 function attachImportarFielddataEvents() {
   const st = S.fd;
   if (!st) return;
@@ -21395,6 +21466,8 @@ function attachImportarFielddataEvents() {
   if (gb) gb.onclick = () => fdGrabar_('grabar');
   const ds = document.getElementById('fd-descartar');
   if (ds) ds.onclick = () => fdGrabar_('descartar');
+  const cp = document.getElementById('fd-corregir');
+  if (cp) cp.onclick = () => fdCorregirProducto_();
 }
 
 
