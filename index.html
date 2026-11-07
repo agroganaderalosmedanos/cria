@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_263';
+const APP_VERSION = 'index_consolidado_4_6_155_264';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -21130,6 +21130,9 @@ function fdAnalizar_() {
   const consSis = (S.cache.consumos_insumos || []).filter(c => String(c.producto_id) === prodId);
   const trasSis = (S.cache.traslados_insumos || []).filter(t => String(t.producto_id) === prodId);
   const usadosC = new Set(), usadosT = new Set();
+  // v264 -- Consumos del sistema que Crist marcó como "ya cubiertos en
+  // Fielddata" desde el panel 4: quedan cruzados (huella 'sis|consumos_insumos|<id>').
+  Object.keys(huellaEstado).forEach(k => { if (k.indexOf('sis|consumos_insumos|') === 0) usadosC.add(k.split('|')[2]); });
   items.sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.clase === 'traslado' ? -1 : 1));
   const porResolver = [];
   items.forEach(it => {
@@ -21335,9 +21338,10 @@ function buildImportarFielddata() {
     // v263 -- Consumos del sistema sin par en Fielddata (solo se muestran)
     const solo = st.soloSistema || [];
     h += `<div class="panel"><div class="panel-title">4. Solo en el sistema <span class="pill ${solo.length ? 'pill-gold' : 'pill-green'}">${solo.length ? solo.length + ' consumos · ' + fn(solo.reduce((a, c) => a + (Number(c.cantidad) || 0), 0)) + ' ' + fdEsc_(rub.unidad.toLowerCase()) : 'ninguno'}</span></div>
-      <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Consumos de ${fdEsc_(rub.label.toLowerCase())} del sistema, desde el ${fd(st.desde)}, que no coinciden con ninguna fila de Fielddata. No se borra ni se cambia nada desde acá.</p>` +
-      (solo.length ? `<div style="overflow-x:auto"><table class="dt"><thead><tr><th>Fecha</th><th>Campo</th><th>Rodeo</th><th class="tc">${fdEsc_(rub.unidad)}</th><th>Observaciones</th><th class="tc">Id</th></tr></thead><tbody>` +
-        solo.map(c => `<tr><td>${fd(c.fecha)}</td><td>${fdEsc_(fdCampoNombre_(c.campo_id))}</td><td>${fdEsc_(fdRodeoNombre_(c.rodeo_id))}</td><td class="tc">${fn(Number(c.cantidad) || 0)}</td><td style="white-space:normal;max-width:300px;font-size:12px">${fdEsc_(c.observaciones || '—')}</td><td class="tc">${fdEsc_(c.consumo_id)}</td></tr>`).join('') +
+      <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Consumos de ${fdEsc_(rub.label.toLowerCase())} del sistema, desde el ${fd(st.desde)}, que no coinciden con ninguna fila de Fielddata. No se borra ni se cambia nada desde acá. Si ya están cubiertos en Fielddata (con otra fecha o cantidad), tildalos y marcalos para que no aparezcan más.</p>` +
+      (solo.length ? `<div style="margin-bottom:8px"><button class="btn btn-secondary" id="fd-solo-ya" ${solo.some(c => st.selSolo && st.selSolo[c.consumo_id]) && !st.grabando ? '' : 'disabled'}>Ya cubierto en Fielddata (${solo.filter(c => st.selSolo && st.selSolo[c.consumo_id]).length})</button></div>
+        <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tc"><input type="checkbox" id="fd-solo-todos"></th><th>Fecha</th><th>Campo</th><th>Rodeo</th><th class="tc">${fdEsc_(rub.unidad)}</th><th>Observaciones</th><th class="tc">Id</th></tr></thead><tbody>` +
+        solo.map(c => `<tr><td class="tc"><input type="checkbox" class="fd-solo-sel" data-id="${fdEsc_(c.consumo_id)}" ${st.selSolo && st.selSolo[c.consumo_id] ? 'checked' : ''}></td><td>${fd(c.fecha)}</td><td>${fdEsc_(fdCampoNombre_(c.campo_id))}</td><td>${fdEsc_(fdRodeoNombre_(c.rodeo_id))}</td><td class="tc">${fn(Number(c.cantidad) || 0)}</td><td style="white-space:normal;max-width:300px;font-size:12px">${fdEsc_(c.observaciones || '—')}</td><td class="tc">${fdEsc_(c.consumo_id)}</td></tr>`).join('') +
         `</tbody></table></div>` : '') + `</div>`;
   }
   if (st.log && st.log.length) {
@@ -21447,6 +21451,37 @@ async function fdGrabar_(modo) {
   }
 }
 
+// v264 -- Marca consumos del sistema (panel 4) como ya cubiertos en
+// Fielddata: solo agrega una huella 'sis|consumos_insumos|<id>'; no toca el consumo.
+async function fdMarcarSoloSistema_() {
+  const st = S.fd;
+  const sel = (st.soloSistema || []).filter(c => st.selSolo && st.selSolo[c.consumo_id]);
+  if (!sel.length) return;
+  if (!confirm('¿Marcar ' + sel.length + ' consumos del sistema como ya cubiertos en Fielddata? No se cambia nada en el sistema; solo dejan de aparecer en "Solo en el sistema".')) return;
+  const items = sel.map(c => ({ accion: 'marcar', estado: 'ya_cargado', entity: 'consumos_insumos', registro_id: c.consumo_id,
+    huellas: ['sis|consumos_insumos|' + c.consumo_id], campo_id: c.campo_id, fecha: c.fecha, rubro: st.rubro,
+    detalle: 'Consumo del sistema cubierto en Fielddata — ' + fdRodeoNombre_(c.rodeo_id) + ' ' + c.cantidad }));
+  st.grabando = true; st.log = []; render();
+  let err = 0;
+  try {
+    for (let i = 0; i < items.length; i += FD_LOTE_GRABAR_) {
+      const lote = items.slice(i, i + FD_LOTE_GRABAR_);
+      const res = await apiCall('importarFielddata', { body: { items: lote, equivalencias: [] } });
+      (res.resultados || []).forEach((r, j) => { if (!r.ok && !r.omitido) { err++; st.log.push({ ok: false, txt: fd(lote[j].fecha) + ' — ' + lote[j].detalle + ': ' + r.error }); } });
+    }
+    st.log.unshift({ ok: !err, txt: 'Marcados como cubiertos: ' + (items.length - err) + (err ? ' · con error: ' + err : '') });
+    toast('Consumos marcados como cubiertos', err ? 'err' : 'ok');
+  } catch (e) {
+    st.log.unshift({ ok: false, txt: 'Se cortó: ' + e.message });
+    toast(e.message, 'err');
+  } finally {
+    st.grabando = false; st.selSolo = {};
+    await fdRecargarDatos_();
+    fdAnalizar_();
+    render();
+  }
+}
+
 // v261 -- Corrige el producto de registros ya importados (ver 'otro_producto'
 // en fdAnalizar_). Solo cambia producto_id del registro: misma fecha, campo,
 // rodeo y cantidad; la huella queda igual.
@@ -21551,6 +21586,11 @@ function attachImportarFielddataEvents() {
   if (dy) dy.onclick = () => fdGrabar_('dup_ya');
   const dn = document.getElementById('fd-dup-nuevo');
   if (dn) dn.onclick = () => fdGrabar_('dup_nuevo');
+  document.querySelectorAll('.fd-solo-sel').forEach(c => c.onchange = () => { st.selSolo = st.selSolo || {}; st.selSolo[c.dataset.id] = c.checked; render(); });
+  const soloTodos = document.getElementById('fd-solo-todos');
+  if (soloTodos) soloTodos.onchange = () => { st.selSolo = {}; if (soloTodos.checked) (st.soloSistema || []).forEach(c => { st.selSolo[c.consumo_id] = true; }); render(); };
+  const soloYa = document.getElementById('fd-solo-ya');
+  if (soloYa) soloYa.onclick = () => fdMarcarSoloSistema_();
   const cp = document.getElementById('fd-corregir');
   if (cp) cp.onclick = () => fdCorregirProducto_();
 }
