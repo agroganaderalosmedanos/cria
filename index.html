@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_273';
+const APP_VERSION = 'index_consolidado_4_6_155_274';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1069,6 +1069,61 @@ async function autofetchCotizacion_() {
       render();
     }
   } catch(e) { /* silencioso — no interrumpir el inicio */ }
+  // v274 -- y completa los días que faltan (ver rellenarCotizacionesFaltantes_)
+  rellenarCotizacionesFaltantes_();
+}
+
+// v274 -- COMPLETAR COTIZACIONES FALTANTES
+// La cotización del día solo se trae cuando alguien abre la app: los días que
+// nadie entró quedaban sin cotización, y el Margen Bruto en U$S usaba la de
+// días o semanas antes (Crist, 07/11/2026). Ahora, al abrir la app, se buscan
+// en argentinadatos.com (histórico del dólar oficial, mismo autor que
+// dolarapi.com; valor = venta, igual que la del día) los días hábiles que
+// faltan desde la primera cotización cargada (o el inicio de la primera
+// campaña, si es anterior) hasta ayer, y se graban con fuente "BNA (histórico)".
+// Corre en segundo plano, de a una, hasta 150 por vez (si quedan más, sigue la
+// próxima vez que se abra la app). No toca las cotizaciones ya cargadas.
+const TC_RELLENO_MAX_ = 150;
+async function rellenarCotizacionesFaltantes_() {
+  if (S._tcRellenando) return;
+  S._tcRellenando = true;
+  try {
+    if (!S.cache.campanas) { try { await loadEntity('campanas'); } catch (e) { /* sigue con las cotizaciones cargadas */ } }
+    const tcs = (S.catalogs && S.catalogs.tipo_cambio) || [];
+    const normF = f => { const m = /^(\d{4})[-\/](\d{2})[-\/](\d{2})/.exec(String(f || '')); return m ? m[1] + '-' + m[2] + '-' + m[3] : ''; };
+    const tienen = new Set(tcs.map(t => normF(t.fecha)).filter(Boolean));
+    const iniciosCamp = ((S.cache && S.cache.campanas) || []).map(c => normF(c.fecha_inicio)).filter(Boolean);
+    const desde = [...tienen, ...iniciosCamp].sort()[0];
+    if (!desde) return;
+    const hoy = today();
+    const res = await fetch('https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!Array.isArray(data)) return;
+    const porFecha = {};
+    data.forEach(x => {
+      const f = normF(x && x.fecha); const v = Number(x && (x.venta || x.compra));
+      if (f && v > 0 && f >= desde && f < hoy && !tienen.has(f)) porFecha[f] = v;
+    });
+    const faltan = Object.keys(porFecha).sort();
+    if (!faltan.length) return;
+    const lote = faltan.slice(0, TC_RELLENO_MAX_);
+    toast('Completando ' + lote.length + ' cotizaciones del dólar que faltaban (en segundo plano)…', 'ok');
+    let ok = 0;
+    for (const f of lote) {
+      try {
+        await apiCall('create', { body: { entity: 'tipo_cambio', data: { fecha: f, valor: porFecha[f], fuente: 'BNA (histórico)' } } });
+        ok++;
+      } catch (e) { console.warn('Cotización ' + f + ':', e.message); break; }
+    }
+    if (ok) {
+      await loadCatalogs();
+      S.margenBruto = null;
+      toast('✓ ' + ok + ' cotizaciones del dólar completadas' + (faltan.length > ok ? ' (faltan ' + (faltan.length - ok) + ': se completan la próxima vez que abras la app)' : ''), 'ok');
+      render();
+    }
+  } catch (e) { console.warn('Completar cotizaciones:', e); }
+  finally { S._tcRellenando = false; }
 }
 
 async function init() {
