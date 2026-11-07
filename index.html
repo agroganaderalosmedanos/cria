@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_272';
+const APP_VERSION = 'index_consolidado_4_6_155_273';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -15469,20 +15469,30 @@ function mbControlDatos_(campanaId, corte) {
       const val = valorizarRodeoAFecha_(r, stock, fecha);
       if (!val) { fila(sStock, 'rojo', fecha, etiqueta, det, 'Cuenta $0: ' + metodoValorizacionAFecha_(r, fecha).replace(/^⚠\s*/, '') + '.'); return; }
       if (esPorCabezaSegunActividad_(cat, r)) return;
+      // v273 -- "Queda así" por rodeo, fecha y dato usado: si entra una pesada
+      // nueva o cambia el peso de ingreso, el aviso vuelve a aparecer.
+      const avisoStock = (tag, texto) => {
+        const okKey = 'mbok|stock|' + rid + '|' + String(fecha).slice(0, 10) + '|' + tag;
+        if (okMarcados.has(okKey)) { stockOk++; return; }
+        fila(sStock, 'amarillo', fecha, etiqueta, det, texto, okKey, { okLabel: 'Queda así' });
+      };
       const pes = mbUltimaPesada_(rid, fecha);
-      if (pes) { const mm = mbMeses_(pes.fecha, fecha); if (mm >= MB_CTRL_MESES_VIEJO_) fila(sStock, 'amarillo', fecha, etiqueta, det, 'Valorizado por kg con la pesada del ' + fd(pes.fecha) + ' (' + mm + ' meses antes): ' + fn(Number(pes.peso_prom_kg)) + ' kg.'); return; }
+      if (pes) { const mm = mbMeses_(pes.fecha, fecha); if (mm >= MB_CTRL_MESES_VIEJO_) avisoStock('pes:' + String(pes.fecha).slice(0, 10), 'Valorizado por kg con la pesada del ' + fd(pes.fecha) + ' (' + mm + ' meses antes): ' + fn(Number(pes.peso_prom_kg)) + ' kg.'); return; }
       const ing = pesoIngresoRodeoAFecha_(rid, fecha);
-      if (ing.peso) fila(sStock, 'amarillo', fecha, etiqueta, det, 'Sin pesada propia: usa el peso de ingreso del ' + fd(ing.fecha) + ' (' + fn(Math.round(ing.peso)) + ' kg); no refleja el engorde.');
-      else if (cat === 'vaquillona') fila(sStock, 'amarillo', fecha, etiqueta, det, 'Sin pesada ni peso de ingreso: se valoriza por cabeza al precio de plantel de Cría.');
+      if (ing.peso) avisoStock('ing:' + String(ing.fecha).slice(0, 10) + ':' + Math.round(ing.peso), 'Sin pesada propia: usa el peso de ingreso del ' + fd(ing.fecha) + ' (' + fn(Math.round(ing.peso)) + ' kg); no refleja el engorde.');
+      else if (cat === 'vaquillona') avisoStock('vqcab', 'Sin pesada ni peso de ingreso: se valoriza por cabeza al precio de plantel de Cría.');
     });
   };
+  let stockOk = 0;
   const efStock = activa ? stockPorRodeoACorte_(fechaValor) : Object.assign({}, efCriaCampanaStockPorRodeo_(campanaId), efRecriaCampanaStockPorRodeo_(campanaId), efTerminacionCampanaStockPorRodeo_(campanaId));
   chequearStock(efStock, fechaValor, 'Existencia final');
+  const notaStockOk_ = () => { if (stockOk) sStock.notas.push(stockOk + ' aviso' + (stockOk > 1 ? 's' : '') + ' de pesada marcado' + (stockOk > 1 ? 's' : '') + ' "Queda así": no se muestra' + (stockOk > 1 ? 'n' : '') + '.'); };
   const ant = campanaAnteriorA_(campanaId);
   if (ant && ant.fecha_fin) {
     const eiStock = Object.assign({}, efCriaCampanaStockPorRodeo_(ant.campana_id), efRecriaCampanaStockPorRodeo_(ant.campana_id), efTerminacionCampanaStockPorRodeo_(ant.campana_id));
     chequearStock(eiStock, String(ant.fecha_fin), 'Existencia inicial (cierre ' + ant.nombre + ')');
   }
+  notaStockOk_();
 
   // 5. Insumos
   const sIns = sec('insumos', 'Costo de insumos', 'insumos', 'Insumos');
