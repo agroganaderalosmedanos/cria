@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_268';
+const APP_VERSION = 'index_consolidado_4_6_155_269';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -21015,8 +21015,9 @@ const FD_RUBROS_ = {
   // compra SIN PRECIO (en Insumos quedan marcadas "Falta precio").
   calostro:    { label: 'Calostro', unidad: 'Bolsas', corte: '2026-01-01', compras: true, esDelRubro: n => /^calostro/.test(n), producto: p => /^calostro/.test(fdNorm_(p.nombre)) },
   rumex:       { label: 'Rumex', unidad: 'Unidades', corte: '2026-07-27', compras: true, esDelRubro: n => /^rumex/.test(n), producto: p => /^rumex/.test(fdNorm_(p.nombre)) },
-  // v268 -- Hacienda (nacimientos, muertes, abortos, ventas, recategorizaciones): solo cruce.
-  hacienda:    { label: 'Hacienda', unidad: 'Cabezas', corte: '2026-09-01', hacienda: true, esDelRubro: () => false, producto: () => false },
+  // v268 -- Hacienda (nacimientos, muertes, abortos, ventas, recategorizaciones).
+  // v269 -- Corte 23/10/2026: hasta el 22/10 el sistema coincide con el recuento físico.
+  hacienda:    { label: 'Hacienda', unidad: 'Cabezas', corte: '2026-10-23', hacienda: true, esDelRubro: () => false, producto: () => false },
 };
 // v266 -- Todos los campos mencionados en un texto (para detectar traslados
 // repartidos entre varios campos en una sola fila).
@@ -21316,27 +21317,42 @@ function fdAnalizar_() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// v268 -- HACIENDA: CRUCE (solo lectura; no graba nada)
+// v268 -- HACIENDA: CRUCE  ·  v269 -- GRABACIÓN
 // ══════════════════════════════════════════════════════════════════════
 // Lee del export unificado de Fielddata los nacimientos, muertes, abortos,
 // ventas y recategorizaciones, y los cruza contra Pariciones, Mortandad,
 // Abortos, Ventas y Movimientos (traslados) del sistema. Los cambios de lote
-// no son stock: se ignoran. Esta versión es de control: muestra qué está ya
-// cargado, qué hay que revisar y qué falta, para verificar el cruce antes de
-// armar la grabación (Crist, 07/11/2026).
+// no son stock: se ignoran.
+// - v269: fecha de corte 23/10/2026. Hasta el 22/10 el sistema ya coincide
+//   con el recuento físico de Nacho (Crist, 07/11/2026): el objetivo es
+//   llegar al stock de Fielddata grabando solo lo posterior.
 // - Rodeo: sale de la columna Rodeo de Fielddata; si viene vacía, de la
 //   categoría (y del lote, si es un ternero: en El Clavo Chico los
-//   nacimientos no traen rodeo). Se confirma una vez por campo.
+//   nacimientos no traen rodeo). Se confirma una vez por campo y se guarda
+//   (equivalencia tipo 'hac_rodeo').
 // - Nacido muerto = Nacimiento + Muerte del mismo día y rodeo, misma cantidad,
-//   con "muert" en la nota del nacimiento -> una Parición con nacidos muertos (mellizos si la
-//   nota lo dice).
+//   con "muert" en la nota del nacimiento -> una Parición con nacidos muertos
+//   (mellizos si la nota lo dice).
 // - Muerte de ternero -> Mortandad en "Terneros (<rodeo madre>)". Las
-//   mortandades [pid:...] (nacidos muertos de una Parición) no se cruzan acá:
-//   ya van con su Parición.
-// - Recategorización -> traslado desde el rodeo de origen (Fielddata no trae
-//   el destino). Los traslados [abid:...] (por aborto) no se cruzan.
+//   mortandades [pid:...] (nacidos muertos de una Parición) no se cruzan.
+// - Muerte de vaca/vaquillona: se indica si ya había parido (como en Mortandad).
+// - Recategorización -> Traslado en bloque desde el rodeo de origen; el destino
+//   lo elige Crist (Fielddata no lo trae). Si sale de vacas a otra categoría,
+//   pide el motivo (como en Movimientos). Entre actividades distintas es una
+//   cesión: no se graba desde acá (va a Cesiones, con su precio).
+// - Venta -> Venta real SIN precio (el precio sale de la liquidación).
+// - Aborto: no se graba desde acá (en Abortos se decide si va a Vacas Venta).
+// - Los traslados [abid:...] (por aborto) no se cruzan.
 const FD_HAC_MOVS_ = { nacimiento: 1, muerte: 1, aborto: 1, venta: 1, recategorizacion: 1 };
 const FD_HAC_CLASE_LABEL_ = { paricion: 'Nacimiento', nacido_muerto: 'Nacido muerto', muerte_ternero: 'Muerte de ternero', muerte: 'Muerte', aborto: 'Aborto', venta: 'Venta', recat: 'Recategorización' };
+const FD_HAC_MOTIVOS_ = [
+  ['parió', 'Parió, y el ternero sigue vivo'],
+  ['parió — madre de guacho', 'Parió, madre de un guacho'],
+  ['parió — ternero muerto', 'Parió, ternero muerto'],
+  ['posible aborto no detectado', 'Posible aborto no detectado / error de tacto'],
+  ['vacía', 'Vacías (nunca estuvieron preñadas)'],
+  ['sanidad / descarte', 'Sanidad / descarte (sin parir)'],
+];
 
 function fdHacKey_(campoId, f) {
   const r = fdNorm_(f.rodeo);
@@ -21349,20 +21365,20 @@ function fdHacKeyTexto_(f) {
   const c = String(f.catAnimal || '').trim() || '(sin categoría)';
   return '(sin rodeo) ' + c + (/terner/.test(fdNorm_(c)) ? ' — ' + (f.lote || 'sin lote') : '');
 }
+function fdHacRodeo_(id) { return rodeosTodos().find(r => String(r.rodeo_id) === String(id)) || null; }
 function fdHacRodeoTerneros_(madreId) {
-  const m = rodeosTodos().find(r => String(r.rodeo_id) === String(madreId));
+  const m = fdHacRodeo_(madreId);
   if (!m) return null;
   return rodeosTodos().find(r => r.nombre === 'Terneros (' + m.nombre + ')' && String(r.campo_id) === String(m.campo_id)) || null;
 }
-function fdHacCampoDeRodeo_(id) {
-  const r = rodeosTodos().find(x => String(x.rodeo_id) === String(id));
-  return r ? String(r.campo_id) : '';
-}
+function fdHacCampoDeRodeo_(id) { const r = fdHacRodeo_(id); return r ? String(r.campo_id) : ''; }
+function fdHacEsVaca_(r) { return !!r && ['vaca', 'vaquillona'].includes(String(r.categoria || '').toLowerCase().trim()); }
 
 function fdAnalizarHacienda_() {
   const st = S.fd;
   st.error = '';
   st.desde = fdDesdeValido_('hacienda', st.desde);
+  st.hacOpts = st.hacOpts || {};
   const desde = st.desde;
   const huellaEstado = {};
   (S.cache.fielddata_importados || []).forEach(h => { huellaEstado[String(h.huella)] = h; });
@@ -21424,9 +21440,11 @@ function fdAnalizarHacienda_() {
     items.push({ clase, fecha: f.fecha, campo_id: f.campo_id, cab: f.cab, peso: f.peso, equivKey: f.equivKey, fuentes: [f] });
   });
 
-  // 3. Registros del sistema (de los campos de los archivos subidos)
+  // 3. Registros del sistema (de los campos de los archivos subidos). Se
+  // miran desde 3 días antes del corte (fechas corridas); "algo cerca" y
+  // "solo en el sistema", solo desde el corte.
   const enCampos = id => camposCargados.has(fdHacCampoDeRodeo_(id));
-  const minFecha = d => String(d || '') >= desde || fdDias_(desde, String(d || '1900-01-01')) <= FD_TOLERANCIA_DIAS_CERCA_;
+  const minFecha = d => String(d || '') >= desde || fdDias_(desde, String(d || '1900-01-01')) <= FD_TOLERANCIA_DIAS_CASI_IGUAL_;
   const sis = { pariciones: [], mortandad: [], abortos: [], ventas: [], movimientos: [] };
   (S.cache.pariciones || []).forEach(p => { if (enCampos(p.rodeo_id) && minFecha(p.fecha)) sis.pariciones.push({ ent: 'pariciones', id: String(p.paricion_id), fecha: String(p.fecha || ''), rodeo: String(p.rodeo_id), qty: (Number(p.nacidos_vivos) || 0) + (Number(p.nacidos_muertos) || 0),
     desc: 'Parición ' + (Number(p.nacidos_vivos) || 0) + ' vivos' + (Number(p.nacidos_muertos) ? ' / ' + p.nacidos_muertos + ' muertos' : '') }); });
@@ -21446,7 +21464,6 @@ function fdAnalizarHacienda_() {
   const entDeClase = { paricion: 'pariciones', nacido_muerto: 'pariciones', muerte_ternero: 'mortandad', muerte: 'mortandad', aborto: 'abortos', venta: 'ventas', recat: 'movimientos' };
   const usados = new Set();
   const rid = it => { const e = st.equiv[it.equivKey]; return e && e.rodeo_id ? String(e.rodeo_id) : ''; };
-  // Rodeos donde puede estar cargado en el sistema
   const rodeosOk = it => {
     const r = rid(it); if (!r) return [];
     if (it.clase === 'muerte_ternero') { const t = fdHacRodeoTerneros_(r); return t ? [String(t.rodeo_id), r] : [r]; }
@@ -21465,8 +21482,9 @@ function fdAnalizarHacienda_() {
     const h = it.huellas.map(x => huellaEstado[x]).find(Boolean);
     if (h) {
       it.estado = h.estado === 'grabado' ? 'importado' : (h.estado === 'ya_cargado' ? 'ya_cargado' : 'descartado');
-      it.motivo = h.estado === 'grabado' ? 'Grabado por el importador.' : (h.estado === 'ya_cargado' ? 'Ya estaba en el sistema.' : 'Descartado.');
-      if (h.registro_id) h.registro_id.toString().split(',').forEach(x => usados.add(it.entidad + '|' + x));
+      it.motivo = h.estado === 'grabado' ? 'Grabado por el importador' + (h.registro_id ? ' (id ' + h.registro_id + ')' : '') + '.' : (h.estado === 'ya_cargado' ? 'Ya estaba en el sistema.' : 'Descartado.');
+      it.conHuella = true;
+      if (h.registro_id) String(h.registro_id).split(',').forEach(x => usados.add(it.entidad + '|' + x));
       return;
     }
     porResolver.push(it);
@@ -21503,92 +21521,262 @@ function fdAnalizarHacienda_() {
     it.estado = 'posible_dup'; it.registroId = mejor.id;
     it.motivo = '¿Ya cargado? En el sistema: ' + descSis(mejor) + (difs.length ? ' — ' + difs.join(', ') : '') + '.';
   });
-  // C. Algo cerca del mismo rodeo (o campo) sin cruzar, ±15 días, cualquier cantidad
+  // C. Algo cerca del mismo rodeo (o campo) sin cruzar, desde el corte, ±15 días
   porResolver.filter(it => !it.estado).forEach(it => {
     const ok = rodeosOk(it);
-    const cerca = lista(it).filter(s => (ok.length ? ok.includes(s.rodeo) : fdHacCampoDeRodeo_(s.rodeo) === it.campo_id)
+    const cerca = lista(it).filter(s => s.fecha >= desde && (ok.length ? ok.includes(s.rodeo) : fdHacCampoDeRodeo_(s.rodeo) === it.campo_id)
       && Math.abs(fdDias_(s.fecha, it.fecha)) <= FD_TOLERANCIA_DIAS_CERCA_)
       .sort((a, b) => Math.abs(fdDias_(a.fecha, it.fecha)) - Math.abs(fdDias_(b.fecha, it.fecha)));
     if (!cerca.length) return;
     it.estado = 'posible_dup'; it.registroId = '';
     it.motivo = '¿Cargado con otra fecha o cantidad? El sistema tiene sin cruzar: ' + cerca.slice(0, 4).map(descSis).join('; ') + (cerca.length > 4 ? ' y ' + (cerca.length - 4) + ' más' : '') + '.';
   });
-  // Lo que queda
-  porResolver.filter(it => !it.estado).forEach(it => {
+  // 5. Lo que queda (y las "¿Ya cargado?"): qué se grabaría y qué falta
+  porResolver.filter(it => !it.estado || it.estado === 'posible_dup').forEach(it => {
+    const dup = it.estado === 'posible_dup';
     const e = st.equiv[it.equivKey];
-    if (!e || !e.rodeo_id) { it.estado = 'pendiente'; it.motivo = 'Falta el rodeo (arriba).'; return; }
-    if (it.clase === 'muerte_ternero' && !fdHacRodeoTerneros_(e.rodeo_id)) { it.estado = 'revisar'; it.motivo = 'No encuentro el rodeo "Terneros (' + fdRodeoNombre_(e.rodeo_id) + ')" en ' + fdCampoNombre_(it.campo_id) + '.'; return; }
-    it.estado = 'nuevo';
-    const r = fdRodeoNombre_(e.rodeo_id);
-    it.motivo = it.clase === 'paricion' ? 'No está en el sistema. Sería una Parición en ' + r + ': ' + it.cab + ' vivos.'
-      : it.clase === 'nacido_muerto' ? 'No está en el sistema. Sería una Parición en ' + r + ': ' + it.cab + ' nacido(s) muerto(s)' + (it.mellizos ? ', vaca con mellizos' : '') + '.'
-      : it.clase === 'muerte_ternero' ? 'No está en el sistema. Sería Mortandad en ' + fdHacRodeoTerneros_(e.rodeo_id).nombre + '.'
-      : it.clase === 'muerte' ? 'No está en el sistema. Sería Mortandad en ' + r + ' (falta indicar si estaba preñada o ya había parido).'
-      : it.clase === 'aborto' ? 'No está en el sistema. Sería un Aborto en ' + r + '.'
-      : it.clase === 'venta' ? 'No está en el sistema. Sería una Venta de ' + r + ', sin precio (sale de la liquidación).'
-      : 'No está en el sistema. Sería un traslado desde ' + r + ' (el destino lo elegís vos: Fielddata no lo trae).';
-    if (!campanaDeFecha_(it.fecha)) { it.estado = 'revisar'; it.motivo = 'La fecha no cae en ninguna campaña del catálogo.'; }
+    const o = st.hacOpts[it.id] || (st.hacOpts[it.id] = {});
+    const r = e && e.rodeo_id ? fdHacRodeo_(e.rodeo_id) : null;
+    let falta = '', bloqueo = '', texto = '';
+    if (!r) falta = 'Falta el rodeo (panel 2).';
+    else if (!e.confirmado) falta = 'Falta confirmar el rodeo (panel 2).';
+    if (!campanaDeFecha_(it.fecha)) bloqueo = 'La fecha no cae en ninguna campaña del catálogo.';
+    if (r) {
+      if (it.clase === 'paricion') texto = 'Parición en ' + r.nombre + ': ' + it.cab + ' vivos.';
+      else if (it.clase === 'nacido_muerto') texto = 'Parición en ' + r.nombre + ': ' + it.cab + ' nacido(s) muerto(s)' + (it.mellizos ? ', ' + it.mellizos + ' vaca(s) con mellizos' : '') + '.';
+      else if (it.clase === 'muerte_ternero') { const t = fdHacRodeoTerneros_(r.rodeo_id); if (!t) bloqueo = bloqueo || 'No encuentro el rodeo "Terneros (' + r.nombre + ')" en ' + fdCampoNombre_(it.campo_id) + '.'; else texto = 'Mortandad en ' + t.nombre + '.'; }
+      else if (it.clase === 'muerte') { texto = 'Mortandad en ' + r.nombre + '.'; it.pideParido = fdHacEsVaca_(r); if (it.pideParido && !o.parido) falta = falta || 'Indicá si ya había parido.'; }
+      else if (it.clase === 'aborto') bloqueo = bloqueo || 'Los abortos no se graban desde acá: cargalo en Abortos (ahí decidís si va a Vacas Venta). Después volvé a Analizar.';
+      else if (it.clase === 'venta') texto = 'Venta de ' + r.nombre + ', sin precio (sale de la liquidación).';
+      else if (it.clase === 'recat') {
+        it.pideDestino = true;
+        if (!o.destino && o.destino !== '') { const vv = fdHacEsVaca_(r) ? rodeosPorCampo(it.campo_id).find(x => ['vaca venta', 'vacas venta'].includes(fdNorm_(x.categoria))) : null; o.destino = vv ? String(vv.rodeo_id) : ''; }
+        const d = o.destino ? fdHacRodeo_(o.destino) : null;
+        it.pideMotivo = fdHacEsVaca_(r) && !!d && !fdHacEsVaca_(d);
+        if (it.pideMotivo && !o.motivo) o.motivo = /no presentan|sin terner/.test(fdNorm_(it.nota)) ? 'posible aborto no detectado' : '';
+        if (!d) falta = falta || 'Elegí el rodeo destino (Fielddata no lo trae).';
+        else if (String(d.rodeo_id) === String(r.rodeo_id)) falta = falta || 'El destino es el mismo rodeo: no hay nada que grabar (descartala).';
+        else if (normAct_(d.actividad) !== normAct_(r.actividad)) bloqueo = bloqueo || 'Es una cesión (' + (r.actividad || '—') + ' → ' + (d.actividad || '—') + '): cargala en Cesiones, con su precio. Después volvé a Analizar.';
+        else { if (it.pideMotivo && !o.motivo) falta = falta || 'Elegí el motivo de la salida de las vacas.'; texto = 'Traslado ' + r.nombre + ' → ' + d.nombre + '.'; }
+      }
+    }
+    it.grabable = !falta && !bloqueo;
+    if (dup) { if (bloqueo || falta) it.motivo += ' ' + (bloqueo || falta); return; }
+    if (bloqueo) { it.estado = 'revisar'; it.motivo = bloqueo; return; }
+    if (falta) { it.estado = 'pendiente'; it.motivo = falta + (texto ? ' Se grabaría: ' + texto : ''); return; }
+    it.estado = 'nuevo'; it.motivo = 'Se graba: ' + texto;
   });
-  // 5. Solo en el sistema (desde la fecha elegida)
+  // 6. Solo en el sistema (desde la fecha de corte)
   st.hacSolo = [];
   Object.keys(sis).forEach(k => sis[k].forEach(s => { if (!usados.has(s.ent + '|' + s.id) && s.fecha >= desde) st.hacSolo.push(s); }));
   st.hacSolo.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  st.items = items;
+  const prevSel = st.sel || {};
   st.sel = {};
+  items.forEach(it => {
+    if (it.estado === 'nuevo') st.sel[it.id] = prevSel[it.id] !== undefined ? prevSel[it.id] : true;
+    else if (prevSel[it.id] && ['pendiente', 'revisar', 'posible_dup'].includes(it.estado)) st.sel[it.id] = true;
+  });
+  st.items = items;
 }
 
 function fdBuildHacienda_(st) {
   let h = '';
-  // 2. Rodeos
-  const usadas = {};
-  st.items.filter(it => ['nuevo', 'pendiente', 'posible_dup', 'revisar', 'ya_cargado'].includes(it.estado)).forEach(it => { usadas[it.equivKey] = (usadas[it.equivKey] || 0) + 1; });
-  const keys = Object.keys(usadas).sort((a, b) => {
+  // 2. Rodeos: con qué movimientos se usa cada uno
+  const usos = {};
+  st.items.filter(it => !it.conHuella).forEach(it => { (usos[it.equivKey] = usos[it.equivKey] || []).push(it); });
+  const keys = Object.keys(usos).sort((a, b) => {
     const ea = st.equiv[a], eb = st.equiv[b];
     return (ea.confirmado === eb.confirmado ? 0 : ea.confirmado ? 1 : -1) || fdCampoNombre_(ea.campo_id).localeCompare(fdCampoNombre_(eb.campo_id)) || ea.notaOriginal.localeCompare(eb.notaOriginal);
   });
   const sinConfirmar = keys.filter(k => !st.equiv[k].confirmado).length;
   const sugeridas = keys.filter(k => !st.equiv[k].confirmado && st.equiv[k].rodeo_id).length;
   if (keys.length) h += `<div class="panel"><div class="panel-title">2. Rodeo del sistema según Fielddata <span class="pill ${sinConfirmar ? 'pill-gold' : 'pill-green'}">${sinConfirmar ? sinConfirmar + ' sin confirmar' : 'todos confirmados'}</span></div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Cada rodeo (o categoría, cuando Fielddata no trae rodeo) se confirma una vez por campo. En los terneros es el rodeo de la madre. En esta versión la confirmación vale para esta sesión (se guarda cuando se arme la grabación).</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Cada rodeo (o categoría, cuando Fielddata no trae rodeo) se confirma una vez por campo y queda guardado para las próximas veces. En los terneros es el rodeo de la madre. Las filas confirmadas pasan al final de la tabla.</p>
     ${sugeridas ? `<button class="btn btn-secondary btn-sm" id="fd-confirmar-sugeridas" style="margin-bottom:8px">Confirmar los ${sugeridas} sugeridos</button>` : ''}
-    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Campo</th><th>En Fielddata</th><th class="tc">Filas</th><th>Rodeo del sistema</th><th>Estado</th><th></th></tr></thead><tbody>` +
+    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Campo</th><th>En Fielddata</th><th>Movimientos</th><th>Rodeo del sistema</th><th>Estado</th><th></th></tr></thead><tbody>` +
     keys.map(k => {
       const e = st.equiv[k];
+      const us = usos[k];
+      const movs = us.slice(0, 4).map(it => FD_HAC_CLASE_LABEL_[it.clase] + ' ' + fn(it.cab) + ' — ' + fd(it.fecha).slice(0, 5)).join('<br>') + (us.length > 4 ? '<br>y ' + (us.length - 4) + ' más' : '');
       const opts = rodeosPorCampo(e.campo_id).map(r => `<option value="${r.rodeo_id}" ${String(r.rodeo_id) === String(e.rodeo_id) ? 'selected' : ''}>${fdEsc_(r.nombre)}</option>`).join('');
       const estado = e.confirmado ? `<span class="pill pill-green">${e.origen === 'guardado' ? 'Guardado' : 'Confirmado'}</span>` : (e.rodeo_id ? '<span class="pill pill-gold">Sugerido</span>' : '<span class="pill pill-red">Sin asignar</span>');
-      return `<tr><td>${fdEsc_(fdCampoNombre_(e.campo_id))}</td><td style="white-space:normal">${fdEsc_(e.notaOriginal)}</td><td class="tc">${usadas[k]}</td>
+      return `<tr><td>${fdEsc_(fdCampoNombre_(e.campo_id))}</td><td style="white-space:normal">${fdEsc_(e.notaOriginal)}</td><td style="font-size:12px;white-space:nowrap">${movs}</td>
         <td><select class="fd-equiv-sel" data-k="${fdEsc_(k)}"><option value="">— Elegí —</option>${opts}</select></td><td>${estado}</td>
         <td>${!e.confirmado && e.rodeo_id ? `<button class="btn btn-secondary btn-sm fd-equiv-ok" data-k="${fdEsc_(k)}">Confirmar</button>` : ''}</td></tr>`;
     }).join('') + `</tbody></table></div></div>`;
   // 3. Movimientos
   const cuenta = {};
   st.items.forEach(it => { cuenta[it.estado] = (cuenta[it.estado] || 0) + 1; });
-  const filtros = { pendientes: 'Para resolver (nuevos, falta rodeo, revisar)', todos: 'Todos', nuevo: 'Nuevos', posible_dup: '¿Ya cargado? (revisar)', pendiente: 'Falta rodeo', revisar: 'Revisar', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados' };
+  const filtros = { pendientes: 'Para resolver (nuevos, ¿ya cargado?, falta algo, no se graba desde acá)', todos: 'Todos', nuevo: 'Nuevos', posible_dup: '¿Ya cargado?', pendiente: 'Falta algo', revisar: 'No se graba desde acá', ya_cargado: 'Ya cargados', importado: 'Importados', descartado: 'Descartados' };
   if (!filtros[st.filtro]) st.filtro = 'pendientes';
   const visibles = st.items.filter(it => st.filtro === 'todos' ? true : st.filtro === 'pendientes' ? ['nuevo', 'pendiente', 'revisar', 'posible_dup'].includes(it.estado) : it.estado === st.filtro);
   const porClase = {};
   st.items.forEach(it => { porClase[it.clase] = (porClase[it.clase] || 0) + it.cab; });
+  const selGrabar = st.items.filter(it => st.sel[it.id] && it.estado === 'nuevo').length;
+  const selDescartar = st.items.filter(it => st.sel[it.id] && ['nuevo', 'pendiente', 'revisar'].includes(it.estado)).length;
+  const selDupYa = st.items.filter(it => st.sel[it.id] && it.estado === 'posible_dup').length;
+  const selDupNuevo = st.items.filter(it => st.sel[it.id] && it.estado === 'posible_dup' && it.grabable).length;
+  const yaSinHuella = st.items.filter(it => it.estado === 'ya_cargado' && !it.conHuella && it.registroId).length;
+  const pill = e => e === 'pendiente' ? '<span class="pill pill-gold">Falta algo</span>' : e === 'revisar' ? '<span class="pill pill-red">No se graba acá</span>' : e === 'posible_dup' ? '<span class="pill pill-red">¿Ya cargado?</span>' : fdEstadoPill_(e);
   h += `<div class="panel"><div class="panel-title">3. Movimientos de hacienda</div>
-    <div style="background:var(--green-bg);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--green-text);margin-bottom:10px">Versión de control: <b>no graba nada</b>. Solo muestra el cruce contra el sistema. ${st.hacCambiosLote ? st.hacCambiosLote + ' cambios de lote ignorados (no son stock).' : ''}</div>
-    <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">Cabezas en Fielddata: ${Object.keys(FD_HAC_CLASE_LABEL_).filter(k => porClase[k]).map(k => FD_HAC_CLASE_LABEL_[k] + ' ' + fn(porClase[k])).join(' · ') || '—'}</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'posible_dup', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado'].map(e => cuenta[e] ? fdEstadoPill_(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
-    <div style="margin-bottom:10px"><select id="fd-filtro">${Object.keys(filtros).map(k => `<option value="${k}" ${st.filtro === k ? 'selected' : ''}>${filtros[k]}</option>`).join('')}</select></div>
-    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Estado</th><th>Fecha</th><th>Campo</th><th>Movimiento</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tc">Kg</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
+    <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">Desde el ${fd(st.desde)}. Cabezas en Fielddata: ${Object.keys(FD_HAC_CLASE_LABEL_).filter(k => porClase[k]).map(k => FD_HAC_CLASE_LABEL_[k] + ' ' + fn(porClase[k])).join(' · ') || '—'}${st.hacCambiosLote ? ' · ' + st.hacCambiosLote + ' cambios de lote ignorados (no son stock)' : ''}.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${['nuevo', 'posible_dup', 'pendiente', 'revisar', 'ya_cargado', 'importado', 'descartado'].map(e => cuenta[e] ? pill(e).replace('</span>', ': ' + cuenta[e] + '</span>') : '').join('')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select id="fd-filtro">${Object.keys(filtros).map(k => `<option value="${k}" ${st.filtro === k ? 'selected' : ''}>${filtros[k]}</option>`).join('')}</select>
+      <button class="btn btn-primary" id="fd-grabar" ${selGrabar && !st.grabando ? '' : 'disabled'}>${st.grabando ? 'Grabando…' : 'Grabar seleccionados (' + selGrabar + ')'}</button>
+      <button class="btn btn-secondary" id="fd-descartar" ${selDescartar && !st.grabando ? '' : 'disabled'}>Descartar seleccionados (${selDescartar})</button>
+      ${cuenta.posible_dup ? `<button class="btn btn-secondary" id="fd-dup-ya" ${selDupYa && !st.grabando ? '' : 'disabled'}>Ya cargado (${selDupYa})</button><button class="btn btn-secondary" id="fd-dup-nuevo" ${selDupNuevo && !st.grabando ? '' : 'disabled'}>Grabar como nuevo (${selDupNuevo})</button>` : ''}
+    </div>
+    ${yaSinHuella ? `<p style="font-size:12px;color:var(--text3);margin:0 0 8px">Al grabar, los ${yaSinHuella} "Ya cargado" quedan anotados para no volver a ofrecerlos.</p>` : ''}
+    <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tc"><input type="checkbox" id="fd-sel-todos"></th><th>Estado</th><th>Fecha</th><th>Campo</th><th>Movimiento</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tc">Kg</th><th>Nota en Fielddata</th><th>Observación</th></tr></thead><tbody>` +
     (visibles.length ? visibles.map(it => {
       const e = st.equiv[it.equivKey];
-      return `<tr><td>${fdEstadoPill_(it.estado)}</td><td>${fd(it.fecha)}</td><td>${fdEsc_(fdCampoNombre_(it.campo_id))}</td><td>${FD_HAC_CLASE_LABEL_[it.clase]}</td>
-        <td>${e && e.rodeo_id ? fdEsc_(fdRodeoNombre_(e.rodeo_id)) : '<i>' + fdEsc_(e ? e.notaOriginal : '—') + '</i>'}</td><td class="tc">${fn(it.cab)}</td><td class="tc">${it.peso ? fn(it.peso) : '—'}</td>
-        <td style="white-space:normal;max-width:260px">${fdEsc_(it.nota)}</td>
-        <td style="white-space:normal;max-width:320px;font-size:12px;color:var(--text2)">${fdEsc_(it.motivo || '')}</td></tr>`;
-    }).join('') : `<tr><td colspan="9" style="color:var(--text3)">No hay filas con este filtro.</td></tr>`) + `</tbody></table></div></div>`;
+      const o = (st.hacOpts && st.hacOpts[it.id]) || {};
+      const sel = ['nuevo', 'pendiente', 'revisar', 'posible_dup'].includes(it.estado);
+      let extra = '';
+      if (sel && it.pideDestino) {
+        const r = e && e.rodeo_id ? fdHacRodeo_(e.rodeo_id) : null;
+        extra += `<div style="margin-top:4px">→ <select class="fd-hac-dest" data-id="${fdEsc_(it.id)}"><option value="">— Destino —</option>${rodeosPorCampo(it.campo_id).filter(x => !r || String(x.rodeo_id) !== String(r.rodeo_id)).map(x => `<option value="${x.rodeo_id}" ${String(x.rodeo_id) === String(o.destino) ? 'selected' : ''}>${fdEsc_(x.nombre)}</option>`).join('')}</select></div>`;
+        if (it.pideMotivo) extra += `<div style="margin-top:4px"><select class="fd-hac-mot" data-id="${fdEsc_(it.id)}"><option value="">— Motivo —</option>${FD_HAC_MOTIVOS_.map(m => `<option value="${fdEsc_(m[0])}" ${o.motivo === m[0] ? 'selected' : ''}>${fdEsc_(m[1])}</option>`).join('')}</select></div>`;
+      }
+      if (sel && it.pideParido) extra += `<div style="margin-top:4px"><select class="fd-hac-par" data-id="${fdEsc_(it.id)}"><option value="">— ¿Ya había parido? —</option><option value="no" ${o.parido === 'no' ? 'selected' : ''}>No (preñada / sin parir)</option><option value="Sí" ${o.parido === 'Sí' ? 'selected' : ''}>Sí, ya había parido</option></select></div>`;
+      return `<tr><td class="tc">${sel ? `<input type="checkbox" class="fd-sel" data-id="${fdEsc_(it.id)}" ${st.sel[it.id] ? 'checked' : ''}>` : ''}</td>
+        <td>${pill(it.estado)}</td><td>${fd(it.fecha)}</td><td>${fdEsc_(fdCampoNombre_(it.campo_id))}</td><td>${FD_HAC_CLASE_LABEL_[it.clase]}</td>
+        <td>${e && e.rodeo_id ? fdEsc_(fdRodeoNombre_(e.rodeo_id)) : '<i>' + fdEsc_(e ? e.notaOriginal : '—') + '</i>'}${extra}</td><td class="tc">${fn(it.cab)}</td><td class="tc">${it.peso ? fn(it.peso) : '—'}</td>
+        <td style="white-space:normal;max-width:240px">${fdEsc_(it.nota)}</td>
+        <td style="white-space:normal;max-width:300px;font-size:12px;color:var(--text2)">${fdEsc_(it.motivo || '')}</td></tr>`;
+    }).join('') : `<tr><td colspan="10" style="color:var(--text3)">No hay filas con este filtro.</td></tr>`) + `</tbody></table></div></div>`;
   // 4. Solo en el sistema
   const solo = st.hacSolo || [];
   h += `<div class="panel"><div class="panel-title">4. Solo en el sistema <span class="pill ${solo.length ? 'pill-gold' : 'pill-green'}">${solo.length ? solo.length + ' registros' : 'ninguno'}</span></div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Pariciones, mortandad, abortos, ventas y traslados del sistema, desde el ${fd(st.desde)} y en los campos de los archivos, que no coinciden con ninguna fila de Fielddata. No se cambia nada desde acá. Los traslados incluyen todos (también cesiones, destetes o pasajes entre campos), no solo recategorizaciones.</p>` +
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Pariciones, mortandad, abortos, ventas y traslados del sistema, desde el ${fd(st.desde)} y en los campos de los archivos, que no coinciden con ninguna fila de Fielddata. No se cambia nada desde acá. Los traslados incluyen todos (también cesiones, destetes o pasajes entre campos).</p>` +
     (solo.length ? `<div style="overflow-x:auto"><table class="dt"><thead><tr><th>Fecha</th><th>Campo</th><th>Registro</th><th>Rodeo</th><th class="tc">Cabezas</th><th class="tc">Id</th></tr></thead><tbody>` +
       solo.map(s => `<tr><td>${fd(s.fecha)}</td><td>${fdEsc_(fdCampoNombre_(fdHacCampoDeRodeo_(s.rodeo)))}</td><td>${fdEsc_(s.desc)}</td><td>${fdEsc_(fdRodeoNombre_(s.rodeo))}</td><td class="tc">${fn(s.qty)}</td><td class="tc">${fdEsc_(s.id)}</td></tr>`).join('') +
       `</tbody></table></div>` : '') + `</div>`;
   return h;
+}
+
+// v269 -- Grabación de hacienda. Cada registro se crea por el mismo camino que
+// la pantalla correspondiente (registrarParicion, create mortandad / ventas /
+// movimientos) y después se anota la huella. Si la huella fallara, el
+// registro igual se reconoce en el próximo Analizar como "Ya cargado"
+// (misma fecha, rodeo y cabezas), así que no se duplica.
+async function fdHacMarcar_(base, estado, entity, registroId) {
+  const marca = Object.assign({}, base, { accion: 'marcar', estado, entity, registro_id: registroId || '' });
+  let res = await apiCall('importarFielddata', { body: { items: [marca], equivalencias: [] } });
+  const r0 = res && res.resultados && res.resultados[0];
+  if (estado === 'grabado' && r0 && !r0.ok && !r0.omitido) {
+    res = await apiCall('importarFielddata', { body: { items: [Object.assign(marca, { estado: 'ya_cargado' })], equivalencias: [] } });
+  }
+  const r1 = res && res.resultados && res.resultados[0];
+  if (r1 && !r1.ok && !r1.omitido) throw new Error(r1.error || 'no se pudo anotar la huella');
+}
+
+async function fdGrabarHacienda_(modo) {
+  const st = S.fd;
+  const sel = st.items.filter(it => st.sel[it.id] && (
+    modo === 'grabar' ? it.estado === 'nuevo'
+    : modo === 'dup_nuevo' ? (it.estado === 'posible_dup' && it.grabable)
+    : modo === 'dup_ya' ? it.estado === 'posible_dup'
+    : ['nuevo', 'pendiente', 'revisar'].includes(it.estado)));
+  if (!sel.length) return;
+  const esGrabar = modo === 'grabar' || modo === 'dup_nuevo';
+  const resumen = {};
+  sel.forEach(it => { resumen[FD_HAC_CLASE_LABEL_[it.clase]] = (resumen[FD_HAC_CLASE_LABEL_[it.clase]] || 0) + 1; });
+  const msg = modo === 'dup_ya'
+    ? '¿Marcar ' + sel.length + ' filas como ya cargadas? No se graba nada en el sistema; quedan anotadas para no volver a ofrecerlas.'
+    : modo === 'descartar'
+    ? '¿Descartar ' + sel.length + ' filas? No se graba nada en el sistema; solo quedan anotadas para no volver a ofrecerlas.'
+    : '¿Grabar ' + sel.length + ' movimientos de hacienda' + (modo === 'dup_nuevo' ? ' como NUEVOS (el sistema tiene algo parecido cerca)' : '') + '? (' + Object.keys(resumen).map(k => k + ': ' + resumen[k]).join(', ') + '). Esto cambia el stock de hacienda.';
+  if (!confirm(msg)) return;
+  const base = it => ({ huellas: it.huellas, campo_id: it.campo_id, fecha: it.fecha, rubro: 'hacienda',
+    detalle: FD_HAC_CLASE_LABEL_[it.clase] + ' ' + fdCampoNombre_(it.campo_id) + ' ' + it.cab + ' — ' + it.nota });
+  st.grabando = true; st.log = []; render();
+  let ok = 0, err = 0;
+  try {
+    if (!esGrabar) {
+      const items = sel.map(it => Object.assign(base(it), { accion: 'marcar', estado: modo === 'dup_ya' ? 'ya_cargado' : 'descartado', entity: it.entidad, registro_id: modo === 'dup_ya' ? (it.registroId || '') : '' }));
+      for (let i = 0; i < items.length; i += FD_LOTE_GRABAR_) {
+        const lote = items.slice(i, i + FD_LOTE_GRABAR_);
+        const res = await apiCall('importarFielddata', { body: { items: lote, equivalencias: [] } });
+        (res.resultados || []).forEach((r, j) => { if (!r.ok && !r.omitido) { err++; st.log.push({ ok: false, txt: fd(lote[j].fecha) + ' — ' + lote[j].detalle + ': ' + r.error }); } });
+      }
+      st.log.unshift({ ok: !err, txt: (modo === 'dup_ya' ? 'Marcadas como ya cargadas: ' : 'Descartadas: ') + (items.length - err) + (err ? ' · con error: ' + err : '') });
+      toast(modo === 'dup_ya' ? 'Filas marcadas como ya cargadas' : 'Filas descartadas', err ? 'err' : 'ok');
+      return;
+    }
+    // Pariciones primero (dan de alta terneros), después traslados, mortandad y ventas
+    const rango = { paricion: 0, nacido_muerto: 0, recat: 1, muerte_ternero: 2, muerte: 2, venta: 3 };
+    const orden = sel.slice().sort((a, b) => (rango[a.clase] - rango[b.clase]) || a.fecha.localeCompare(b.fecha));
+    for (const it of orden) {
+      const e = st.equiv[it.equivKey];
+      const o = st.hacOpts[it.id] || {};
+      const r = fdHacRodeo_(e.rodeo_id);
+      const camp = campanaDeFecha_(it.fecha);
+      const campId = camp ? camp.campana_id : '';
+      const obs = 'Fielddata: ' + it.nota;
+      try {
+        let entity = it.entidad, id = '';
+        if (it.clase === 'paricion' || it.clase === 'nacido_muerto') {
+          const res = await apiCall('registrarParicion', { body: { data: { fecha: it.fecha, campana_id: campId, rodeo_id: String(r.rodeo_id),
+            nacidos_vivos: it.clase === 'paricion' ? it.cab : 0, nacidos_muertos: it.clase === 'nacido_muerto' ? it.cab : 0, mellizos: it.mellizos || 0, observacion: obs } } });
+          id = res && (res.paricion_id || res.id) || '';
+        } else if (it.clase === 'muerte_ternero' || it.clase === 'muerte') {
+          const rm = it.clase === 'muerte_ternero' ? fdHacRodeoTerneros_(r.rodeo_id) : r;
+          const res = await apiCall('create', { body: { entity: 'mortandad', data: { fecha: it.fecha, campana_id: campId, rodeo_id: String(rm.rodeo_id), caravana_ternero: '',
+            cantidad: it.cab, observacion: obs, causa: '', ya_habia_parido: o.parido === 'Sí' ? 'Sí' : '' } } });
+          id = res && res.id || '';
+        } else if (it.clase === 'recat') {
+          const d = fdHacRodeo_(o.destino);
+          const res = await apiCall('create', { body: { entity: 'movimientos', data: { tipo: 'Traslado en bloque', caravana: '', fecha: it.fecha,
+            campo_origen_id: String(r.campo_id), campo_destino_id: String(d.campo_id), rodeo_origen_id: String(r.rodeo_id), rodeo_destino_id: String(d.rodeo_id),
+            cantidad: it.cab, peso_prom_kg: it.peso || 0, precio_cabeza: 0, precio_kg: 0,
+            observaciones: (it.pideMotivo && o.motivo ? o.motivo + ' — ' : '') + 'Recategorización ' + obs, campana_id: campId } } });
+          id = res && res.id || '';
+        } else if (it.clase === 'venta') {
+          const comp = /comprador:\s*([^.]+)/i.exec(it.nota);
+          const res = await apiCall('create', { body: { entity: 'ventas', data: { fecha_salida: it.fecha, rodeo_id: String(r.rodeo_id), campo_id: String(r.campo_id),
+            comprador: comp ? comp[1].trim() : '', tipo_venta: 'Venta real', cant_animales: it.cab, peso_campo_kg: it.peso || '', precio_pactado: '',
+            observaciones: obs, campana_id: campId, campana: camp ? camp.nombre : '' } } });
+          id = res && res.id || '';
+        } else continue;
+        ok++;
+        try { await fdHacMarcar_(base(it), 'grabado', entity, id); }
+        catch (e2) { st.log.push({ ok: false, txt: fd(it.fecha) + ' — ' + FD_HAC_CLASE_LABEL_[it.clase] + ' grabado, pero no se anotó la huella (' + e2.message + '). En el próximo Analizar debería aparecer como Ya cargado.' }); }
+      } catch (e1) {
+        err++;
+        st.log.push({ ok: false, txt: fd(it.fecha) + ' — ' + FD_HAC_CLASE_LABEL_[it.clase] + ' ' + fdCampoNombre_(it.campo_id) + ' ' + it.cab + ': ' + e1.message });
+      }
+    }
+    // Los "Ya cargado" quedan en la huella
+    const marcas = st.items.filter(it => it.estado === 'ya_cargado' && !it.conHuella && it.registroId)
+      .map(it => Object.assign(base(it), { accion: 'marcar', estado: 'ya_cargado', entity: it.entidad, registro_id: it.registroId, detalle: 'Ya estaba en el sistema — ' + it.nota }));
+    for (let i = 0; i < marcas.length; i += FD_LOTE_GRABAR_) {
+      try { await apiCall('importarFielddata', { body: { items: marcas.slice(i, i + FD_LOTE_GRABAR_), equivalencias: [] } }); }
+      catch (e3) { st.log.push({ ok: false, txt: 'No se pudieron anotar los "Ya cargado" (' + e3.message + '). No cambia nada: se vuelven a reconocer solos.' }); }
+    }
+    // Equivalencias de rodeo confirmadas (aparte: si fallan, no afectan lo grabado)
+    const eqs = Object.values(st.equiv).filter(e => e.hac && e.confirmado && e.rodeo_id && e.origen !== 'guardado')
+      .map(e => ({ tipo: 'hac_rodeo', campo_id: e.campo_id, texto: e.texto, destino_id: e.rodeo_id }));
+    if (eqs.length) {
+      try { await apiCall('importarFielddata', { body: { items: [], equivalencias: eqs } }); }
+      catch (e4) { st.log.push({ ok: false, txt: 'No se pudieron guardar los rodeos confirmados (' + e4.message + '). La próxima vez hay que confirmarlos de nuevo.' }); }
+    }
+    st.log.unshift({ ok: !err, txt: 'Grabados: ' + ok + (err ? ' · con error: ' + err : '') });
+    toast('Importación de hacienda: ' + ok + ' grabados' + (err ? ', ' + err + ' con error' : ''), err ? 'err' : 'ok');
+  } catch (e) {
+    st.log.unshift({ ok: false, txt: 'Se cortó la grabación: ' + e.message + '. Volvé a Analizar: lo grabado aparece como Ya cargado.' });
+    toast(e.message, 'err');
+  } finally {
+    st.grabando = false;
+    ['pariciones', 'mortandad', 'ventas', 'movimientos'].forEach(x => invalidateCache(x));
+    S.stock = null; S.dashboard = null; S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
+    await fdRecargarDatos_();
+    await Promise.all([loadCatalogs().catch(() => {}), loadStock().catch(() => {})]);
+    (S.cache.fielddata_equivalencias || []).filter(e => e.tipo === 'hac_rodeo').forEach(e => { const k = 'hac|' + e.campo_id + '|' + e.texto; if (st.equiv[k]) { st.equiv[k].origen = 'guardado'; st.equiv[k].confirmado = true; st.equiv[k].rodeo_id = String(e.destino_id); } });
+    fdAnalizar_();
+    render();
+  }
 }
 
 function fdEstadoPill_(e) {
@@ -21606,7 +21794,7 @@ function buildImportarFielddata() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b>, <b>concentrado magnesiado fortificado</b> y <b>sales proteicas</b> (estos tres, solo consumos: son de stock común), y <b>calostro</b> y <b>rumex</b> (por campo: compras, traslados y consumos). <b>Hacienda</b> (nacimientos, muertes, abortos, ventas y recategorizaciones) por ahora solo se cruza contra el sistema y necesita el export unificado. Se trabaja de a un rubro por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b>, <b>concentrado magnesiado fortificado</b> y <b>sales proteicas</b> (estos tres, solo consumos: son de stock común), y <b>calostro</b> y <b>rumex</b> (por campo: compras, traslados y consumos). <b>Hacienda</b> (nacimientos, muertes, ventas y recategorizaciones; necesita el export unificado). Se trabaja de a un rubro por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid">
       <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
@@ -21718,6 +21906,7 @@ async function fdRecargarDatos_() {
 
 async function fdGrabar_(modo) {
   const st = S.fd;
+  if (FD_RUBROS_[st.rubro] && FD_RUBROS_[st.rubro].hacienda) return fdGrabarHacienda_(modo); // v269
   // v263 -- modos nuevos para las filas "¿Ya cargado?": 'dup_nuevo' las graba
   // como nuevas; 'dup_ya' las anota en la huella como ya cargadas.
   const sel = st.items.filter(it => st.sel[it.id] && (
@@ -21979,6 +22168,17 @@ function attachImportarFielddataEvents() {
   if (soloYa) soloYa.onclick = () => fdMarcarSoloSistema_();
   const cp = document.getElementById('fd-corregir');
   if (cp) cp.onclick = () => fdCorregirProducto_();
+  // v269 -- Hacienda: destino y motivo de las recategorizaciones; si la vaca muerta ya había parido
+  const hacOpt = (cls, campo) => document.querySelectorAll(cls).forEach(x => x.onchange = () => {
+    st.hacOpts = st.hacOpts || {};
+    const o = st.hacOpts[x.dataset.id] || (st.hacOpts[x.dataset.id] = {});
+    o[campo] = x.value;
+    if (campo === 'destino') o.motivo = undefined;
+    fdAnalizar_(); render();
+  });
+  hacOpt('.fd-hac-dest', 'destino');
+  hacOpt('.fd-hac-mot', 'motivo');
+  hacOpt('.fd-hac-par', 'parido');
 }
 
 
