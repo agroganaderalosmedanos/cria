@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_261';
+const APP_VERSION = 'index_consolidado_4_6_155_262';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1552,7 +1552,7 @@ function pageSubtitle(p) {
     insumos: 'Compras y consumos de alimentación y veterinaria',
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
-    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — rollos, sales magnesiadas y concentrado magnesiado',
+    importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — rollos, sales magnesiadas, concentrado magnesiado y sales proteicas',
   };
   return subs[p] || '';
 }
@@ -20991,6 +20991,8 @@ const FD_RUBROS_ = {
   rollos:      { label: 'Rollos', unidad: 'Rollos', esDelRubro: n => n === 'rollos', producto: p => fdNorm_(p.nombre) === 'rollos' },
   sales_mg:    { label: 'Sales Magnesiadas', unidad: 'Bolsas', esDelRubro: n => /^sales magnes/.test(n), producto: p => /^sales magnes/.test(fdNorm_(p.nombre)) },
   concentrado_mg: { label: 'Concentrado Magnesiado Fortificado', unidad: 'Bolsas', esDelRubro: n => /concentrado magnes/.test(n), producto: p => /concentrado magnes/.test(fdNorm_(p.nombre)) },
+  // v262 -- Sales Proteicas (stock común, solo consumos).
+  sales_prot:  { label: 'Sales Proteicas', unidad: 'Bolsas', esDelRubro: n => /^sales proteic/.test(n), producto: p => /^sales proteic/.test(fdNorm_(p.nombre)) },
 };
 function fdEquivKey_(campoId, nota) { return String(campoId) + '|' + fdNorm_(nota); }
 
@@ -21196,7 +21198,7 @@ function buildImportarFielddata() {
   const campos = (S.catalogs && S.catalogs.campos) || [];
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b> y <b>concentrado magnesiado fortificado</b> (estos dos, solo consumos: son de stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los tres exports juntos (uno por campo). El campo se reconoce por el nombre del archivo. Sirve el export unificado o el reporte de Insumos de Fielddata. Importa <b>rollos</b> (traslados entre campos y consumos por rodeo), <b>sales magnesiadas</b>, <b>concentrado magnesiado fortificado</b> y <b>sales proteicas</b> (estos tres, solo consumos: son de stock común). Se trabaja de a un insumo por vez. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid">
       <div class="fg"><label>Insumo</label><select id="fd-rubro">${Object.keys(FD_RUBROS_).map(k => `<option value="${k}" ${st.rubro === k ? 'selected' : ''}>${FD_RUBROS_[k].label}</option>`).join('')}</select></div>
       <div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div>
