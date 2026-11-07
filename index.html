@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_270';
+const APP_VERSION = 'index_consolidado_4_6_155_272';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1395,6 +1395,7 @@ async function goto(page) {
     // v270 -- el Control (y el costo de insumos) usan las compras de insumos; el Control mira también Pariciones
     if (!S.cache.compras_insumos)    { try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.pariciones)         { try { await loadEntity('pariciones'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.fielddata_importados) { try { await loadEntity('fielddata_importados'); } catch (err) { S.cache.fielddata_importados = []; } } // v271 -- "Está bien así" del Control
     if (!S.cache.productos)          { try { await loadEntity('productos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.rodeo_productos)    { try { await loadEntity('rodeo_productos'); } catch (err) { /* silencioso */ } }
     if (!S.stock)                    { try { await loadStock(); } catch (err) { /* silencioso */ } }
@@ -15357,34 +15358,40 @@ function mbControlDatos_(campanaId, corte) {
   const prodPorId = Object.fromEntries(productos.map(p => [String(p.producto_id), p]));
   const secciones = [];
   const sec = (k, titulo, ir, irLabel) => { const s = { k, titulo, ir, irLabel, filas: [], notas: [] }; secciones.push(s); return s; };
-  const fila = (s, nivel, fecha, que, detalle, problema) => s.filas.push({ nivel, fecha: fecha || '', que, detalle, problema });
+  const fila = (s, nivel, fecha, que, detalle, problema, okKey, extra) => s.filas.push(Object.assign({ nivel, fecha: fecha || '', que, detalle, problema, okKey: okKey || '' }, extra || {}));
+  // v271 -- avisos marcados "Está bien así" (se guardan como huella 'mbok|...' en Fielddata Importados)
+  const okMarcados = new Set((S.cache.fielddata_importados || []).map(h => String(h.huella)).filter(h => h.indexOf('mbok|') === 0));
+  let okOcultos = 0;
 
   // 1. Campaña
   const sCamp = sec('campana', 'Campaña de los registros', 'campanas', 'Campañas');
   const entidades = [
-    ['ventas', 'Venta', v => v.fecha_salida, v => rn(v.rodeo_id) + ' — ' + (v.cant_animales || 0) + ' cab.', 'ventas'],
-    ['compras_hacienda', 'Compra de hacienda', c => c.fecha, c => (c.cantidad || c.cant_animales || '') + ' cab. — $ ' + fn(Number(c.importe_total) || 0), 'compras_hacienda'],
-    ['movimientos', 'Movimiento', m => m.fecha, m => m.tipo + ' ' + (m.cantidad || 0) + ' — ' + (m.rodeo_origen_id ? rn(m.rodeo_origen_id) + ' → ' : '') + rn(m.rodeo_destino_id), 'movimientos'],
-    ['consumos_insumos', 'Consumo de insumo', c => c.fecha, c => (prodPorId[String(c.producto_id)] ? prodPorId[String(c.producto_id)].nombre : 'producto ' + c.producto_id) + ' ' + fn(Number(c.cantidad) || 0) + ' — ' + rn(c.rodeo_id), 'insumos'],
-    ['egresos_recria', 'Egreso de Recría', e => e.fecha, e => rn(e.rodeo_id) + ' ' + (e.cant_animales || 0) + ' cab. → ' + (e.destino || ''), 'cesiones_recria'],
-    ['mortandad', 'Mortandad', m => m.fecha, m => rn(m.rodeo_id) + ' ' + (m.cantidad || 1), 'mortandad'],
-    ['pariciones', 'Parición', p => p.fecha, p => rn(p.rodeo_id) + ' ' + (p.nacidos_vivos || 0) + ' vivos', 'pariciones'],
+    ['ventas', 'Venta', v => v.fecha_salida, v => rn(v.rodeo_id) + ' — ' + (v.cant_animales || 0) + ' cab.', 'ventas', 'venta_id'],
+    ['compras_hacienda', 'Compra de hacienda', c => c.fecha, c => (c.cantidad || c.cant_animales || '') + ' cab. — $ ' + fn(Number(c.importe_total) || 0), 'compras_hacienda', 'compra_id'],
+    ['movimientos', 'Movimiento', m => m.fecha, m => m.tipo + ' ' + (m.cantidad || 0) + ' — ' + (m.rodeo_origen_id ? rn(m.rodeo_origen_id) + ' → ' : '') + rn(m.rodeo_destino_id), 'movimientos', 'movimiento_id'],
+    ['consumos_insumos', 'Consumo de insumo', c => c.fecha, c => (prodPorId[String(c.producto_id)] ? prodPorId[String(c.producto_id)].nombre : 'producto ' + c.producto_id) + ' ' + fn(Number(c.cantidad) || 0) + ' — ' + rn(c.rodeo_id), 'insumos', 'consumo_id'],
+    ['egresos_recria', 'Egreso de Recría', e => e.fecha, e => rn(e.rodeo_id) + ' ' + (e.cant_animales || 0) + ' cab. → ' + (e.destino || ''), 'cesiones_recria', 'egreso_id'],
+    ['mortandad', 'Mortandad', m => m.fecha, m => rn(m.rodeo_id) + ' ' + (m.cantidad || 1), 'mortandad', 'mortandad_id'],
+    ['pariciones', 'Parición', p => p.fecha, p => rn(p.rodeo_id) + ' ' + (p.nacidos_vivos || 0) + ' vivos', 'pariciones', 'paricion_id'],
   ];
   const sinConfirmar = {};
   // Lo anterior a la primera campaña no entra en ningún margen y no se lista.
   const primerInicio = campanas.map(c => String(c.fecha_inicio || '')).filter(Boolean).sort()[0] || '';
-  entidades.forEach(([ent, label, fFecha, fDet]) => {
+  entidades.forEach(([ent, label, fFecha, fDet, , idKey]) => {
     (S.cache[ent] || []).forEach(x => {
       const fecha = String(fFecha(x) || '');
       const cid = x.campana_id ? String(x.campana_id) : '';
+      // La clave incluye la campaña: si después se la cambia, el aviso vuelve a aparecer.
+      const okKey = 'mbok|' + ent + '|' + x[idKey] + '|' + cid;
       if (cid && !campanas.some(c => String(c.campana_id) === cid)) { fila(sCamp, 'rojo', fecha, label, fDet(x), 'Campaña inválida (id ' + cid + '): no entra en ningún Margen Bruto.'); return; }
       if (!cid && fecha && fecha >= primerInicio && !campanaDeFecha_(fecha)) { fila(sCamp, 'rojo', fecha, label, fDet(x), 'Sin campaña: la fecha no cae en ninguna campaña del catálogo. No entra en ningún Margen Bruto.'); return; }
       const fechaEnEsta = fecha >= String(camp.fecha_inicio || '') && (!camp.fecha_fin || fecha <= String(camp.fecha_fin));
-      if (cid && cid !== String(campanaId) && fechaEnEsta) { const o = campanas.find(c => String(c.campana_id) === cid); fila(sCamp, 'amarillo', fecha, label, fDet(x), 'La fecha es de ' + camp.nombre + ' pero está cargado en ' + (o ? o.nombre : cid) + '. Si es correcto, no hay que hacer nada.'); return; }
-      if (cid === String(campanaId) && fecha && !fechaEnEsta) { fila(sCamp, 'amarillo', fecha, label, fDet(x), 'Está cargado en ' + camp.nombre + ' pero la fecha es de otra campaña. Si es correcto, no hay que hacer nada.'); return; }
+      if (cid && cid !== String(campanaId) && fechaEnEsta) { if (okMarcados.has(okKey)) { okOcultos++; return; } const o = campanas.find(c => String(c.campana_id) === cid); fila(sCamp, 'amarillo', fecha, label, fDet(x), 'La fecha es de ' + camp.nombre + ' pero está cargado en ' + (o ? o.nombre : cid) + '. Si es correcto, marcalo "Está bien así".', okKey); return; }
+      if (cid === String(campanaId) && fecha && !fechaEnEsta) { if (okMarcados.has(okKey)) { okOcultos++; return; } fila(sCamp, 'amarillo', fecha, label, fDet(x), 'Está cargado en ' + camp.nombre + ' pero la fecha es de otra campaña. Si es correcto, marcalo "Está bien así".', okKey); return; }
       if (!cid && enCamp(fecha, '')) sinConfirmar[label] = (sinConfirmar[label] || 0) + 1;
     });
   });
+  if (okOcultos) sCamp.notas.push(okOcultos + ' registro' + (okOcultos > 1 ? 's' : '') + ' con fecha y campaña distintas ya revisado' + (okOcultos > 1 ? 's' : '') + ' ("Está bien así"): no se muestran.');
   const nSinConf = Object.values(sinConfirmar).reduce((a, b) => a + b, 0);
   if (nSinConf) sCamp.notas.push('Sin campaña confirmada (se asignan a ' + camp.nombre + ' por la fecha, así que entran bien): ' + Object.keys(sinConfirmar).map(k => k + ' ' + sinConfirmar[k]).join(', ') + '. Se pueden confirmar con "Confirmar campañas por fecha" en cada pantalla.');
 
@@ -15488,24 +15495,37 @@ function mbControlDatos_(campanaId, corte) {
     let tipo = '', ref = '';
     if (!compras.length) tipo = 'sin';
     else if (!vig) { tipo = 'posterior'; ref = compras[compras.length - 1].fecha; }
+    // v272 -- "Precio viejo" vuelve como aviso (Crist, 07/11/2026): un insumo que
+    // estuvo mucho en stock puede tener el precio desactualizado. Por cada
+    // compra usada, se pregunta: actualizar el precio o dejarlo así ("Queda así"
+    // se guarda por compra: si después entra otra compra, se vuelve a evaluar).
     else if (mbMeses_(vig.fecha, c.fecha) >= MB_CTRL_MESES_VIEJO_) { tipo = 'viejo'; ref = vig.fecha; }
     if (!tipo) return;
-    const k = c.producto_id + '|' + tipo;
-    const g = porProd[k] || (porProd[k] = { pn, tipo, n: 0, cant: 0, desde: c.fecha, hasta: c.fecha, ref, maxMeses: 0 });
+    const k = c.producto_id + '|' + tipo + (tipo === 'viejo' ? '|' + vig.compra_id : '');
+    const g = porProd[k] || (porProd[k] = { pid: String(c.producto_id), pn, tipo, n: 0, cant: 0, desde: c.fecha, hasta: c.fecha, ref, maxMeses: 0,
+      compraId: tipo === 'viejo' ? String(vig.compra_id) : '', precio: tipo === 'viejo' ? Number(vig.precio_unitario) || 0 : 0 });
     g.n++; g.cant += Number(c.cantidad) || 0;
     if (String(c.fecha) < g.desde) g.desde = c.fecha;
     if (String(c.fecha) > g.hasta) g.hasta = c.fecha;
-    if (tipo === 'viejo') { const mm = mbMeses_(ref, c.fecha); if (mm > g.maxMeses) { g.maxMeses = mm; g.ref = ref; } }
+    if (tipo === 'viejo') { const mm = mbMeses_(ref, c.fecha); if (mm > g.maxMeses) g.maxMeses = mm; }
+    // (el grupo "viejo" solo junta los consumos que ya pasaron los 2 meses: su "desde" es la fecha sugerida)
   });
+  let insOk = 0;
   Object.values(porProd).sort((a, b) => a.pn.localeCompare(b.pn)).forEach(g => {
     const det = g.pn + ' — ' + g.n + ' consumos (' + fn(g.cant) + '), del ' + fd(g.desde) + ' al ' + fd(g.hasta);
     if (g.tipo === 'sin') fila(sIns, 'rojo', g.desde, 'Insumo sin precio', det, 'No hay ninguna compra con precio: esos consumos cuentan $0.');
     else if (g.tipo === 'posterior') fila(sIns, 'amarillo', g.desde, 'Insumo', det, 'No hay compra con precio anterior al consumo: usa la del ' + fd(g.ref) + ', posterior.');
-    else fila(sIns, 'amarillo', g.desde, 'Insumo con precio viejo', det, 'Usa el precio de la compra del ' + fd(g.ref) + ' (hasta ' + g.maxMeses + ' meses antes del consumo). Si cambió, cargá una actualización de precio.');
+    else {
+      const okKey = 'mbok|insumo|' + g.pid + '|' + g.compraId;
+      if (okMarcados.has(okKey)) { insOk++; return; }
+      fila(sIns, 'amarillo', g.desde, 'Insumo con precio viejo', det, 'Usa $ ' + fn(g.precio) + ' de la compra del ' + fd(g.ref) + ' (hasta ' + g.maxMeses + ' meses antes del consumo). ¿Actualizás el precio o queda así?', okKey,
+        { okLabel: 'Queda así', actualizar: { pid: g.pid, nombre: g.pn, precio: g.precio, fechaSug: String(g.desde).slice(0, 10) } });
+    }
   });
+  if (insOk) sIns.notas.push(insOk + ' precio' + (insOk > 1 ? 's' : '') + ' viejo' + (insOk > 1 ? 's' : '') + ' marcado' + (insOk > 1 ? 's' : '') + ' "Queda así": no se muestra' + (insOk > 1 ? 'n' : '') + '.');
   const sinPrecioCompras = (S.cache.compras_insumos || []).filter(x => !(Number(x.precio_unitario) > 0) && Number(x.cantidad) > 0 && enCamp(x.fecha, x.campana_id));
   if (sinPrecioCompras.length) sIns.notas.push(sinPrecioCompras.length + ' compras de insumos de la campaña sin precio (por ejemplo, las que trae el importador de Fielddata). Mientras no tengan precio, el costo usa la compra anterior con precio.');
-  sIns.notas.push('Pastoreo: pendiente de definir (no está controlado acá).');
+  sIns.notas.push('El costo de cada consumo es el precio de la última compra anterior a su fecha. Un precio nuevo vale para los consumos desde la fecha que elijas. Pastoreo: pendiente de definir.');
 
   // 6. Sueldos
   const sSue = sec('sueldos', 'Sueldos', 'sueldos', 'Sueldos');
@@ -15557,6 +15577,51 @@ function mbControlDatos_(campanaId, corte) {
   return { camp, activa, fechaValor, secciones, rojos, amarillos };
 }
 
+// v271 -- "Está bien así": deja anotado que la diferencia entre fecha y campaña
+// es correcta. Usa la misma tabla de marcas que el importador de Fielddata
+// (accion 'marcar', estado 'ya_cargado', huella 'mbok|<entidad>|<id>|<campaña>').
+async function mbMarcarOk_(btn) {
+  const k = btn.dataset.k; if (!k || S._mbOkGrabando) return;
+  const p = k.split('|');
+  S._mbOkGrabando = true; btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    const res = await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'ya_cargado', huellas: [k], campo_id: '', fecha: btn.dataset.fecha || '', rubro: 'control_mb',
+      entity: p[1] || '', registro_id: p[2] || '', detalle: 'Control Margen Bruto — está bien así: ' + (btn.dataset.det || '') }], equivalencias: [] } });
+    const r0 = res && res.resultados && res.resultados[0];
+    if (r0 && !r0.ok && !r0.omitido) throw new Error(r0.error || 'no se pudo guardar');
+    await loadEntity('fielddata_importados', true);
+    toast('Anotado: no se vuelve a mostrar', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+  finally { S._mbOkGrabando = false; render(); }
+}
+
+// v272 -- Actualizar el precio de un insumo desde el Control: mismo registro que
+// el botón "Actualizar precio" de Insumos (compra de cantidad 0 con el precio
+// nuevo). Vale para los consumos desde la fecha elegida.
+async function mbActualizarPrecio_(btn) {
+  if (S._mbOkGrabando) return;
+  const tr = btn.closest('tr');
+  const precio = Number(tr && tr.querySelector('.mb-upd-precio') ? tr.querySelector('.mb-upd-precio').value : 0) || 0;
+  const fecha = tr && tr.querySelector('.mb-upd-fecha') ? tr.querySelector('.mb-upd-fecha').value : '';
+  const nombre = btn.dataset.nombre || 'producto', pid = btn.dataset.pid;
+  if (!(precio > 0)) { toast('Ingresá el precio nuevo.', 'err'); return; }
+  if (!fecha) { toast('Ingresá desde qué fecha rige.', 'err'); return; }
+  const posterior = (S.cache.compras_insumos || []).filter(c => String(c.producto_id) === String(pid) && Number(c.precio_unitario) > 0 && String(c.fecha) > String(fecha))
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))[0];
+  if (!confirm('"' + nombre + '": los consumos desde el ' + fd(fecha) + (posterior ? ' hasta el ' + fd(posterior.fecha) + ' (ahí rige la compra siguiente)' : '') + ' se van a valorizar a $ ' + fn(precio) + '. ¿Guardar?')) return;
+  S._mbOkGrabando = true; btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    await apiCall('create', { body: { entity: 'compras_insumos', data: { fecha, producto_id: pid, cantidad: 0, precio_unitario: precio, proveedor: '',
+      observaciones: 'Actualización de precio vigente (Control Margen Bruto)', campo_id: '' } } });
+    invalidateCache('compras_insumos');
+    await loadEntity('compras_insumos', true);
+    try { await loadStockProductos(); } catch (e) { /* no bloquea */ }
+    S.margenBruto = null;
+    toast('✓ Precio de "' + nombre + '" actualizado a $ ' + fn(precio) + ' desde ' + fd(fecha), 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+  finally { S._mbOkGrabando = false; render(); }
+}
+
 function buildMBControl_(campanaId, corte) {
   const d = mbControlDatos_(campanaId, corte);
   if (!d) return '<div class="empty-state"><span class="ico">🔎</span><div class="msg">Elegí una campaña.</div></div>';
@@ -15571,8 +15636,11 @@ function buildMBControl_(campanaId, corte) {
       <button class="btn btn-ghost btn-sm no-print" style="margin-left:auto;font-size:12px" onclick="goto('${s.ir}')">Ir a ${fdEsc_(s.irLabel)} →</button></div>`;
     s.notas.forEach(n => { h += `<p style="font-size:12.5px;color:var(--text2);margin:0 0 8px">ℹ ${fdEsc_(n)}</p>`; });
     if (!s.filas.length) { h += `<p style="font-size:12.5px;color:var(--green-text);margin:0">✓ Nada para corregir.</p></div>`; return; }
-    const tabla = `<div style="overflow-x:auto"><table class="dt"><thead><tr><th></th><th>Fecha</th><th>Qué</th><th>Detalle</th><th>Problema</th></tr></thead><tbody>` +
-      s.filas.map(f => `<tr><td>${f.nivel === 'rojo' ? '<span class="pill pill-red">$0</span>' : '<span class="pill pill-gold">Aviso</span>'}</td><td style="white-space:nowrap">${f.fecha ? fd(String(f.fecha).slice(0, 10)) : '—'}</td><td>${fdEsc_(f.que)}</td><td style="white-space:normal;max-width:300px">${fdEsc_(f.detalle)}</td><td style="white-space:normal;max-width:420px;font-size:12.5px">${fdEsc_(f.problema)}</td></tr>`).join('') + `</tbody></table></div>`;
+    const conOk = s.filas.some(f => f.okKey);
+    const tabla = `<div style="overflow-x:auto"><table class="dt"><thead><tr><th></th><th>Fecha</th><th>Qué</th><th>Detalle</th><th>Problema</th>${conOk ? '<th class="no-print"></th>' : ''}</tr></thead><tbody>` +
+      s.filas.map(f => `<tr><td>${f.nivel === 'rojo' ? '<span class="pill pill-red">$0</span>' : '<span class="pill pill-gold">Aviso</span>'}</td><td style="white-space:nowrap">${f.fecha ? fd(String(f.fecha).slice(0, 10)) : '—'}</td><td>${fdEsc_(f.que)}</td><td style="white-space:normal;max-width:300px">${fdEsc_(f.detalle)}</td><td style="white-space:normal;max-width:420px;font-size:12.5px">${fdEsc_(f.problema)}</td>${conOk ? `<td class="no-print" style="white-space:nowrap">${f.actualizar ? `<div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">$ <input type="number" class="mb-upd-precio" min="0" step="any" value="${f.actualizar.precio || ''}" style="width:96px">
+          desde <input type="date" class="mb-upd-fecha" value="${fdEsc_(f.actualizar.fechaSug)}" style="width:130px">
+          <button class="btn btn-primary btn-sm" data-pid="${fdEsc_(f.actualizar.pid)}" data-nombre="${fdEsc_(f.actualizar.nombre)}" onclick="mbActualizarPrecio_(this)" ${S._mbOkGrabando ? 'disabled' : ''}>Actualizar precio</button></div>` : ''}${f.okKey ? `<button class="btn btn-secondary btn-sm" data-k="${fdEsc_(f.okKey)}" data-fecha="${fdEsc_(String(f.fecha).slice(0, 10))}" data-det="${fdEsc_(f.que + ' — ' + f.detalle)}" onclick="mbMarcarOk_(this)" ${S._mbOkGrabando ? 'disabled' : ''}>${fdEsc_(f.okLabel || 'Está bien así')}</button>` : ''}</td>` : ''}</tr>`).join('') + `</tbody></table></div>`;
     h += s.filas.length > 25 ? `<details ${r ? 'open' : ''}><summary style="cursor:pointer;font-size:13px;margin-bottom:8px">${s.filas.length} filas — ver</summary>${tabla}</details>` : tabla;
     h += `</div>`;
   });
