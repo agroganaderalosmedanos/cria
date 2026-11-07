@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_269';
+const APP_VERSION = 'index_consolidado_4_6_155_270';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1392,6 +1392,9 @@ async function goto(page) {
     // "silencioso" que hace esta pantalla corría con datos incompletos —
     // subestimando Egresos de las tres actividades por igual.
     if (!S.cache.compras_hacienda)   { try { await loadEntity('compras_hacienda'); } catch (err) { /* silencioso */ } }
+    // v270 -- el Control (y el costo de insumos) usan las compras de insumos; el Control mira también Pariciones
+    if (!S.cache.compras_insumos)    { try { await loadEntity('compras_insumos'); } catch (err) { /* silencioso */ } }
+    if (!S.cache.pariciones)         { try { await loadEntity('pariciones'); } catch (err) { /* silencioso */ } }
     if (!S.cache.productos)          { try { await loadEntity('productos'); } catch (err) { /* silencioso */ } }
     if (!S.cache.rodeo_productos)    { try { await loadEntity('rodeo_productos'); } catch (err) { /* silencioso */ } }
     if (!S.stock)                    { try { await loadStock(); } catch (err) { /* silencioso */ } }
@@ -15296,6 +15299,286 @@ function calcMargenTerminacionCampana_(campanaId, corte) {
   };
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// v270 -- MARGEN BRUTO: CONTROL ANTES DE PRESENTAR
+// ══════════════════════════════════════════════════════════════════════
+// Junta en un solo lugar todo lo que deja incompleto el Margen Bruto de una
+// campaña (Crist, 07/11/2026): lo que está sin campaña, lo que está sin
+// valorizar (ventas, compras, cesiones, saldos iniciales, stock, insumos,
+// sueldos, cotización) y lo que se valoriza con precios de 2 meses o más
+// antes de la fecha que se valoriza. Mira exactamente lo mismo que usan
+// calcMargenCriaCampana_ / RecriaCampana_ / TerminacionCampana_. No cambia
+// ningún cálculo ni graba nada. Pastoreo: pendiente (falta definirlo con Nico).
+const MB_CTRL_MESES_VIEJO_ = 2;   // precio/pesada con 2 meses o más -> aviso
+const MB_CTRL_DIAS_TC_ = 7;       // cotización con más de 7 días -> aviso
+
+function mbMeses_(desde, hasta) {
+  const a = String(desde || '').slice(0, 7).split('-').map(Number), b = String(hasta || '').slice(0, 7).split('-').map(Number);
+  if (!a[0] || !b[0]) return 0;
+  return (b[0] * 12 + b[1]) - (a[0] * 12 + a[1]);
+}
+function mbMesNombre_(fecha) {
+  const m = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const p = String(fecha || '').slice(0, 7).split('-');
+  return p.length === 2 ? m[Number(p[1]) - 1] + ' ' + p[0] : '—';
+}
+// Fila de Precios de valorización que usa preciosValGet_(fecha) (mismo criterio).
+function mbPrecioFila_(fecha) {
+  const lista = ((S.catalogs && S.catalogs.precios_valorizacion) || []).filter(p => p.fecha).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  if (!lista.length) return null;
+  if (!fecha) return lista[0];
+  const f = String(fecha).slice(0, 7);
+  return lista.find(p => String(p.fecha).slice(0, 7) <= f) || lista[0];
+}
+function mbUltimaPesada_(rodeoId, corte) {
+  return (S.cache.pesadas || []).filter(p => String(p.rodeo_id) === String(rodeoId) && (p.fecha || '') <= corte && Number(p.peso_prom_kg) > 0)
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0] || null;
+}
+function mbActDeRodeo_(r, engIds) {
+  if (!r) return '';
+  if (engIds.has(String(r.rodeo_id))) return 'Terminación';
+  const a = normAct_(r.actividad);
+  return a === 'cria' ? 'Cría' : a === 'recria' ? 'Recría' : '';
+}
+
+function mbControlDatos_(campanaId, corte) {
+  const campanas = S.cache.campanas || [];
+  const camp = campanas.find(c => String(c.campana_id) === String(campanaId));
+  if (!camp) return null;
+  const activa = camp.activa === true || String(camp.activa).toUpperCase() === 'TRUE';
+  const fechaValor = !activa && camp.fecha_fin ? String(camp.fecha_fin) : corte;
+  const enCamp = (fecha, cid) => campanaEfectiva_(fecha, cid) === String(campanaId) && (!activa || String(fecha || '') <= corte);
+  const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
+  const rPorId = Object.fromEntries(rodeos.map(r => [String(r.rodeo_id), r]));
+  const engIds = new Set(rodeosEngordeValidos_().map(r => String(r.rodeo_id)));
+  const act = id => mbActDeRodeo_(rPorId[String(id)], engIds);
+  const rn = id => rPorId[String(id)] ? rPorId[String(id)].nombre : '(rodeo ' + id + ')';
+  const productos = (S.catalogs && S.catalogs.productos) || S.cache.productos || [];
+  const prodPorId = Object.fromEntries(productos.map(p => [String(p.producto_id), p]));
+  const secciones = [];
+  const sec = (k, titulo, ir, irLabel) => { const s = { k, titulo, ir, irLabel, filas: [], notas: [] }; secciones.push(s); return s; };
+  const fila = (s, nivel, fecha, que, detalle, problema) => s.filas.push({ nivel, fecha: fecha || '', que, detalle, problema });
+
+  // 1. Campaña
+  const sCamp = sec('campana', 'Campaña de los registros', 'campanas', 'Campañas');
+  const entidades = [
+    ['ventas', 'Venta', v => v.fecha_salida, v => rn(v.rodeo_id) + ' — ' + (v.cant_animales || 0) + ' cab.', 'ventas'],
+    ['compras_hacienda', 'Compra de hacienda', c => c.fecha, c => (c.cantidad || c.cant_animales || '') + ' cab. — $ ' + fn(Number(c.importe_total) || 0), 'compras_hacienda'],
+    ['movimientos', 'Movimiento', m => m.fecha, m => m.tipo + ' ' + (m.cantidad || 0) + ' — ' + (m.rodeo_origen_id ? rn(m.rodeo_origen_id) + ' → ' : '') + rn(m.rodeo_destino_id), 'movimientos'],
+    ['consumos_insumos', 'Consumo de insumo', c => c.fecha, c => (prodPorId[String(c.producto_id)] ? prodPorId[String(c.producto_id)].nombre : 'producto ' + c.producto_id) + ' ' + fn(Number(c.cantidad) || 0) + ' — ' + rn(c.rodeo_id), 'insumos'],
+    ['egresos_recria', 'Egreso de Recría', e => e.fecha, e => rn(e.rodeo_id) + ' ' + (e.cant_animales || 0) + ' cab. → ' + (e.destino || ''), 'cesiones_recria'],
+    ['mortandad', 'Mortandad', m => m.fecha, m => rn(m.rodeo_id) + ' ' + (m.cantidad || 1), 'mortandad'],
+    ['pariciones', 'Parición', p => p.fecha, p => rn(p.rodeo_id) + ' ' + (p.nacidos_vivos || 0) + ' vivos', 'pariciones'],
+  ];
+  const sinConfirmar = {};
+  // Lo anterior a la primera campaña no entra en ningún margen y no se lista.
+  const primerInicio = campanas.map(c => String(c.fecha_inicio || '')).filter(Boolean).sort()[0] || '';
+  entidades.forEach(([ent, label, fFecha, fDet]) => {
+    (S.cache[ent] || []).forEach(x => {
+      const fecha = String(fFecha(x) || '');
+      const cid = x.campana_id ? String(x.campana_id) : '';
+      if (cid && !campanas.some(c => String(c.campana_id) === cid)) { fila(sCamp, 'rojo', fecha, label, fDet(x), 'Campaña inválida (id ' + cid + '): no entra en ningún Margen Bruto.'); return; }
+      if (!cid && fecha && fecha >= primerInicio && !campanaDeFecha_(fecha)) { fila(sCamp, 'rojo', fecha, label, fDet(x), 'Sin campaña: la fecha no cae en ninguna campaña del catálogo. No entra en ningún Margen Bruto.'); return; }
+      const fechaEnEsta = fecha >= String(camp.fecha_inicio || '') && (!camp.fecha_fin || fecha <= String(camp.fecha_fin));
+      if (cid && cid !== String(campanaId) && fechaEnEsta) { const o = campanas.find(c => String(c.campana_id) === cid); fila(sCamp, 'amarillo', fecha, label, fDet(x), 'La fecha es de ' + camp.nombre + ' pero está cargado en ' + (o ? o.nombre : cid) + '. Si es correcto, no hay que hacer nada.'); return; }
+      if (cid === String(campanaId) && fecha && !fechaEnEsta) { fila(sCamp, 'amarillo', fecha, label, fDet(x), 'Está cargado en ' + camp.nombre + ' pero la fecha es de otra campaña. Si es correcto, no hay que hacer nada.'); return; }
+      if (!cid && enCamp(fecha, '')) sinConfirmar[label] = (sinConfirmar[label] || 0) + 1;
+    });
+  });
+  const nSinConf = Object.values(sinConfirmar).reduce((a, b) => a + b, 0);
+  if (nSinConf) sCamp.notas.push('Sin campaña confirmada (se asignan a ' + camp.nombre + ' por la fecha, así que entran bien): ' + Object.keys(sinConfirmar).map(k => k + ' ' + sinConfirmar[k]).join(', ') + '. Se pueden confirmar con "Confirmar campañas por fecha" en cada pantalla.');
+
+  // 2. Ventas y compras de hacienda
+  const sVen = sec('ventas', 'Ventas y compras de hacienda', 'ventas', 'Ventas');
+  (S.cache.ventas || []).filter(v => enCamp(v.fecha_salida, v.campana_id)).forEach(v => {
+    const a = act(v.rodeo_id);
+    const det = rn(v.rodeo_id) + ' — ' + (v.cant_animales || 0) + ' cab.' + (v.comprador ? ' — ' + v.comprador : '');
+    if (!a) { fila(sVen, 'rojo', v.fecha_salida, 'Venta', det, 'El rodeo no es de Cría, Recría ni Terminación: la venta no entra en el margen.'); return; }
+    const imp = Number(v.importe_liq) || (Number(v.precio_pactado) * (Number(v.peso_campo_kg) || Number(v.cant_animales))) || 0;
+    if (!imp) fila(sVen, 'rojo', v.fecha_salida, 'Venta (' + a + ')', det, 'Sin valorizar: no tiene liquidación ni precio pactado. Cuenta $0.');
+    else if (!Number(v.importe_liq)) fila(sVen, 'amarillo', v.fecha_salida, 'Venta (' + a + ')', det, 'Valorizada al precio pactado ($ ' + fn(imp) + '): falta cargar la liquidación.');
+  });
+  comprasHacGetAll_().filter(c => enCamp(c.fecha, c.campana_id)).forEach(c => {
+    if (!(Number(c.importe_total) > 0)) fila(sVen, 'rojo', c.fecha, 'Compra de hacienda', (c.cantidad || c.cant_animales || '') + ' cab.' + (c.proveedor ? ' — ' + c.proveedor : ''), 'Sin importe: cuenta $0.');
+  });
+
+  // 3. Movimientos con valor: saldos iniciales, cesiones, compras directas
+  const sMov = sec('cesiones', 'Cesiones, saldos iniciales y traslados entre actividades', 'cesiones_cria', 'Cesiones');
+  const movs = (S.cache.movimientos || []).filter(m => enCamp(m.fecha, m.campana_id));
+  const egresos = (S.cache.egresos_recria || []).filter(e => enCamp(e.fecha, e.campana_id));
+  movs.forEach(m => {
+    const det = (m.tipo === 'Saldo inicial' ? '' : rn(m.rodeo_origen_id) + ' → ') + rn(m.rodeo_destino_id) + ' — ' + (m.cantidad || 0) + ' cab.';
+    if (m.tipo === 'Saldo inicial') {
+      if (esAltaPorParicion_(m) || !act(m.rodeo_destino_id)) return;
+      if (!valorMovimientoEntrada_(m).total) fila(sMov, 'rojo', m.fecha, 'Saldo inicial (' + act(m.rodeo_destino_id) + ')', det, 'Sin precio: entra al stock inicial con $0.');
+      return;
+    }
+    if (m.tipo !== 'Traslado en bloque' && m.tipo !== 'Traslado individual') {
+      if (act(m.rodeo_destino_id) === 'Recría' && !(Number(m.precio_cabeza) > 0)) fila(sMov, 'rojo', m.fecha, m.tipo + ' (Recría)', det, 'Ingreso a Recría sin precio por cabeza: cuenta $0.');
+      return;
+    }
+    const ao = act(m.rodeo_origen_id), ad = act(m.rodeo_destino_id);
+    if (!ao || !ad || ao === ad) return;
+    const tipoCes = ao + ' → ' + ad;
+    const cant = Number(m.cantidad) || 0, peso = Number(m.peso_prom_kg) || 0, pk = Number(m.precio_kg) || 0, pc = Number(m.precio_cabeza) || 0;
+    if (pc > 0 || (pk > 0 && peso > 0)) { /* con precio propio */ }
+    else if (pk > 0) {
+      const pes = mbUltimaPesada_(m.rodeo_origen_id, m.fecha);
+      if (!pes) fila(sMov, 'rojo', m.fecha, 'Cesión ' + tipoCes, det, 'Tiene $/kg pero no peso, y el rodeo de origen no tiene pesada anterior: cuenta $0.');
+      else if (mbMeses_(pes.fecha, m.fecha) >= MB_CTRL_MESES_VIEJO_) fila(sMov, 'amarillo', m.fecha, 'Cesión ' + tipoCes, det, 'Sin peso: usa la pesada del ' + fd(pes.fecha) + ' (' + mbMeses_(pes.fecha, m.fecha) + ' meses antes).');
+    } else {
+      const pes = (S.cache.pesadas || []).filter(p => String(p.rodeo_id) === String(m.rodeo_origen_id) && Number(p.peso_prom_kg) > 0).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
+      const val = valorizarRodeo_(rPorId[String(m.rodeo_origen_id)] || {}, cant, pes ? Number(pes.peso_prom_kg) : 0);
+      const fil = mbPrecioFila_();
+      if (!val) fila(sMov, 'rojo', m.fecha, 'Cesión ' + tipoCes, det, 'Sin precio de cesión y no se puede valorizar automáticamente (falta pesada o precio de la categoría): cuenta $0.');
+      else fila(sMov, 'amarillo', m.fecha, 'Cesión ' + tipoCes, det, 'Sin precio de cesión: se valoriza con la tabla vigente hoy (' + (fil ? mbMesNombre_(fil.fecha) : '—') + ')' + (pes ? ' y la pesada del ' + fd(pes.fecha) : '') + ', no con los valores de su fecha.');
+    }
+    // Recría -> Terminación por traslado sin su egreso: Recría no lo cuenta como ingreso
+    if (ao === 'Recría' && ad === 'Terminación') {
+      const tieneEgreso = egresos.some(e => e.destino === 'Engorde' && String(e.fecha) === String(m.fecha) && String(e.rodeo_id) === String(m.rodeo_origen_id)
+        && String(e.rodeo_destino_id) === String(m.rodeo_destino_id) && Number(e.cant_animales) === cant);
+      if (!tieneEgreso) fila(sMov, 'rojo', m.fecha, 'Cesión Recría → Terminación', det, 'Traslado sin su cesión registrada: Terminación lo cuenta como costo, pero Recría no lo cuenta como ingreso. Regularizalo en Cesiones Recría → Terminación.');
+    }
+  });
+  egresos.filter(e => e.destino === 'Engorde').forEach(e => {
+    if (!(Number(e.precio_cabeza_cesion) > 0) && !(Number(e.precio_kg_cesion) > 0)) fila(sMov, 'rojo', e.fecha, 'Cesión Recría → Terminación', rn(e.rodeo_id) + ' → ' + rn(e.rodeo_destino_id) + ' — ' + (e.cant_animales || 0) + ' cab.', 'Cesión registrada sin precio.');
+    else if (Number(e.precio_kg_cesion) > 0 && !(Number(e.peso_prom_kg) > 0) && !mbUltimaPesada_(e.rodeo_id, e.fecha)) fila(sMov, 'rojo', e.fecha, 'Cesión Recría → Terminación', rn(e.rodeo_id) + ' — ' + (e.cant_animales || 0) + ' cab.', 'Sin peso ni pesada anterior del rodeo de origen: cuenta $0.');
+  });
+
+  // 4. Stock valorizado: existencia inicial (heredada) y final
+  const sStock = sec('stock', 'Valorización del stock', 'precios_valorizacion', 'Precios del mes');
+  const chequearStock = (stockPorRodeo, fecha, etiqueta) => {
+    const fil = mbPrecioFila_(fecha);
+    if (!fil) { sStock.notas.push(etiqueta + ': no hay ninguna tabla de Precios de valorización cargada.'); return; }
+    const meses = mbMeses_(fil.fecha, fecha);
+    if (meses >= MB_CTRL_MESES_VIEJO_) fila(sStock, 'amarillo', fecha, etiqueta, 'Tabla de Precios de valorización', 'Al ' + fd(fecha) + ' se usan los precios de ' + mbMesNombre_(fil.fecha) + ' (' + meses + ' meses antes). Cargá los de ' + mbMesNombre_(fecha) + '.');
+    else if (meses < 0) fila(sStock, 'amarillo', fecha, etiqueta, 'Tabla de Precios de valorización', 'No hay precios de ' + mbMesNombre_(fecha) + ' ni anteriores: se usan los de ' + mbMesNombre_(fil.fecha) + ', posteriores.');
+    Object.keys(stockPorRodeo).forEach(rid => {
+      const r = rPorId[rid]; const stock = Math.max(0, Number(stockPorRodeo[rid]) || 0);
+      const a = act(rid);
+      if (!r || !stock || !a) return;
+      const cat = String(r.categoria || '').toLowerCase().trim();
+      const det = a + ' — ' + r.nombre + ' — ' + fn(stock) + ' cab.';
+      const val = valorizarRodeoAFecha_(r, stock, fecha);
+      if (!val) { fila(sStock, 'rojo', fecha, etiqueta, det, 'Cuenta $0: ' + metodoValorizacionAFecha_(r, fecha).replace(/^⚠\s*/, '') + '.'); return; }
+      if (esPorCabezaSegunActividad_(cat, r)) return;
+      const pes = mbUltimaPesada_(rid, fecha);
+      if (pes) { const mm = mbMeses_(pes.fecha, fecha); if (mm >= MB_CTRL_MESES_VIEJO_) fila(sStock, 'amarillo', fecha, etiqueta, det, 'Valorizado por kg con la pesada del ' + fd(pes.fecha) + ' (' + mm + ' meses antes): ' + fn(Number(pes.peso_prom_kg)) + ' kg.'); return; }
+      const ing = pesoIngresoRodeoAFecha_(rid, fecha);
+      if (ing.peso) fila(sStock, 'amarillo', fecha, etiqueta, det, 'Sin pesada propia: usa el peso de ingreso del ' + fd(ing.fecha) + ' (' + fn(Math.round(ing.peso)) + ' kg); no refleja el engorde.');
+      else if (cat === 'vaquillona') fila(sStock, 'amarillo', fecha, etiqueta, det, 'Sin pesada ni peso de ingreso: se valoriza por cabeza al precio de plantel de Cría.');
+    });
+  };
+  const efStock = activa ? stockPorRodeoACorte_(fechaValor) : Object.assign({}, efCriaCampanaStockPorRodeo_(campanaId), efRecriaCampanaStockPorRodeo_(campanaId), efTerminacionCampanaStockPorRodeo_(campanaId));
+  chequearStock(efStock, fechaValor, 'Existencia final');
+  const ant = campanaAnteriorA_(campanaId);
+  if (ant && ant.fecha_fin) {
+    const eiStock = Object.assign({}, efCriaCampanaStockPorRodeo_(ant.campana_id), efRecriaCampanaStockPorRodeo_(ant.campana_id), efTerminacionCampanaStockPorRodeo_(ant.campana_id));
+    chequearStock(eiStock, String(ant.fecha_fin), 'Existencia inicial (cierre ' + ant.nombre + ')');
+  }
+
+  // 5. Insumos
+  const sIns = sec('insumos', 'Costo de insumos', 'insumos', 'Insumos');
+  const porProd = {};
+  (S.cache.consumos_insumos || []).filter(c => enCamp(c.fecha, c.campana_id)).forEach(c => {
+    const pn = prodPorId[String(c.producto_id)] ? prodPorId[String(c.producto_id)].nombre : 'producto ' + c.producto_id;
+    if (!act(c.rodeo_id)) { fila(sIns, 'rojo', c.fecha, 'Consumo', pn + ' ' + fn(Number(c.cantidad) || 0) + ' — ' + (c.rodeo_id ? rn(c.rodeo_id) : 'sin rodeo'), 'El rodeo no es de Cría, Recría ni Terminación: el consumo no entra en el margen.'); return; }
+    const compras = (S.cache.compras_insumos || []).filter(x => String(x.producto_id) === String(c.producto_id) && Number(x.precio_unitario) > 0).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    const vig = compras.find(x => String(x.fecha) <= String(c.fecha));
+    let tipo = '', ref = '';
+    if (!compras.length) tipo = 'sin';
+    else if (!vig) { tipo = 'posterior'; ref = compras[compras.length - 1].fecha; }
+    else if (mbMeses_(vig.fecha, c.fecha) >= MB_CTRL_MESES_VIEJO_) { tipo = 'viejo'; ref = vig.fecha; }
+    if (!tipo) return;
+    const k = c.producto_id + '|' + tipo;
+    const g = porProd[k] || (porProd[k] = { pn, tipo, n: 0, cant: 0, desde: c.fecha, hasta: c.fecha, ref, maxMeses: 0 });
+    g.n++; g.cant += Number(c.cantidad) || 0;
+    if (String(c.fecha) < g.desde) g.desde = c.fecha;
+    if (String(c.fecha) > g.hasta) g.hasta = c.fecha;
+    if (tipo === 'viejo') { const mm = mbMeses_(ref, c.fecha); if (mm > g.maxMeses) { g.maxMeses = mm; g.ref = ref; } }
+  });
+  Object.values(porProd).sort((a, b) => a.pn.localeCompare(b.pn)).forEach(g => {
+    const det = g.pn + ' — ' + g.n + ' consumos (' + fn(g.cant) + '), del ' + fd(g.desde) + ' al ' + fd(g.hasta);
+    if (g.tipo === 'sin') fila(sIns, 'rojo', g.desde, 'Insumo sin precio', det, 'No hay ninguna compra con precio: esos consumos cuentan $0.');
+    else if (g.tipo === 'posterior') fila(sIns, 'amarillo', g.desde, 'Insumo', det, 'No hay compra con precio anterior al consumo: usa la del ' + fd(g.ref) + ', posterior.');
+    else fila(sIns, 'amarillo', g.desde, 'Insumo con precio viejo', det, 'Usa el precio de la compra del ' + fd(g.ref) + ' (hasta ' + g.maxMeses + ' meses antes del consumo). Si cambió, cargá una actualización de precio.');
+  });
+  const sinPrecioCompras = (S.cache.compras_insumos || []).filter(x => !(Number(x.precio_unitario) > 0) && Number(x.cantidad) > 0 && enCamp(x.fecha, x.campana_id));
+  if (sinPrecioCompras.length) sIns.notas.push(sinPrecioCompras.length + ' compras de insumos de la campaña sin precio (por ejemplo, las que trae el importador de Fielddata). Mientras no tengan precio, el costo usa la compra anterior con precio.');
+  sIns.notas.push('Pastoreo: pendiente de definir (no está controlado acá).');
+
+  // 6. Sueldos
+  const sSue = sec('sueldos', 'Sueldos', 'sueldos', 'Sueldos');
+  const sueldos = sueldosGetAll_();
+  const mesDesde = String(camp.fecha_inicio || '').slice(0, 7), mesHasta = fechaValor.slice(0, 7);
+  const meses = [];
+  if (mesDesde) { let [y, m] = mesDesde.split('-').map(Number); for (let i = 0; i < 36; i++) { const k = y + '-' + String(m).padStart(2, '0'); if (k > mesHasta) break; meses.push(k); m++; if (m > 12) { m = 1; y++; } } }
+  const enRango = sueldos.filter(s => String(s.periodo || '').slice(0, 7) >= mesDesde && String(s.periodo || '').slice(0, 7) <= mesHasta);
+  const camposConSueldo = [...new Set(sueldos.filter(s => mbMeses_(String(s.periodo || '').slice(0, 7), mesHasta) <= 12).map(s => String(s.campo_id)))];
+  camposConSueldo.forEach(cid => {
+    const faltan = meses.filter(k => !enRango.some(s => String(s.campo_id) === cid && String(s.periodo || '').slice(0, 7) === k));
+    const nombreC = (((S.catalogs && S.catalogs.campos) || []).find(c => String(c.campo_id) === cid) || {}).nombre || ('campo ' + cid);
+    const cerrados = faltan.filter(k => k < today().slice(0, 7)), enCurso = faltan.filter(k => k >= today().slice(0, 7));
+    if (cerrados.length) fila(sSue, 'rojo', cerrados[0] + '-01', 'Sueldos faltantes', nombreC, 'Sin sueldos cargados en: ' + cerrados.map(mbMesNombre_).join(', ') + '.');
+    if (enCurso.length) fila(sSue, 'amarillo', enCurso[0] + '-01', 'Sueldos del mes en curso', nombreC, 'Todavía sin cargar: ' + enCurso.map(mbMesNombre_).join(', ') + ' (el margen llega hasta ese mes).');
+  });
+  enRango.forEach(s => {
+    const d = distEfectiva_(s);
+    const tot = (d.cria || 0) + (d.recria || 0) + (d.engorde || 0) + (d.estructura || 0);
+    const nombreC = (((S.catalogs && S.catalogs.campos) || []).find(c => String(c.campo_id) === String(s.campo_id)) || {}).nombre || ('campo ' + s.campo_id);
+    if (!(Number(s.monto) > 0)) fila(sSue, 'rojo', String(s.periodo).slice(0, 7) + '-01', 'Sueldo sin monto', nombreC + ' — ' + mbMesNombre_(s.periodo), 'Monto $0.');
+    else if (!((d.cria || 0) + (d.recria || 0) + (d.engorde || 0))) fila(sSue, 'rojo', String(s.periodo).slice(0, 7) + '-01', 'Sueldo sin distribución', nombreC + ' — ' + mbMesNombre_(s.periodo) + ' — $ ' + fn(Number(s.monto)), 'No se reparte a Cría, Recría ni Terminación: no entra en el margen. Cargá la distribución del campo.');
+    else if (Math.round(tot) !== 100) fila(sSue, 'amarillo', String(s.periodo).slice(0, 7) + '-01', 'Distribución de sueldo', nombreC + ' — ' + mbMesNombre_(s.periodo), 'La distribución suma ' + fn(tot) + '% (no 100%).');
+  });
+
+  // 7. Cotización U$S (para la versión en dólares)
+  const sTc = sec('tc', 'Cotización U$S (versión en dólares)', 'cotizacion', 'Cotización');
+  const fechasTc = new Set([fechaValor]);
+  (S.cache.ventas || []).filter(v => enCamp(v.fecha_salida, v.campana_id)).forEach(v => fechasTc.add(String(v.fecha_salida)));
+  (S.cache.consumos_insumos || []).filter(c => enCamp(c.fecha, c.campana_id)).forEach(c => fechasTc.add(String(c.fecha)));
+  movs.forEach(m => fechasTc.add(String(m.fecha)));
+  meses.forEach(k => fechasTc.add(k + '-01'));
+  let sinTc = 0; const viejas = {};
+  [...fechasTc].filter(Boolean).forEach(f => {
+    const tc = tipoCambioVigente_(f);
+    if (!tc) { sinTc++; return; }
+    const dias = fdDias_(f, String(tc.fecha));
+    if (dias > MB_CTRL_DIAS_TC_ || dias < -MB_CTRL_DIAS_TC_) { const k = String(tc.fecha); (viejas[k] = viejas[k] || []).push(f); }
+  });
+  if (sinTc) fila(sTc, 'rojo', '', 'Sin cotización', sinTc + ' fechas', 'No hay ninguna cotización cargada: en dólares esos importes quedan en pesos.');
+  Object.keys(viejas).sort().forEach(k => {
+    const fs = viejas[k].sort();
+    fila(sTc, 'amarillo', fs[0], 'Cotización vieja', fs.length + ' fechas, del ' + fd(fs[0]) + ' al ' + fd(fs[fs.length - 1]), 'Usan la cotización del ' + fd(k) + ' (más de ' + MB_CTRL_DIAS_TC_ + ' días de diferencia). Cargá las cotizaciones que faltan.');
+  });
+
+  secciones.forEach(s => s.filas.sort((a, b) => (a.nivel === b.nivel ? 0 : a.nivel === 'rojo' ? -1 : 1) || String(a.fecha).localeCompare(String(b.fecha))));
+  const rojos = secciones.reduce((n, s) => n + s.filas.filter(f => f.nivel === 'rojo').length, 0);
+  const amarillos = secciones.reduce((n, s) => n + s.filas.filter(f => f.nivel === 'amarillo').length, 0);
+  return { camp, activa, fechaValor, secciones, rojos, amarillos };
+}
+
+function buildMBControl_(campanaId, corte) {
+  const d = mbControlDatos_(campanaId, corte);
+  if (!d) return '<div class="empty-state"><span class="ico">🔎</span><div class="msg">Elegí una campaña.</div></div>';
+  let h = `<div class="panel">
+    <div class="panel-title">🔎 Control antes de presentar — ${fdEsc_(d.camp.nombre)} <span class="pill ${d.rojos ? 'pill-red' : 'pill-green'}">${d.rojos ? d.rojos + ' sin valorizar o fuera del margen' : 'nada sin valorizar'}</span> <span class="pill ${d.amarillos ? 'pill-gold' : 'pill-green'}">${d.amarillos ? d.amarillos + ' avisos' : 'sin avisos'}</span></div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0;line-height:1.55">Valoriza ${d.activa ? 'al corte del ' + fd(d.fechaValor) + ' (campaña en curso)' : 'al cierre de la campaña, ' + fd(d.fechaValor)}. <b style="color:var(--red)">Rojo</b>: cuenta $0 o no entra en el margen. <b style="color:var(--gold-text)">Amarillo</b>: entra, pero con un precio, pesada o cotización de ${MB_CTRL_MESES_VIEJO_} meses o más (cotización: más de ${MB_CTRL_DIAS_TC_} días), o falta confirmar algo. No cambia nada: corregí en la pantalla de cada sección y volvé acá.</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${d.secciones.map(s => { const r = s.filas.filter(f => f.nivel === 'rojo').length, a = s.filas.length - r; return `<span class="pill ${r ? 'pill-red' : a ? 'pill-gold' : 'pill-green'}">${fdEsc_(s.titulo)}: ${r || a ? (r ? r + ' rojo' + (r > 1 ? 's' : '') : '') + (r && a ? ' · ' : '') + (a ? a + ' aviso' + (a > 1 ? 's' : '') : '') : 'OK'}</span>`; }).join('')}</div>
+  </div>`;
+  d.secciones.forEach(s => {
+    const r = s.filas.filter(f => f.nivel === 'rojo').length;
+    h += `<div class="panel"><div class="panel-title">${fdEsc_(s.titulo)} <span class="pill ${r ? 'pill-red' : s.filas.length ? 'pill-gold' : 'pill-green'}">${s.filas.length ? s.filas.length : 'OK'}</span>
+      <button class="btn btn-ghost btn-sm no-print" style="margin-left:auto;font-size:12px" onclick="goto('${s.ir}')">Ir a ${fdEsc_(s.irLabel)} →</button></div>`;
+    s.notas.forEach(n => { h += `<p style="font-size:12.5px;color:var(--text2);margin:0 0 8px">ℹ ${fdEsc_(n)}</p>`; });
+    if (!s.filas.length) { h += `<p style="font-size:12.5px;color:var(--green-text);margin:0">✓ Nada para corregir.</p></div>`; return; }
+    const tabla = `<div style="overflow-x:auto"><table class="dt"><thead><tr><th></th><th>Fecha</th><th>Qué</th><th>Detalle</th><th>Problema</th></tr></thead><tbody>` +
+      s.filas.map(f => `<tr><td>${f.nivel === 'rojo' ? '<span class="pill pill-red">$0</span>' : '<span class="pill pill-gold">Aviso</span>'}</td><td style="white-space:nowrap">${f.fecha ? fd(String(f.fecha).slice(0, 10)) : '—'}</td><td>${fdEsc_(f.que)}</td><td style="white-space:normal;max-width:300px">${fdEsc_(f.detalle)}</td><td style="white-space:normal;max-width:420px;font-size:12.5px">${fdEsc_(f.problema)}</td></tr>`).join('') + `</tbody></table></div>`;
+    h += s.filas.length > 25 ? `<details ${r ? 'open' : ''}><summary style="cursor:pointer;font-size:13px;margin-bottom:8px">${s.filas.length} filas — ver</summary>${tabla}</details>` : tabla;
+    h += `</div>`;
+  });
+  return h;
+}
+
 function buildMargenBruto() {
   const tabMB   = S.mbTab   || 'reporte';
   const moneda  = S.margenBrutoMoneda || 'ARS';
@@ -15332,7 +15615,7 @@ function buildMargenBruto() {
     <div class="page-sub">Resultado económico consolidado de las tres actividades</div>
   </div>`;
 
-  const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'costos', label:'💲 Costos' }, { k:'productivo', label:'📋 Resultados productivos' }];
+  const tabs = [{ k:'reporte', label:'📄 Reporte Directorio' }, { k:'resultado', label:'💰 Resultado económico' }, { k:'costos', label:'💲 Costos' }, { k:'productivo', label:'📋 Resultados productivos' }, { k:'control', label:'🔎 Control' }];
   h += `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">`;
   tabs.forEach(t => { h += `<button class="btn ${tabMB===t.k?'btn-primary':'btn-secondary'}" onclick="S.mbTab='${t.k}';render()">${t.label}</button>`; });
   h += `<button class="no-print btn btn-secondary btn-sm" onclick="exportarAuditoriaMargenBrutoExcel_()" style="margin-left:auto" title="Descarga un Excel con el resumen consolidado (ARS y U$S) y el detalle por actividad, para auditar sin pasar de pantalla en pantalla">📊 Exportar a Excel</button>
@@ -15374,6 +15657,16 @@ function buildMargenBruto() {
   }
 
   h += `<div style="font-size:12px;color:var(--text2);margin:-8px 0 16px">Campaña: <strong>${campSelecObjMB?campSelecObjMB.nombre:'—'}</strong>${(campSelecObjMB&&(campSelecObjMB.activa===true||String(campSelecObjMB.activa).toUpperCase()==='TRUE'))?' (en curso — hasta la fecha de corte)':' (cerrada — total completo)'}</div>`;
+
+  // v270 -- Pestaña Control: lista lo que deja incompleto el margen (no calcula el margen).
+  if (tabMB === 'control') { h += buildMBControl_(campSelecMB, corteGlobal); return h; }
+  // v270 -- Aviso en las otras pestañas (no se imprime)
+  try {
+    const ctrlMB_ = mbControlDatos_(campSelecMB, corteGlobal);
+    if (ctrlMB_ && (ctrlMB_.rojos || ctrlMB_.amarillos)) h += `<div class="no-print" style="background:${ctrlMB_.rojos ? 'rgba(220,50,50,0.08)' : 'rgba(200,150,40,0.1)'};border-radius:8px;padding:8px 14px;font-size:13px;margin:-6px 0 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span>${ctrlMB_.rojos ? '⚠ <b>' + ctrlMB_.rojos + '</b> sin valorizar o fuera del margen' : ''}${ctrlMB_.rojos && ctrlMB_.amarillos ? ' · ' : ''}${ctrlMB_.amarillos ? '<b>' + ctrlMB_.amarillos + '</b> avisos de precios viejos o datos por confirmar' : ''}</span>
+      <button class="btn btn-secondary btn-sm" onclick="S.mbTab='control';render()">🔎 Ver control</button></div>`;
+  } catch (e) { console.warn('Control MB:', e); }
 
   // Calcular las 3 actividades para la campaña elegida — cada una con su
   // propia función "pura" (ver definición antes de buildMargenBruto), sin
