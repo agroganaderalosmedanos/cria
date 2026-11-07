@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_265';
+const APP_VERSION = 'index_consolidado_4_6_155_266';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1275,6 +1275,7 @@ async function goto(page) {
     // huella y las equivalencias guardadas. Se recargan siempre (force) para
     // no comparar contra datos viejos de la sesion.
     const fdLoads = [
+      loadEntity('compras_insumos', true).catch(()=>{}),
       loadEntity('consumos_insumos', true).catch(()=>{}),
       loadEntity('traslados_insumos', true).catch(()=>{}),
       loadEntity('fielddata_importados', true).catch(()=>{ S.cache.fielddata_importados = []; }),
@@ -13692,6 +13693,17 @@ function buildInsumos() {
     }
   }
 
+  // v266 -- Aviso de compras sin precio (las graba así el importador de
+  // Fielddata cuando el insumo llega antes que la factura).
+  {
+    const sinPrecio = compras.filter(c => Number(c.cantidad) > 0 && !(Number(c.precio_unitario) > 0));
+    if (sinPrecio.length) {
+      const pm = {}; productos.forEach(p => { pm[String(p.producto_id)] = p; });
+      h += `<div class="panel" style="border-color:var(--gold)"><div class="panel-title">⚠ Compras sin precio <span class="pill pill-gold">${sinPrecio.length}</span></div>
+        <p style="font-size:12.5px;color:var(--text2);margin:0 0 8px">Cargá el precio de la factura editando cada compra (✎ en el historial). Mientras no tenga precio, sus consumos se valorizan en $ 0.</p>
+        <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.7">${sinPrecio.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha))).map(c => `<li>${fd(c.fecha)} — ${(pm[String(c.producto_id)] || {}).nombre || 'Producto ' + c.producto_id} — ${fn(Number(c.cantidad) || 0)} ${(pm[String(c.producto_id)] || {}).unidad || ''}${c.campo_id ? ' — ' + campoNombre(c.campo_id) : ''}</li>`).join('')}</ul></div>`;
+    }
+  }
   // v260 -- Stock de cada insumo a una fecha elegida (por campo si el
   // producto se guarda por campo). Misma cuenta que el backend
   // (getStockProductos_), pero solo con los movimientos hasta esa fecha.
@@ -13857,7 +13869,7 @@ function buildInsumosHistorial_(compras, consumos, productoFiltro, categoriaFilt
       const esSoloPrecio = !(Number(c.cantidad) > 0);
       const detalle = esSoloPrecio
         ? 'Precio actualizado a $ ' + fn(Number(c.precio_unitario)||0) + ' desde esta fecha'
-        : [c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
+        : [!(Number(c.precio_unitario) > 0) ? '⚠ FALTA PRECIO' : '', c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—';
       return {
         fecha: c.fecha || '',
         tipoLabel: esSoloPrecio ? 'Cambio de precio' : 'Compra',
@@ -14211,7 +14223,7 @@ function buildInsumosKardex_(compras, consumos, productoId, desde, hasta, campoF
   let movs = [
     ...comprasP.map(c => ({
       fecha: c.fecha || '', tipoLabel: 'Compra', tipoClass: 'pill-green', entrada: Number(c.cantidad) || 0, salida: 0,
-      detalle: [c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
+      detalle: [Number(c.cantidad) > 0 && !(Number(c.precio_unitario) > 0) ? '⚠ FALTA PRECIO' : '', c.precio_unitario ? 'P.Unit: $ ' + fn(c.precio_unitario) + (c.cantidad ? ' × ' + fn(c.cantidad) + ' = $ ' + fn((Number(c.precio_unitario)||0)*(Number(c.cantidad)||0)) : '') : '', c.proveedor ? 'Prov: ' + c.proveedor : '', c.observaciones || ''].filter(Boolean).join(' — ') || '—',
       entity: 'compras_insumos', idCol: 'compra_id', id: c.compra_id,
     })),
     ...consumosP.map(c => ({
@@ -20995,16 +21007,27 @@ const FD_RUBROS_ = {
   concentrado_mg: { label: 'Concentrado Magnesiado Fortificado', unidad: 'Bolsas', esDelRubro: n => /concentrado magnes/.test(n), producto: p => /concentrado magnes/.test(fdNorm_(p.nombre)) },
   // v262 -- Sales Proteicas (stock común, solo consumos).
   sales_prot:  { label: 'Sales Proteicas', unidad: 'Bolsas', esDelRubro: n => /^sales proteic/.test(n), producto: p => /^sales proteic/.test(fdNorm_(p.nombre)) },
+  // v266 -- Calostro y Rumex: por campo (entran a El Clavo Chico y se
+  // trasladan). 'compras': los ingresos sin campo de origen se graban como
+  // compra SIN PRECIO (en Insumos quedan marcadas "Falta precio").
+  calostro:    { label: 'Calostro', unidad: 'Bolsas', compras: true, esDelRubro: n => /^calostro/.test(n), producto: p => /^calostro/.test(fdNorm_(p.nombre)) },
+  rumex:       { label: 'Rumex', unidad: 'Unidades', compras: true, esDelRubro: n => /^rumex/.test(n), producto: p => /^rumex/.test(fdNorm_(p.nombre)) },
 };
+// v266 -- Todos los campos mencionados en un texto (para detectar traslados
+// repartidos entre varios campos en una sola fila).
+function fdCamposEnTexto_(texto, excluirCampoId) {
+  const t = ' ' + fdNorm_(texto) + ' ';
+  return ((S.catalogs && S.catalogs.campos) || []).filter(c => String(c.campo_id) !== String(excluirCampoId || '') && fdClaveCampo_(c.nombre) && t.indexOf(' ' + fdClaveCampo_(c.nombre) + ' ') !== -1).map(c => String(c.campo_id));
+}
 function fdEquivKey_(campoId, nota) { return String(campoId) + '|' + fdNorm_(nota); }
 
 // v261 -- Busca el registro del sistema que grabó (o marcó como ya cargado)
 // una fila importada: primero por el id guardado en la huella; si la huella
 // no lo tiene, por fecha + campo + cantidad + "Fielddata: <nota>".
 function fdRegistroDeHuella_(it, h, usados) {
-  const entidad = it.clase === 'traslado' ? 'traslados_insumos' : (it.clase === 'consumo' ? 'consumos_insumos' : '');
+  const entidad = it.clase === 'traslado' ? 'traslados_insumos' : (it.clase === 'consumo' ? 'consumos_insumos' : (it.clase === 'ingreso' ? 'compras_insumos' : ''));
   if (!entidad) return null;
-  const idCol = entidad === 'traslados_insumos' ? 'traslado_id' : 'consumo_id';
+  const idCol = entidad === 'traslados_insumos' ? 'traslado_id' : (entidad === 'compras_insumos' ? 'compra_id' : 'consumo_id');
   const lista = S.cache[entidad] || [];
   let reg = null;
   if (h.registro_id) reg = lista.find(r => String(r[idCol]) === String(h.registro_id)) || null;
@@ -21058,14 +21081,27 @@ function fdAnalizar_() {
       const base = ['fd', a.campo_id, f.fecha, tipo, fdNorm_(f.insumo), f.cantidad, fdNorm_(f.nota), fdNorm_(f.lote)].join('|');
       ocurr[base] = (ocurr[base] || 0) + 1;
       fuentes.push({ huella: base + '|' + ocurr[base], campo_id: String(a.campo_id), fecha: f.fecha, tipo, cantidad: f.cantidad,
-        nota: f.nota, lote: f.lote, otroCampoId: fdCampoEnTexto_(f.nota, a.campo_id) });
+        nota: f.nota, lote: f.lote, otroCampoId: fdCampoEnTexto_(f.nota, a.campo_id),
+        ajuste: /\bajuste\b/.test(fdNorm_(f.nota)), multiCampo: fdCamposEnTexto_(f.nota, a.campo_id).length > 1 });
     });
   });
 
   const items = [];
+  // v266 -- Ajustes de stock y traslados repartidos entre varios campos: no
+  // se importan solos; quedan en Revisar para cargarlos a mano.
+  fuentes.filter(f => f.ajuste).forEach(f => {
+    items.push({ clase: f.tipo === 'ingreso' ? 'ingreso' : 'consumo', fecha: f.fecha, campo_id: f.campo_id, cantidad: f.cantidad, nota: f.nota, fuentes: [f],
+      revisar: 'Ajuste de stock en Fielddata (' + (f.tipo === 'ingreso' ? '+' : '−') + f.cantidad + '). No se importa: si corresponde, cargalo a mano como Ajuste.' });
+  });
+  const repartidas = fuentes.filter(f => !f.ajuste && f.tipo === 'salida' && f.multiCampo);
+  repartidas.forEach(f => {
+    items.push({ clase: 'traslado', fecha: f.fecha, campo_id: f.campo_id, origen: f.campo_id, destino: '', cantidad: f.cantidad, nota: f.nota, fuentes: [f], noAplica: !porCampo,
+      revisar: 'Traslado repartido entre varios campos en una sola fila. Cargá cada traslado a mano.' });
+  });
+  const fuentesOk = fuentes.filter(f => !f.ajuste && !(f.tipo === 'salida' && f.multiCampo));
   // 2. Traslados: se juntan salida (campo A, nota menciona B) con ingreso (campo B, nota menciona A)
-  const outs = fuentes.filter(f => f.tipo === 'salida' && f.otroCampoId);
-  const ins = fuentes.filter(f => f.tipo === 'ingreso' && f.otroCampoId);
+  const outs = fuentesOk.filter(f => f.tipo === 'salida' && f.otroCampoId);
+  const ins = fuentesOk.filter(f => f.tipo === 'ingreso' && f.otroCampoId);
   const usadosIn = new Set();
   outs.sort((a, b) => a.fecha.localeCompare(b.fecha)).forEach(o => {
     let mejor = null, mejorD = 99;
@@ -21098,15 +21134,23 @@ function fdAnalizar_() {
         : 'Falta subir el archivo de ' + fdCampoNombre_(i.otroCampoId) + ' para cerrar el traslado.' });
   });
   // 3. Ingresos que no son traslados (compras, cosechas): fuera de esta versión
-  fuentes.filter(f => f.tipo === 'ingreso' && !f.otroCampoId).forEach(f => {
-    items.push({ clase: 'ingreso', fecha: f.fecha, campo_id: f.campo_id, cantidad: f.cantidad, nota: f.nota, fuentes: [f],
-      revisar: 'Ingreso sin campo de origen en la nota (¿compra?). Esta versión no importa compras.' });
+  fuentesOk.filter(f => f.tipo === 'ingreso' && !f.otroCampoId).forEach(f => {
+    const it = { clase: 'ingreso', fecha: f.fecha, campo_id: f.campo_id, cantidad: f.cantidad, nota: f.nota, fuentes: [f] };
+    if (!rubro.compras) it.revisar = 'Ingreso sin campo de origen en la nota (¿compra?). Este insumo no importa compras.';
+    else {
+      // v266 -- Si el mismo día (±3) otro campo hizo un traslado repartido, este
+      // ingreso puede ser una parte de ese traslado y no una compra.
+      const rep = repartidas.find(r => r.campo_id !== f.campo_id && Math.abs(fdDias_(r.fecha, f.fecha)) <= FD_TOLERANCIA_DIAS_TRASLADO_);
+      if (rep) it.revisar = 'Puede ser parte del traslado repartido de ' + fdCampoNombre_(rep.campo_id) + ' del ' + fd(rep.fecha) + ' ("' + rep.nota + '"), no una compra.';
+    }
+    items.push(it);
   });
   // 4. Consumos
-  fuentes.filter(f => f.tipo === 'salida' && !f.otroCampoId).forEach(f => {
+  fuentesOk.filter(f => f.tipo === 'salida' && !f.otroCampoId).forEach(f => {
     const key = fdEquivKey_(f.campo_id, f.nota);
     if (!st.equiv[key]) {
-      const guardado = equivGuardadas[f.campo_id + '|' + fdNorm_(f.nota)];
+      // v266 -- Nota vacía: no se usa ni se guarda una equivalencia (sería para todas las notas vacías del campo).
+      const guardado = fdNorm_(f.nota) ? equivGuardadas[f.campo_id + '|' + fdNorm_(f.nota)] : '';
       st.equiv[key] = guardado
         ? { campo_id: f.campo_id, texto: fdNorm_(f.nota), notaOriginal: f.nota, rodeo_id: guardado, origen: 'guardado', confirmado: true }
         : { campo_id: f.campo_id, texto: fdNorm_(f.nota), notaOriginal: f.nota, rodeo_id: fdSugerirRodeo_(f.campo_id, f.nota), origen: 'sugerido', confirmado: false };
@@ -21129,7 +21173,8 @@ function fdAnalizar_() {
   // huella cuentan como cruzados. Los traslados siguen con la regla anterior.
   const consSis = (S.cache.consumos_insumos || []).filter(c => String(c.producto_id) === prodId);
   const trasSis = (S.cache.traslados_insumos || []).filter(t => String(t.producto_id) === prodId);
-  const usadosC = new Set(), usadosT = new Set();
+  const usadosC = new Set(), usadosT = new Set(), usadosCompra = new Set();
+  const comprasSis = (S.cache.compras_insumos || []).filter(c => String(c.producto_id) === prodId && Number(c.cantidad) > 0);
   // v264 -- Consumos del sistema que Crist marcó como "ya cubiertos en
   // Fielddata" desde el panel 4: quedan cruzados (huella 'sis|consumos_insumos|<id>').
   Object.keys(huellaEstado).forEach(k => { if (k.indexOf('sis|consumos_insumos|') === 0) usadosC.add(k.split('|')[2]); });
@@ -21141,7 +21186,7 @@ function fdAnalizar_() {
     const h = it.huellas.map(x => huellaEstado[x]).find(Boolean);
     if (h) {
       if (h.estado === 'grabado' || h.estado === 'ya_cargado') {
-        const reg = fdRegistroDeHuella_(it, h, it.clase === 'traslado' ? usadosT : usadosC);
+        const reg = fdRegistroDeHuella_(it, h, it.clase === 'traslado' ? usadosT : (it.clase === 'ingreso' ? usadosCompra : usadosC));
         // v261 -- Ya importado, pero el registro del sistema quedó con OTRO
         // producto: se ofrece corregir el producto de ese registro.
         if (reg && String(reg.registro.producto_id) !== prodId) {
@@ -21169,6 +21214,22 @@ function fdAnalizar_() {
       if (d <= FD_TOLERANCIA_DIAS_YA_CARGADO_ && d < mejorD) { mejor = t; mejorD = d; }
     });
     if (mejor) { usadosT.add(String(mejor.traslado_id)); it.estado = 'ya_cargado'; it.registroId = mejor.traslado_id; it.entidad = 'traslados_insumos'; it.motivo = 'En el sistema: traslado del ' + fd(mejor.fecha) + '.'; }
+  });
+  // v266 -- Ingresos (compras): misma fecha, campo y cantidad -> Ya cargado;
+  // hasta 3 días de diferencia -> Revisar; si no, se graba como compra sin precio.
+  porResolver.filter(it => it.clase === 'ingreso').forEach(it => {
+    let mejor = null, mejorD = 99;
+    comprasSis.forEach(c => {
+      if (usadosCompra.has(String(c.compra_id))) return;
+      if (String(c.campo_id) !== it.campo_id || Number(c.cantidad) !== it.cantidad) return;
+      const d = Math.abs(fdDias_(c.fecha, it.fecha));
+      if (d <= FD_TOLERANCIA_DIAS_CASI_IGUAL_ && d < mejorD) { mejor = c; mejorD = d; }
+    });
+    if (!mejor) return;
+    usadosCompra.add(String(mejor.compra_id));
+    it.registroId = mejor.compra_id; it.entidad = 'compras_insumos';
+    if (!mejorD) { it.estado = 'ya_cargado'; it.motivo = 'En el sistema: compra del ' + fd(mejor.fecha) + '.'; }
+    else { it.estado = 'posible_dup'; it.motivo = '¿Ya cargado? En el sistema: compra del ' + fd(mejor.fecha) + ' (' + mejorD + (mejorD === 1 ? ' día' : ' días') + ' de diferencia).'; }
   });
   const consPorResolver = porResolver.filter(it => it.clase === 'consumo');
   const rodeoEq = it => { const eq = st.equiv[it.equivKey]; return eq && eq.rodeo_id ? String(eq.rodeo_id) : ''; };
@@ -21222,14 +21283,14 @@ function fdAnalizar_() {
   porResolver.filter(it => !it.estado || it.estado === 'posible_dup').forEach(it => {
     const dup = it.estado === 'posible_dup';
     let falta = '';
-    if (!campanaDeFecha_(it.fecha)) falta = 'La fecha no cae en ninguna campaña del catálogo.';
+    if (it.clase !== 'ingreso' && !campanaDeFecha_(it.fecha)) falta = 'La fecha no cae en ninguna campaña del catálogo.';
     else if (it.clase === 'consumo') {
       const eq = st.equiv[it.equivKey];
       if (!eq || !eq.rodeo_id || !eq.confirmado) falta = 'Falta confirmar el rodeo de esta nota (arriba).';
     }
     if (dup) { it.grabable = !falta; if (falta) it.motivo += ' ' + falta; return; }
     if (falta) { it.estado = falta.indexOf('campaña') >= 0 ? 'revisar' : 'pendiente'; it.motivo = falta; return; }
-    it.estado = 'nuevo'; it.motivo = it.aviso || '';
+    it.estado = 'nuevo'; it.motivo = it.clase === 'ingreso' ? 'Se graba como compra en ' + fdCampoNombre_(it.campo_id) + ', sin precio (queda marcada "Falta precio").' : (it.aviso || '');
   });
   // "Solo en el sistema": consumos del producto, desde la fecha elegida y en
   // los campos de los archivos subidos, que no se cruzaron con ninguna fila.
@@ -21328,11 +21389,11 @@ function buildImportarFielddata() {
       (visibles.length ? visibles.map(it => {
         const seleccionable = ['nuevo', 'pendiente', 'revisar', 'otro_producto', 'posible_dup'].includes(it.estado);
         let detalle = '';
-        if (it.clase === 'traslado') detalle = fdEsc_(fdCampoNombre_(it.origen)) + ' → ' + fdEsc_(fdCampoNombre_(it.destino));
+        if (it.clase === 'traslado') detalle = fdEsc_(fdCampoNombre_(it.origen)) + ' → ' + (it.destino ? fdEsc_(fdCampoNombre_(it.destino)) : 'varios campos');
         else if (it.clase === 'consumo') { const eq = st.equiv[it.equivKey]; detalle = fdEsc_(fdCampoNombre_(it.campo_id)) + ' — ' + (eq && eq.rodeo_id ? fdEsc_(fdRodeoNombre_(eq.rodeo_id)) : '<i>sin rodeo</i>'); }
         else detalle = fdEsc_(fdCampoNombre_(it.campo_id));
         return `<tr><td class="tc">${seleccionable ? `<input type="checkbox" class="fd-sel" data-id="${fdEsc_(it.id)}" ${st.sel[it.id] ? 'checked' : ''}>` : ''}</td>
-          <td>${fdEstadoPill_(it.estado)}</td><td>${fd(it.fecha)}</td><td>${it.clase === 'traslado' ? 'Traslado' : it.clase === 'consumo' ? 'Consumo' : 'Ingreso'}</td>
+          <td>${fdEstadoPill_(it.estado)}</td><td>${fd(it.fecha)}</td><td>${it.clase === 'traslado' ? 'Traslado' : it.clase === 'consumo' ? 'Consumo' : (rub.compras && !it.revisar ? 'Compra' : 'Ingreso')}</td>
           <td>${detalle}</td><td class="tc">${fn(it.cantidad)}</td>
           <td style="white-space:normal;max-width:260px">${fdEsc_(it.fuentes.map(f => f.nota || '—').join(' / '))}</td>
           <td style="white-space:normal;max-width:300px;font-size:12px;color:var(--text2)">${fdEsc_(it.motivo || '')}</td></tr>`;
@@ -21354,6 +21415,7 @@ function buildImportarFielddata() {
 
 async function fdRecargarDatos_() {
   await Promise.all([
+    loadEntity('compras_insumos', true).catch(() => {}),
     loadEntity('consumos_insumos', true).catch(() => {}),
     loadEntity('traslados_insumos', true).catch(() => {}),
     loadEntity('fielddata_importados', true).catch(() => { S.cache.fielddata_importados = []; }),
@@ -21371,25 +21433,32 @@ async function fdGrabar_(modo) {
     : modo === 'dup_ya' ? it.estado === 'posible_dup'
     : ['nuevo', 'pendiente', 'revisar'].includes(it.estado)));
   if (!sel.length) return;
-  const nTras = sel.filter(it => it.clase === 'traslado').length, nCons = sel.filter(it => it.clase === 'consumo').length;
+  const nTras = sel.filter(it => it.clase === 'traslado').length, nCons = sel.filter(it => it.clase === 'consumo').length, nComp = sel.filter(it => it.clase === 'ingreso').length;
   const msg = modo === 'dup_ya'
     ? '¿Marcar ' + sel.length + ' filas como ya cargadas? No se graba nada en el sistema; quedan anotadas para no volver a ofrecerlas.'
     : modo === 'dup_nuevo'
     ? '¿Grabar ' + sel.length + ' consumos como NUEVOS? El sistema ya tiene consumos parecidos cerca: confirmá que no son los mismos.'
     : modo === 'grabar'
-    ? '¿Grabar ' + sel.length + ' movimientos de ' + FD_RUBROS_[st.rubro].label.toLowerCase() + ' (' + nTras + ' traslados y ' + nCons + ' consumos)? Esto cambia el stock del insumo y el costo de alimentación.'
+    ? '¿Grabar ' + sel.length + ' movimientos de ' + FD_RUBROS_[st.rubro].label.toLowerCase() + ' (' + (nComp ? nComp + ' compras sin precio, ' : '') + nTras + ' traslados y ' + nCons + ' consumos)? Esto cambia el stock del insumo y el costo.'
     : '¿Descartar ' + sel.length + ' filas? No se graba nada en el sistema; solo quedan anotadas para no volver a ofrecerlas.';
   if (!confirm(msg)) return;
   const campanas = S.cache.campanas || [];
   const items = [];
-  // Traslados primero, después consumos (por la validación de stock por campo)
-  const orden = sel.slice().sort((a, b) => (a.clase === 'traslado' ? 0 : 1) - (b.clase === 'traslado' ? 0 : 1) || a.fecha.localeCompare(b.fecha));
+  const comprasACrear = []; // v266 -- compras sin precio: se crean antes que todo
+  // Compras primero, después traslados, después consumos (por la validación de stock por campo)
+  const rangoClase = c => c === 'ingreso' ? 0 : c === 'traslado' ? 1 : 2;
+  const orden = sel.slice().sort((a, b) => rangoClase(a.clase) - rangoClase(b.clase) || a.fecha.localeCompare(b.fecha));
   orden.forEach(it => {
     const base = { huellas: it.huellas, campo_id: it.campo_id, fecha: it.fecha, rubro: st.rubro,
-      detalle: (it.clase === 'traslado' ? 'Traslado ' + fdCampoNombre_(it.origen) + ' → ' + fdCampoNombre_(it.destino) : 'Consumo ' + fdCampoNombre_(it.campo_id)) + ' ' + it.cantidad + ' — ' + it.fuentes.map(f => f.nota).join(' / ') };
+      detalle: (it.clase === 'traslado' ? 'Traslado ' + fdCampoNombre_(it.origen) + ' → ' + (it.destino ? fdCampoNombre_(it.destino) : 'varios') : (it.clase === 'ingreso' ? 'Ingreso ' : 'Consumo ') + fdCampoNombre_(it.campo_id)) + ' ' + it.cantidad + ' — ' + it.fuentes.map(f => f.nota).join(' / ') };
     if (modo === 'descartar') { items.push(Object.assign(base, { accion: 'marcar', estado: 'descartado' })); return; }
     if (modo === 'dup_ya') { items.push(Object.assign(base, { accion: 'marcar', estado: 'ya_cargado', entity: it.entidad || 'consumos_insumos', registro_id: it.registroId || '' })); return; }
     const camp = campanaDeFecha_(it.fecha);
+    if (it.clase === 'ingreso') {
+      comprasACrear.push({ base, data: { fecha: it.fecha, producto_id: st.prodId, cantidad: it.cantidad, precio_unitario: 0, proveedor: '',
+        observaciones: 'Fielddata: ' + (it.nota || '') + ' — FALTA PRECIO', campo_id: it.campo_id } });
+      return;
+    }
     if (it.clase === 'traslado') {
       items.push(Object.assign(base, { accion: 'crear', entity: 'traslados_insumos', data: {
         fecha: it.fecha, producto_id: st.prodId, cantidad: it.cantidad, campo_origen_id: it.origen, campo_destino_id: it.destino,
@@ -21414,12 +21483,28 @@ async function fdGrabar_(modo) {
   if (esGrabar) {
     const keys = new Set(orden.filter(it => it.clase === 'consumo').map(it => it.equivKey));
     st.items.filter(it => it.clase === 'consumo').forEach(it => keys.add(it.equivKey));
-    keys.forEach(k => { const e = st.equiv[k]; if (e && e.confirmado && e.rodeo_id && e.origen !== 'guardado') equivalencias.push({ tipo: 'rodeo_nota', campo_id: e.campo_id, texto: e.texto, destino_id: e.rodeo_id }); });
+    keys.forEach(k => { const e = st.equiv[k]; if (e && e.confirmado && e.rodeo_id && e.origen !== 'guardado' && e.texto) equivalencias.push({ tipo: 'rodeo_nota', campo_id: e.campo_id, texto: e.texto, destino_id: e.rodeo_id }); });
   }
 
   st.grabando = true; st.log = []; render();
   let ok = 0, err = 0, omit = 0;
   try {
+    // v266 -- Compras sin precio: se crean por la vía normal y después se
+    // anota la huella con el id de la compra (estado 'grabado').
+    for (const cp of comprasACrear) {
+      try {
+        const r = await apiCall('create', { body: { entity: 'compras_insumos', data: cp.data } });
+        ok++;
+        const marca = Object.assign({}, cp.base, { accion: 'marcar', estado: 'grabado', entity: 'compras_insumos', registro_id: r && r.id });
+        let res = await apiCall('importarFielddata', { body: { items: [marca], equivalencias: [] } });
+        if (res && res.resultados && res.resultados[0] && !res.resultados[0].ok && !res.resultados[0].omitido) {
+          res = await apiCall('importarFielddata', { body: { items: [Object.assign(marca, { estado: 'ya_cargado' })], equivalencias: [] } });
+        }
+      } catch (e) {
+        err++;
+        st.log.push({ ok: false, txt: fd(cp.data.fecha) + ' — ' + cp.base.detalle + ': ' + e.message });
+      }
+    }
     for (let i = 0; i < items.length || (i === 0 && equivalencias.length); i += FD_LOTE_GRABAR_) {
       const lote = items.slice(i, i + FD_LOTE_GRABAR_);
       const res = await apiCall('importarFielddata', { body: { items: lote, equivalencias: i === 0 ? equivalencias : [] } });
