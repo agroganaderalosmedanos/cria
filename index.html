@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_274';
+const APP_VERSION = 'index_consolidado_4_6_155_275';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3356,8 +3356,13 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   , _criaMoneda);
+  const totalSueldosCria_hv = honorariosTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  , _criaMoneda); // v275
 
-  const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria;
+  const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria + totalSueldosCria_hv;
   const margen = totalIngresos - totalEgresos;
 
   // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
@@ -3453,8 +3458,13 @@ function buildDashboard() {
     (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
-  ); // sin moneda → siempre ARS
-  const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalReposicionVientresARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS;
+  );
+  const totalSueldosCriaARS_hv = honorariosTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  ); // v275 // sin moneda → siempre ARS
+  const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalReposicionVientresARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS + totalSueldosCriaARS_hv;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
   // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN (no con la cotización
@@ -3524,7 +3534,12 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   , 'USD');
-  const totalEgresosUSD = totalSaldoInicialUSD + totalComprasUSD + totalReposicionVientresUSD + totalAlimUSD + totalVeterUSD + totalSueldosCriaUSD;
+  const totalSueldosCriaUSD_hv = honorariosTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  , 'USD'); // v275
+  const totalEgresosUSD = totalSaldoInicialUSD + totalComprasUSD + totalReposicionVientresUSD + totalAlimUSD + totalVeterUSD + totalSueldosCriaUSD + totalSueldosCriaUSD_hv;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
 
   // Guardar resultados para que Resultados Económicos los lea directamente —
@@ -3536,7 +3551,7 @@ function buildDashboard() {
     ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
     ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: totalVentasARS, ingCesiones: totalCesionesARS, ef: stockValCriaARS,
-    ei: totalSaldoInicialARS, compras: totalComprasARS, reposicionVientres: totalReposicionVientresARS, egAlim: totalAlimARS, egVet: totalVeterARS, egSueldos: totalSueldosCriaARS,
+    ei: totalSaldoInicialARS, compras: totalComprasARS, reposicionVientres: totalReposicionVientresARS, egAlim: totalAlimARS, egVet: totalVeterARS, egSueldos: totalSueldosCriaARS, egHonVet: totalSueldosCriaARS_hv,
     cantVentas: ventasCria.length,
     eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: nacImpCriaARS,
     comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
@@ -3711,6 +3726,13 @@ function buildDashboard() {
             <div style="font-size:11px;color:var(--text3)">histórico total de sueldos × % Cría</div>
           </div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSueldosCria,_criaMoneda)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600">🩺 Honorarios veterinarios</div>
+            <div style="font-size:11px;color:var(--text3)">facturas del veterinario, parte de Cría (se cargan en Sueldos)</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSueldosCria_hv,_criaMoneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
@@ -8676,6 +8698,10 @@ function buildRecriaDashboard() {
     (!campSelec || String(s.campo_id) === String(campSelec)) &&
     String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
   , moneda);
+  const egSueldos_hv = honorariosTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
+  , moneda); // v275
 
   // 5. Stock inicial (EI) — saldos iniciales de rodeos de Recría
   // Cotización DEL DÍA DE CADA Saldo inicial, no la de hoy.
@@ -8683,7 +8709,7 @@ function buildRecriaDashboard() {
     .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
     .reduce((s,m) => s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, moneda), 0);
 
-  const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos;
+  const totalEgresos  = egEI + egCesionCria + egCompraExterna + egAlim + egVet + egSueldos + egSueldos_hv;
   const margen = totalIngresos - totalEgresos;
 
   // ── Totales SIEMPRE EN ARS, para S._resultRecria (lee Margen Bruto Ganadero) ──
@@ -8751,11 +8777,15 @@ function buildRecriaDashboard() {
   const egSueldosARS = sueldoTotalActividad_('recria', s =>
     (!campSelec || String(s.campo_id) === String(campSelec)) &&
     String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
-  ); // sin moneda → siempre ARS
+  );
+  const egSueldosARS_hv = honorariosTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
+  ); // v275 // sin moneda → siempre ARS
   const egEIARS = movs
     .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
     .reduce((s,m) => s+valorMovimientoEntrada_(m).total, 0);
-  const totalEgresosARS = egEIARS + egCesionCriaARS + egCompraExternaARS + egAlimARS + egVetARS + egSueldosARS;
+  const totalEgresosARS = egEIARS + egCesionCriaARS + egCompraExternaARS + egAlimARS + egVetARS + egSueldosARS + egSueldosARS_hv;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
   // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN — mismo motivo que
@@ -8842,10 +8872,14 @@ function buildRecriaDashboard() {
     (!campSelec || String(s.campo_id) === String(campSelec)) &&
     String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
   , 'USD');
+  const egSueldosUSD_hv = honorariosTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) <= corteRecria.slice(0,7)
+  , 'USD'); // v275
   const egEIUSD = movs
     .filter(m => m.tipo==='Saldo inicial' && todosRodeosRecriaIds.has(String(m.rodeo_destino_id)))
     .reduce((s,m) => s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, 'USD'), 0);
-  const totalEgresosUSD = egEIUSD + egCesionCriaUSD + egCompraExternaUSD + egAlimUSD + egVetUSD + egSueldosUSD;
+  const totalEgresosUSD = egEIUSD + egCesionCriaUSD + egCompraExternaUSD + egAlimUSD + egVetUSD + egSueldosUSD + egSueldosUSD_hv;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
 
   // ── MARGEN BRUTO POR HECTÁREA ────────────────────────────────────────────
@@ -8882,7 +8916,7 @@ function buildRecriaDashboard() {
     ing: totalIngresosARS, eg: totalEgresosARS, margen: margenARS,
     ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: ingVentasARS, ingCesEng: ingCesionEngARS, ingReposicionACria: ingReposicionACriaARS, ef: stockValRecriaARS,
-    ei: egEIARS, egCesionCria: egCesionCriaARS, egCompraExt: egCompraExternaARS, egAlim: egAlimARS, egVet: egVetARS, egSueldos: egSueldosARS,
+    ei: egEIARS, egCesionCria: egCesionCriaARS, egCompraExt: egCompraExternaARS, egAlim: egAlimARS, egVet: egVetARS, egSueldos: egSueldosARS, egHonVet: egSueldosARS_hv,
     eiCab: eiCabRecria, efCab: efCabRecria, nacCab: 0, nacImp: 0,
     comprasCab: clasRec.compras, cesRecCab: clasRec.cesionesRecibidas, cesEnvCab: clasRec.cesionesEnviadas,
     ventasCab: ventasCabRecria, mortCab: mortCabRecria,
@@ -9081,8 +9115,13 @@ function buildRecriaDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosRec.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValorEFRec.slice(0,7)
   , moneda);
+  const egSueldosCampanaRec_hv = honorariosTotalActividad_('recria', s =>
+    (!campSelec || String(s.campo_id) === String(campSelec)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosRec.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValorEFRec.slice(0,7)
+  , moneda); // v275
 
-  const totalEgresosCampanaRec = totalEICampanaRec + egCesionCriaCampanaRec + egAlimCampanaRec + egVetCampanaRec + egSueldosCampanaRec;
+  const totalEgresosCampanaRec = totalEICampanaRec + egCesionCriaCampanaRec + egAlimCampanaRec + egVetCampanaRec + egSueldosCampanaRec + egSueldosCampanaRec_hv;
   const margenCampanaRec = totalIngresosCampanaRec - totalEgresosCampanaRec;
 
   // Todo este bloque (Campaña, Ingresos/Egresos, Margen, EF, EI, KPIs,
@@ -9115,6 +9154,7 @@ function buildRecriaDashboard() {
         <tr><td>🌿 Alimentación</td><td class="tr"><strong>${fnMoneda_(egAlimCampanaRec,moneda)}</strong></td></tr>
         <tr><td>💉 Veterinaria</td><td class="tr"><strong>${fnMoneda_(egVetCampanaRec,moneda)}</strong></td></tr>
         <tr><td>👷 Sueldos</td><td class="tr"><strong>${fnMoneda_(egSueldosCampanaRec,moneda)}</strong></td></tr>
+        <tr><td>🩺 Honorarios veterinarios</td><td class="tr"><strong>${fnMoneda_(egSueldosCampanaRec_hv,moneda)}</strong></td></tr>
         <tr style="background:rgba(220,50,50,0.08);font-weight:700"><td><strong>Total egresos</strong></td><td class="tr" style="color:var(--red);font-size:20px"><strong>${fnMoneda_(totalEgresosCampanaRec,moneda)}</strong></td></tr>
       </tbody></table>
     </div>
@@ -12184,16 +12224,26 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
   , moneda);
+  const totalSueldosEng_hv = honorariosTotalActividad_('engorde', s =>
+    (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
+  , moneda); // v275
   const totalSueldosEngARS = sueldoTotalActividad_('engorde', s =>
     (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
   );
+  const totalSueldosEngARS_hv = honorariosTotalActividad_('engorde', s =>
+    (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
+  ); // v275
 
-  const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
+  const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng + totalSueldosEng_hv;
   const margen = totalIngresos - totalEgresos;
   // Versión SIEMPRE EN ARS, para S._resultEng.
-  const totalEgresosARS = totalSaldoIniARS + totalCesionesARS + totalCesionInternaARS + totalComprasARS + totalAlimARS + totalVeterARS + totalOtrosARS + totalSueldosEngARS;
+  const totalEgresosARS = totalSaldoIniARS + totalCesionesARS + totalCesionInternaARS + totalComprasARS + totalAlimARS + totalVeterARS + totalOtrosARS + totalSueldosEngARS + totalSueldosEngARS_hv;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
   // ── Totales SIEMPRE EN U$S, convertidos POR TRANSACCIÓN — mismo motivo que
@@ -12262,7 +12312,12 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
   , 'USD');
-  const totalEgresosUSD = totalSaldoIniUSD + totalCesionesUSD + totalCesionInternaUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalOtrosUSD + totalSueldosEngUSD;
+  const totalSueldosEngUSD_hv = honorariosTotalActividad_('engorde', s =>
+    (!campSelecField || String(s.campo_id)===String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng_.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaHastaSueldosEng_.slice(0,7)
+  , 'USD'); // v275
+  const totalEgresosUSD = totalSaldoIniUSD + totalCesionesUSD + totalCesionInternaUSD + totalComprasUSD + totalAlimUSD + totalVeterUSD + totalOtrosUSD + totalSueldosEngUSD + totalSueldosEngUSD_hv;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
 
   // Cabezas de EI y EF — AHORA por campaña recursiva (EI = EF de la campaña
@@ -12292,7 +12347,7 @@ function buildEngordeDashboard_(rodeosEng, fm) {
     ingUSD: totalIngresosUSD, egUSD: totalEgresosUSD, margenUSD,
     ingVentas: totalVentasARS, ef: stockValEngARS,
     ei: totalSaldoIniARS, egCesiones: totalCesionesARS, egCompras: totalComprasARS,
-    egAlim: totalAlimARS, egVet: totalVeterARS, egOtros: totalOtrosARS, egSueldos: totalSueldosEngARS,
+    egAlim: totalAlimARS, egVet: totalVeterARS, egOtros: totalOtrosARS, egSueldos: totalSueldosEngARS, egHonVet: totalSueldosEngARS_hv,
     eiCab: eiCabEng, efCab: efCabEng, nacCab: 0, nacImp: 0,
     comprasCab: clasEng.compras, cesRecCab: clasEng.cesionesRecibidas, cesEnvCab: clasEng.cesionesEnviadas,
     ventasCab: ventasCabEng, mortCab: mortCabEng,
@@ -12361,6 +12416,10 @@ function buildEngordeDashboard_(rodeosEng, fm) {
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
           <div><div style="font-weight:600">👤 Sueldos Engorde</div></div>
           <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSueldosEng,moneda)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-weight:600">🩺 Honorarios veterinarios</div></div>
+          <div style="font-size:18px;font-weight:700;color:var(--clay)">${fnMoneda_(totalSueldosEng_hv,moneda)}</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--clay-bg);border-radius:8px;margin-top:4px">
           <div style="font-weight:700;font-size:14px">TOTAL EGRESOS</div>
@@ -14988,8 +15047,12 @@ function calcMargenCriaCampana_(campanaId, corte) {
       String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
       String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
     , moneda);
-    const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria;
-    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria, ei: totalSaldoInicial, compras: totalCompras, reposicionVientres: totalReposicionVientres, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria, nacImp: nacImpCria };
+  const totalSueldosCria_hv = honorariosTotalActividad_('cria', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+    , moneda); // v275
+    const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria + totalSueldosCria_hv;
+    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria, ei: totalSaldoInicial, compras: totalCompras, reposicionVientres: totalReposicionVientres, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria, egHonVet: totalSueldosCria_hv, nacImp: nacImpCria };
   }
 
   const ars = calcEnMoneda('ARS');
@@ -14998,7 +15061,7 @@ function calcMargenCriaCampana_(campanaId, corte) {
   return {
     ing: ars.ing, eg: ars.eg, margen: ars.margen, ingUSD: usd.ing, egUSD: usd.eg, margenUSD: usd.margen,
     ingVentas: ars.ingVentas, ingCesiones: ars.ingCesiones, ef: ars.ef,
-    ei: ars.ei, compras: ars.compras, reposicionVientres: ars.reposicionVientres, egAlim: ars.egAlim, egVet: ars.egVet, egSueldos: ars.egSueldos,
+    ei: ars.ei, compras: ars.compras, reposicionVientres: ars.reposicionVientres, egAlim: ars.egAlim, egVet: ars.egVet, egSueldos: ars.egSueldos, egHonVet: ars.egHonVet,
     cantVentas: ventasCria.length,
     eiCab: eiCabCria, efCab: efCabCria, nacCab: nacCabCria, nacImp: ars.nacImp,
     comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
@@ -15173,8 +15236,12 @@ function calcMargenRecriaCampana_(campanaId, corte) {
       String(s.periodo).slice(0,7) >= fechaDesdeSueldos.slice(0,7) &&
       String(s.periodo).slice(0,7) <= fechaValorEF.slice(0,7)
     , moneda);
-    const totalEgresos = totalEI + egCesionCria + egCompraExt + egAlim + egVet + egSueldos;
-    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas, ingCesEng: ingCesionEng, ingReposicionACria, ef: stockValRecria, ei: totalEI, egCesionCria, egCompraExt, egAlim, egVet, egSueldos };
+  const egSueldos_hv = honorariosTotalActividad_('recria', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldos.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaValorEF.slice(0,7)
+    , moneda); // v275
+    const totalEgresos = totalEI + egCesionCria + egCompraExt + egAlim + egVet + egSueldos + egSueldos_hv;
+    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas, ingCesEng: ingCesionEng, ingReposicionACria, ef: stockValRecria, ei: totalEI, egCesionCria, egCompraExt, egAlim, egVet, egSueldos, egHonVet: egSueldos_hv };
   }
 
   const ars = calcEnMoneda('ARS');
@@ -15183,7 +15250,7 @@ function calcMargenRecriaCampana_(campanaId, corte) {
   return {
     ing: ars.ing, eg: ars.eg, margen: ars.margen, ingUSD: usd.ing, egUSD: usd.eg, margenUSD: usd.margen,
     ingVentas: ars.ingVentas, ingCesEng: ars.ingCesEng, ingReposicionACria: ars.ingReposicionACria, ef: ars.ef,
-    ei: ars.ei, egCesionCria: ars.egCesionCria, egCompraExt: ars.egCompraExt, egAlim: ars.egAlim, egVet: ars.egVet, egSueldos: ars.egSueldos,
+    ei: ars.ei, egCesionCria: ars.egCesionCria, egCompraExt: ars.egCompraExt, egAlim: ars.egAlim, egVet: ars.egVet, egSueldos: ars.egSueldos, egHonVet: ars.egHonVet,
     eiCab: eiCab, efCab: efCab, nacCab: 0, nacImp: 0,
     comprasCab: clasRec.compras, cesRecCab: clasRec.cesionesRecibidas, cesEnvCab: clasRec.cesionesEnviadas,
     ventasCab: ventasCab, mortCab: mortCab,
@@ -15336,9 +15403,13 @@ function calcMargenTerminacionCampana_(campanaId, corte) {
       String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng.slice(0,7) &&
       String(s.periodo).slice(0,7) <= fechaHastaSueldosEng.slice(0,7)
     , moneda);
+  const totalSueldosEng_hv = honorariosTotalActividad_('engorde', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldosEng.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaHastaSueldosEng.slice(0,7)
+    , moneda); // v275
 
-    const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng;
-    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ef: stockValEng, ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng };
+    const totalEgresos = totalSaldoIni + totalCesiones + totalCesionInterna + totalCompras + totalAlim + totalVeter + totalOtros + totalSueldosEng + totalSueldosEng_hv;
+    return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ef: stockValEng, ei: totalSaldoIni, egCesiones: totalCesiones, egCompras: totalCompras, egAlim: totalAlim, egVet: totalVeter, egOtros: totalOtros, egSueldos: totalSueldosEng, egHonVet: totalSueldosEng_hv };
   }
 
   const ars = calcEnMoneda('ARS');
@@ -15348,7 +15419,7 @@ function calcMargenTerminacionCampana_(campanaId, corte) {
     ing: ars.ing, eg: ars.eg, margen: ars.margen, ingUSD: usd.ing, egUSD: usd.eg, margenUSD: usd.margen,
     ingVentas: ars.ingVentas, ef: ars.ef,
     ei: ars.ei, egCesiones: ars.egCesiones, egCompras: ars.egCompras,
-    egAlim: ars.egAlim, egVet: ars.egVet, egOtros: ars.egOtros, egSueldos: ars.egSueldos,
+    egAlim: ars.egAlim, egVet: ars.egVet, egOtros: ars.egOtros, egSueldos: ars.egSueldos, egHonVet: ars.egHonVet,
     eiCab: eiCabEng, efCab: efCabEng, nacCab: 0, nacImp: 0,
     comprasCab: clasEng.compras, cesRecCab: clasEng.cesionesRecibidas, cesEnvCab: clasEng.cesionesEnviadas,
     ventasCab: ventasCabEng, mortCab: mortCabEng,
@@ -15593,7 +15664,7 @@ function mbControlDatos_(campanaId, corte) {
   sIns.notas.push('El costo de cada consumo es el precio de la última compra anterior a su fecha. Un precio nuevo vale para los consumos desde la fecha que elijas. Pastoreo: pendiente de definir.');
 
   // 6. Sueldos
-  const sSue = sec('sueldos', 'Sueldos', 'sueldos', 'Sueldos');
+  const sSue = sec('sueldos', 'Sueldos y honorarios veterinarios', 'sueldos', 'Sueldos');
   const sueldos = sueldosGetAll_();
   const mesDesde = String(camp.fecha_inicio || '').slice(0, 7), mesHasta = fechaValor.slice(0, 7);
   const meses = [];
@@ -15606,6 +15677,13 @@ function mbControlDatos_(campanaId, corte) {
     const cerrados = faltan.filter(k => k < today().slice(0, 7)), enCurso = faltan.filter(k => k >= today().slice(0, 7));
     if (cerrados.length) fila(sSue, 'rojo', cerrados[0] + '-01', 'Sueldos faltantes', nombreC, 'Sin sueldos cargados en: ' + cerrados.map(mbMesNombre_).join(', ') + '.');
     if (enCurso.length) fila(sSue, 'amarillo', enCurso[0] + '-01', 'Sueldos del mes en curso', nombreC, 'Todavía sin cargar: ' + enCurso.map(mbMesNombre_).join(', ') + ' (el margen llega hasta ese mes).');
+  });
+  // v275 -- Honorarios veterinarios: aviso por campo sin ninguna factura en la campaña
+  const honEnRango = honorariosGetAll_().filter(s => String(s.periodo || '').slice(0, 7) >= mesDesde && String(s.periodo || '').slice(0, 7) <= mesHasta);
+  camposConSueldo.forEach(cid => {
+    if (honEnRango.some(s => String(s.campo_id) === cid)) return;
+    const nombreC = (((S.catalogs && S.catalogs.campos) || []).find(c => String(c.campo_id) === cid) || {}).nombre || ('campo ' + cid);
+    fila(sSue, 'amarillo', mesDesde + '-01', 'Honorarios veterinarios', nombreC, 'No hay ninguna factura del veterinario cargada en la campaña (desde ' + mbMesNombre_(mesDesde) + '). Si hubo, cargalas en Sueldos → Honorarios veterinarios.');
   });
   enRango.forEach(s => {
     const d = distEfectiva_(s);
@@ -16364,6 +16442,7 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rCria.detalle.egAlim)}</td></tr>
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rCria.detalle.egVet)}</td></tr>
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rCria.detalle.egSueldos)}</td></tr>
+          <tr><td style="padding-left:16px">Honorarios veterinarios</td><td class="tr">${fmMB(rCria.detalle.egHonVet||0)}</td></tr>
           <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Cría</strong></td><td class="tr"><strong>${fmMBTotal(rCria.eg,rCria.egUSD)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🌱 Recría</td></tr>
           <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rRec.detalle.ei)}</td></tr>
@@ -16372,6 +16451,7 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Alimentación</td><td class="tr">${fmMB(rRec.detalle.egAlim)}</td></tr>
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rRec.detalle.egVet)}</td></tr>
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rRec.detalle.egSueldos)}</td></tr>
+          <tr><td style="padding-left:16px">Honorarios veterinarios</td><td class="tr">${fmMB(rRec.detalle.egHonVet||0)}</td></tr>
           <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Recría</strong></td><td class="tr"><strong>${fmMBTotal(rRec.eg,rRec.egUSD)}</strong></td></tr>
           <tr style="font-weight:600;background:var(--bg2)"><td colspan="2">🏭 Terminación</td></tr>
           <tr><td style="padding-left:16px">Stock inicial (EI)</td><td class="tr">${fmMB(rEng.detalle.ei)}</td></tr>
@@ -16381,6 +16461,7 @@ function buildMargenBruto() {
           <tr><td style="padding-left:16px">Veterinaria</td><td class="tr">${fmMB(rEng.detalle.egVet)}</td></tr>
           ${rEng.detalle.egOtros>0?`<tr><td style="padding-left:16px">Otros insumos</td><td class="tr">${fmMB(rEng.detalle.egOtros)}</td></tr>`:''}
           <tr><td style="padding-left:16px">Sueldos</td><td class="tr">${fmMB(rEng.detalle.egSueldos)}</td></tr>
+          <tr><td style="padding-left:16px">Honorarios veterinarios</td><td class="tr">${fmMB(rEng.detalle.egHonVet||0)}</td></tr>
           <tr style="background:rgba(220,50,50,0.06)"><td><strong>Subtotal Terminación</strong></td><td class="tr"><strong>${fmMBTotal(rEng.eg,rEng.egUSD)}</strong></td></tr>
           <tr style="font-size:15px;background:rgba(220,50,50,0.1)"><td><strong>TOTAL EGRESOS</strong></td><td class="tr" style="color:var(--red)"><strong>${fmMBTotal(egTotal,egTotalUSD)}</strong></td></tr>
         </tbody></table>
@@ -16946,7 +17027,8 @@ async function exportarAuditoriaCriaExcel_() {
       if (cat.includes('veterin')||cat.includes('sanid')) resVet += importe; else resAlim += importe;
     });
     const resSueldos = sueldoTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria);
-    const resEgresos = resStockIni + resCompras + resAlim + resVet + resSueldos;
+  const resSueldos_hv = honorariosTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria); // v275
+    const resEgresos = resStockIni + resCompras + resAlim + resVet + resSueldos + resSueldos_hv;
     const resMargen = resIngresos - resEgresos;
 
     const aoa2 = [
@@ -16964,6 +17046,7 @@ async function exportarAuditoriaCriaExcel_() {
       ['🌾 Alimentación', Math.round(resAlim)],
       ['💉 Veterinaria', Math.round(resVet)],
       ['👤 Sueldos imputados a Cría', Math.round(resSueldos)],
+      ['🩺 Honorarios veterinarios', Math.round(resSueldos_hv)],
       ['TOTAL EGRESOS', Math.round(resEgresos)],
       ['MARGEN', Math.round(resMargen)],
       [],
@@ -17457,7 +17540,8 @@ async function exportarAuditoriaRecriaExcel_() {
       if (prod&&prod.categoria==='Veterinaria') resVet+=importe; else resAlim+=importe;
     });
     const resSueldos = sueldoTotalActividad_('recria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaRec);
-    const resEgresos = resEI + resCesRec + resCompraExt + resAlim + resVet + resSueldos;
+  const resSueldos_hv = honorariosTotalActividad_('recria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaRec); // v275
+    const resEgresos = resEI + resCesRec + resCompraExt + resAlim + resVet + resSueldos + resSueldos_hv;
     const resMargen = resIngresos - resEgresos;
 
     const aoa2 = [
@@ -17476,6 +17560,7 @@ async function exportarAuditoriaRecriaExcel_() {
       ['🌿 Alimentación', Math.round(resAlim)],
       ['💉 Veterinaria', Math.round(resVet)],
       ['👷 Sueldos', Math.round(resSueldos)],
+      ['🩺 Honorarios veterinarios', Math.round(resSueldos_hv)],
       ['TOTAL EGRESOS', Math.round(resEgresos)],
       ['MARGEN', Math.round(resMargen)],
       [],
@@ -17688,6 +17773,7 @@ async function exportarAuditoriaMargenBrutoExcel_() {
     filas2.push({ act:'Cría', rubro:'Alimentación', val:-rC.egAlim });
     filas2.push({ act:'Cría', rubro:'Veterinaria', val:-rC.egVet });
     filas2.push({ act:'Cría', rubro:'Sueldos', val:-rC.egSueldos });
+    filas2.push({ act:'Cría', rubro:'Honorarios veterinarios', val:-(rC.egHonVet||0) });
     filas2.push({ act:'Recría', rubro:'Ventas directas', val:rR.ingVentas });
     filas2.push({ act:'Recría', rubro:'Cesión a Terminación', val:rR.ingCesEng });
     filas2.push({ act:'Recría', rubro:'Stock valorizado (EF)', val:rR.ef });
@@ -17697,6 +17783,7 @@ async function exportarAuditoriaMargenBrutoExcel_() {
     filas2.push({ act:'Recría', rubro:'Alimentación', val:-rR.egAlim });
     filas2.push({ act:'Recría', rubro:'Veterinaria', val:-rR.egVet });
     filas2.push({ act:'Recría', rubro:'Sueldos', val:-rR.egSueldos });
+    filas2.push({ act:'Recría', rubro:'Honorarios veterinarios', val:-(rR.egHonVet||0) });
     filas2.push({ act:'Terminación', rubro:'Ventas de hacienda', val:rE.ingVentas });
     filas2.push({ act:'Terminación', rubro:'Stock valorizado (EF)', val:rE.ef });
     filas2.push({ act:'Terminación', rubro:'Stock inicial (EI)', val:-rE.ei });
@@ -17706,6 +17793,7 @@ async function exportarAuditoriaMargenBrutoExcel_() {
     filas2.push({ act:'Terminación', rubro:'Veterinaria', val:-rE.egVet });
     if (rE.egOtros>0) filas2.push({ act:'Terminación', rubro:'Otros insumos', val:-rE.egOtros });
     filas2.push({ act:'Terminación', rubro:'Sueldos', val:-rE.egSueldos });
+    filas2.push({ act:'Terminación', rubro:'Honorarios veterinarios', val:-(rE.egHonVet||0) });
     filas2.forEach(f => aoa2.push([f.act, f.rubro, Math.round(convertirAMoneda_(f.val||0, corte, monedaExport))]));
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
     ws2['!cols'] = [{wch:16},{wch:28},{wch:18}];
@@ -17892,7 +17980,8 @@ async function exportarAuditoriaEngordeExcel_() {
     const resAlimEng = rodeosEng.reduce((s,r)=>s+(egCostoAlim_(r.rodeo_id, corte) - egCostoAlim_(r.rodeo_id, corte, 'Veterinaria')), 0);
     const resVetEng = rodeosEng.reduce((s,r)=>s+egCostoAlim_(r.rodeo_id, corte, 'Veterinaria'), 0);
     const resSueldosEng = sueldoTotalActividad_('engorde', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaEngAudit);
-    const resEgresosEng = resCostoExtEng + resCostoIntEng + resAlimEng + resVetEng + resSueldosEng;
+  const resSueldosEng_hv = honorariosTotalActividad_('engorde', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaEngAudit); // v275
+    const resEgresosEng = resCostoExtEng + resCostoIntEng + resAlimEng + resVetEng + resSueldosEng + resSueldosEng_hv;
     const resMargenEng = resIngresosEng - resEgresosEng;
 
     const aoa2 = [
@@ -17910,6 +17999,7 @@ async function exportarAuditoriaEngordeExcel_() {
       ['🌾 Alimentación', Math.round(resAlimEng)],
       ['💉 Veterinaria', Math.round(resVetEng)],
       ['👤 Sueldos Engorde', Math.round(resSueldosEng)],
+      ['🩺 Honorarios veterinarios', Math.round(resSueldosEng_hv)],
       ['TOTAL EGRESOS', Math.round(resEgresosEng)],
       ['MARGEN', Math.round(resMargenEng)],
       [],
@@ -19506,8 +19596,29 @@ function attachPesadasEvents() {
 // Estructura de datos:
 // Sueldos — leen de S.cache.sueldos (Sheets) y escriben via apiCall
 
+// v275 -- La hoja Sueldos guarda también los Honorarios veterinarios (columna
+// "concepto"). sueldosGetAll_ devuelve SOLO sueldos (concepto vacío o
+// "Sueldos", así los registros viejos siguen siendo sueldos); los honorarios
+// van por honorariosGetAll_ y se muestran en una línea aparte del margen.
+const CONCEPTO_HON_VET_ = 'Honorarios veterinarios';
+function esHonorarioVet_(s) { return String(s && s.concepto || '').trim().toLowerCase() === CONCEPTO_HON_VET_.toLowerCase(); }
 function sueldosGetAll_() {
-  return S.cache.sueldos || [];
+  return (S.cache.sueldos || []).filter(s => !esHonorarioVet_(s));
+}
+function honorariosGetAll_() {
+  return (S.cache.sueldos || []).filter(esHonorarioVet_);
+}
+// Igual que sueldoTotalActividad_, pero sobre los honorarios veterinarios
+// (cada factura guarda el total y el reparto exacto por actividad).
+function honorariosTotalActividad_(actividad, filtro, moneda) {
+  return honorariosGetAll_()
+    .filter(s => !filtro || filtro(s))
+    .reduce((sum, s) => {
+      const importeARS = sueldoImporteActividad_(s, actividad);
+      if (!moneda) return sum + importeARS;
+      const fechaPeriodo = String(s.periodo||'').length === 7 ? s.periodo + '-01' : s.periodo;
+      return sum + convertirAMoneda_(importeARS, fechaPeriodo, moneda);
+    }, 0);
 }
 
 // Distribución base por campo — viene del catálogo (Sheets)
@@ -19676,6 +19787,35 @@ function buildSueldos() {
       <button class="btn btn-primary" id="sd-guardar-btn" onclick="this.disabled=true;this.textContent='⏳ Guardando…';window.sueldoGuardar_()">💾 Guardar sueldo</button>
       <span id="sd-msg" style="font-size:13px;color:var(--green)"></span>
     </div>
+  </div>`;
+
+  // ── v275 -- Panel: Honorarios veterinarios ─────────────────────
+  // Cada factura del veterinario se carga por campo y mes, con lo que va a
+  // cada actividad en pesos. Se guarda en la hoja Sueldos con concepto
+  // "Honorarios veterinarios" (monto = total; reparto = % exacto), y en el
+  // margen aparece en una línea aparte, no sumado a Sueldos.
+  const honor = honorariosGetAll_().slice().sort((a,b) => String(b.periodo).localeCompare(String(a.periodo)) || String(a.campo_id).localeCompare(String(b.campo_id)));
+  h += `<div class="panel" id="hv-form-panel">
+    <div class="panel-title">🩺 Honorarios veterinarios</div>
+    <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">Cargá cada factura del veterinario: el mes, el campo y cuánto corresponde a cada actividad. Se suman en una línea aparte del margen ("Honorarios veterinarios"), no en Sueldos.</div>
+    <div class="fgrid">
+      <div class="fg"><label>Período</label><input type="month" id="hv-periodo" value="${mesActual}"></div>
+      <div class="fg"><label>Campo</label><select id="hv-campo">${campos.map(c=>`<option value="${c.campo_id}">${c.nombre}</option>`).join('')}</select></div>
+      <div class="fg"><label style="color:var(--green-text)">🐄 Cría ($)</label><input type="number" id="hv-cria" min="0" step="any" placeholder="0" oninput="window.hvTotal_()"></div>
+      <div class="fg"><label style="color:var(--gold-text)">🐃 Recría ($)</label><input type="number" id="hv-recria" min="0" step="any" placeholder="0" oninput="window.hvTotal_()"></div>
+      <div class="fg"><label style="color:var(--clay-text)">🥩 Terminación ($)</label><input type="number" id="hv-engorde" min="0" step="any" placeholder="0" oninput="window.hvTotal_()"></div>
+      <div class="fg" style="min-width:110px"><label>Total factura</label><div id="hv-total" style="font-size:16px;font-weight:700;padding:8px 0">$ 0</div></div>
+      <div class="fg" style="flex:2"><label>Observación</label><input type="text" id="hv-obs" placeholder="N° de factura, trabajo (tacto, sangrado…)"></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary" id="hv-guardar-btn" onclick="window.hvGuardar_(this)">💾 Guardar factura</button>
+    </div>
+    ${honor.length ? `<div class="tw" style="margin-top:14px"><table class="dt"><thead><tr><th>Período</th><th>Campo</th><th>Observación</th>
+      <th class="tr" style="color:var(--green-text)">🐄 Cría</th><th class="tr" style="color:var(--gold-text)">🐃 Recría</th><th class="tr" style="color:var(--clay-text)">🥩 Terminación</th><th class="tr">Total</th><th></th></tr></thead><tbody>` +
+      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : s.campo_id}</td><td style="font-size:12px;color:var(--text2)">${s.observacion || ''}</td>
+        <td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'cria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'recria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'engorde')))}</td>
+        <td class="tr"><strong>$ ${fn(Number(s.monto)||0)}</strong></td><td><button class="btn btn-danger btn-sm" onclick="window.hvEliminar_('${s.sueldo_id}')" title="Eliminar">🗑</button></td></tr>`; }).join('') +
+      `</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3);margin-top:10px">Todavía no hay honorarios cargados.</div>'}
   </div>`;
 
   // ── Panel: Distribución base por campo ──────────────────────────
@@ -19985,6 +20125,49 @@ function attachSueldosEvents() {
       const montoEl = document.getElementById('sd-monto');
       if (montoEl) montoEl.focus();
     }, 50);
+  };
+
+  // v275 -- Honorarios veterinarios
+  window.hvTotal_ = function() {
+    const v = id => Number(document.getElementById(id)?.value) || 0;
+    const t = v('hv-cria') + v('hv-recria') + v('hv-engorde');
+    const el = document.getElementById('hv-total'); if (el) el.textContent = '$ ' + fn(t);
+  };
+  window.hvGuardar_ = async function(btn) {
+    const v = id => Number(document.getElementById(id)?.value) || 0;
+    const periodo = document.getElementById('hv-periodo')?.value || '';
+    const campo_id = document.getElementById('hv-campo')?.value || '';
+    const obs = (document.getElementById('hv-obs')?.value || '').trim();
+    const cria = v('hv-cria'), recria = v('hv-recria'), engorde = v('hv-engorde');
+    const total = cria + recria + engorde;
+    if (!periodo) { toast('Elegí el período.', 'err'); return; }
+    if (!campo_id) { toast('Elegí el campo.', 'err'); return; }
+    if (!(total > 0)) { toast('Cargá el importe de al menos una actividad.', 'err'); return; }
+    if (cria < 0 || recria < 0 || engorde < 0) { toast('Los importes no pueden ser negativos.', 'err'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando…'; }
+    try {
+      await apiCall('create', { body: { entity: 'sueldos', data: { periodo, campo_id, monto: total, observacion: obs, fecha_carga: today(),
+        dist_cria: cria / total * 100, dist_recria: recria / total * 100, dist_engorde: engorde / total * 100, dist_estructura: 0, concepto: CONCEPTO_HON_VET_ } } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      S.margenBruto = null;
+      toast('Honorarios guardados — ' + periodo + ' · $ ' + fn(total), 'ok');
+      render();
+    } catch (err) {
+      toast('Error: ' + err.message, 'err');
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Guardar factura'; }
+    }
+  };
+  window.hvEliminar_ = async function(id) {
+    if (!confirm('¿Eliminar esta factura de honorarios?')) return;
+    try {
+      await apiCall('delete', { body: { entity: 'sueldos', id } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      S.margenBruto = null;
+      toast('Factura eliminada', 'ok');
+      render();
+    } catch (err) { toast('Error: ' + err.message, 'err'); }
   };
 
   window.sueldoEliminar_ = async function(i) {
