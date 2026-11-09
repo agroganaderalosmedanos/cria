@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_277';
+const APP_VERSION = 'index_consolidado_4_6_155_278';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1221,6 +1221,7 @@ const NAV = [
     { k: 'cotizacion',           icon: 'ti-currency-dollar', label: 'Cotización U$S' },
     { k: 'precios_valorizacion', icon: 'ti-tag',             label: 'Hacienda — Precios del mes' },
     { k: 'importar_fielddata',   icon: 'ti-file-import',     label: 'Importar Fielddata' },
+    { k: 'importar_facturas',    icon: 'ti-file-invoice',    label: 'Importar facturas veterinaria' },
   ]},
   { section: 'Configuración', icon: 'ti-settings', defaultPage: 'config', items: [
     { k: 'config',   icon: 'ti-adjustments', label: 'Configuración' },
@@ -1339,6 +1340,14 @@ async function goto(page) {
     if (!S.cache.campanas) fdLoads.push(loadEntity('campanas').catch(()=>{}));
     if (!S.stock) fdLoads.push(loadStock().catch(()=>{}));
     S.loading = true; render(); await Promise.all(fdLoads); S.loading = false;
+  }
+  if (page === 'importar_facturas') {
+    // v278 -- Para saber si una factura ya se importó (huella) y cruzar con las compras.
+    const fvLoads = [
+      loadEntity('compras_insumos', true).catch(()=>{}),
+      loadEntity('fielddata_importados', true).catch(()=>{ S.cache.fielddata_importados = []; }),
+    ];
+    S.loading = true; render(); await Promise.all(fvLoads); S.loading = false;
   }
   if (page === 'movimientos') {
     // Cargar todo en paralelo para evitar múltiples re-renders
@@ -1593,7 +1602,7 @@ function pageTitle(p) {
   const titles = {
     dashboard: 'Resultados Económicos Cría', dashboard_costos: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
-    home: '', recria_dashboard: 'Dashboard Recría', recria_dashboard_costos: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde', importar_fielddata: 'Importar Fielddata',
+    home: '', recria_dashboard: 'Dashboard Recría', recria_dashboard_costos: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde', importar_fielddata: 'Importar Fielddata', importar_facturas: 'Importar facturas veterinaria',
   };
   return titles[p] || p;
 }
@@ -1613,6 +1622,7 @@ function pageSubtitle(p) {
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
     importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — insumos (rollos, sales, concentrado, calostro, rumex) y hacienda',
+    importar_facturas: 'Lectura de facturas PDF de veterinaria — medicamentos, gastos de veterinaria y honorarios',
   };
   return subs[p] || '';
 }
@@ -1664,6 +1674,7 @@ function buildPage(page) {
       return buildABM();
     case 'campanas':    return buildCampanas();
     case 'importar_fielddata': return buildImportarFielddata();
+    case 'importar_facturas': return buildImportarFacturas();
     default: return '';
   }
 }
@@ -1734,7 +1745,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, dashboard_costos: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents, importar_fielddata: attachImportarFielddataEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents, importar_fielddata: attachImportarFielddataEvents, importar_facturas: attachImportarFacturasEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -23532,6 +23543,307 @@ function fdSincronizarEquivGuardadas_() {
 function fdDetalleResumen_(k, r) {
   const L = { traslado: 'Traslados', consumo: 'Consumos', ingreso: 'Compras', paricion: 'Nacimientos', nacido_muerto: 'Nacidos muertos', muerte_ternero: 'Muertes de terneros', muerte: 'Muertes', aborto: 'Abortos', venta: 'Ventas', recat: 'Recategorizaciones', traslado_campo: 'Traslados entre campos', destete: 'Destetes', trat: 'Medicamentos', trat_evento: 'Tratamientos sin producto' };
   return Object.keys(r.porClase).map(c => (L[c] || c) + ': ' + r.porClase[c]).join(' · ');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v278 -- IMPORTAR FACTURAS DE VETERINARIA (paso 1: lectura, sin grabar)
+// Se suben los PDF, se leen con pdf.js (cdnjs) y se muestra cada factura con
+// sus líneas, la clasificación propuesta y el control contra el neto. No se
+// graba nada todavía: la grabación llega en la próxima versión.
+// ═══════════════════════════════════════════════════════════════════════
+const FV_CUIT_PROPIO_ = '30716775360';
+const FV_PDFJS_ = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+
+function fvNum_(t) {
+  let s = String(t || '').replace(/[$\s]/g, '');
+  if (!/^-?[\d.,]+$/.test(s) || !/\d/.test(s)) return null;
+  const c = s.lastIndexOf(','), p = s.lastIndexOf('.');
+  if (c >= 0 && p >= 0) {
+    if (c > p) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (c >= 0) {
+    const dec = s.length - c - 1;
+    if ((s.match(/,/g) || []).length === 1 && dec !== 3) s = s.replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (p >= 0) {
+    const dec = s.length - p - 1;
+    if ((s.match(/\./g) || []).length > 1 || dec === 3) s = s.replace(/\./g, '');
+  }
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+}
+
+// Renglones de una página: agrupa los textos por altura y los ordena por x.
+function fvRenglones_(items) {
+  const its = items.filter(i => String(i.s).trim() !== '').slice().sort((a, b) => b.y - a.y || a.x - b.x);
+  const rs = [];
+  its.forEach(i => {
+    let r = rs.find(r => Math.abs(r.y - i.y) <= 2.5);
+    if (!r) { r = { y: i.y, its: [] }; rs.push(r); }
+    r.its.push(i);
+  });
+  rs.sort((a, b) => b.y - a.y);
+  return rs.map(r => {
+    r.its.sort((a, b) => a.x - b.x);
+    let txt = '', fin = null;
+    r.its.forEach(i => {
+      if (fin !== null) txt += (i.x - fin > 6 ? '  ' : (i.x - fin > 0.8 ? ' ' : ''));
+      txt += String(i.s);
+      fin = i.x + (i.w || 0);
+    });
+    return txt.replace(/\s+$/, '');
+  });
+}
+
+function fvFechaIso_(d, m, a) { return a + '-' + ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2); }
+
+function fvCabecera_(lineas) {
+  const txt = lineas.join('\n');
+  const cab = { proveedor: '', cuit: '', pv: '', nro: '', fecha: '', neto: null, total: null };
+  const cuits = [];
+  (txt.match(/\b(?:20|23|24|27|30|33|34)-?\d{8}-?\/?\d\b/g) || []).forEach(c => { const d = c.replace(/\D/g, ''); if (d.length === 11 && d !== FV_CUIT_PROPIO_ && !cuits.includes(d)) cuits.push(d); });
+  cab.cuit = cuits[0] || '';
+  let m = txt.match(/Punto de Venta:\s*(\d+)[\s\S]{0,40}?Comp\.?\s*Nro:\s*(\d+)/i)
+    || txt.match(/(?:FC|Factura|Numero|Número|N[°º])\s*[A-C]?\s*:?\s*(\d{4,5})\s*-\s*(\d{6,8})/i)
+    || txt.match(/\b(\d{4,5})\s*-\s*(\d{8})\b/);
+  if (m) { cab.pv = String(Number(m[1])); cab.nro = String(Number(m[2])); }
+  m = txt.match(/Fecha de Emisi[oó]n:\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i) || txt.match(/Emisi[oó]n:\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i) || txt.match(/\bFecha\s*:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  if (m) cab.fecha = fvFechaIso_(m[1], m[2], m[3]);
+  const rs = lineas.find(l => /Raz[oó]n Social:/i.test(l));
+  if (rs) cab.proveedor = rs.replace(/.*Raz[oó]n Social:\s*/i, '').split(/\s{2,}/)[0].trim();
+  if (!cab.proveedor) {
+    const prohib = /FACTURA|ORIGINAL|DUPLICADO|TRIPLICADO|Page|P[aá]g\.|Numero|Número|Cod\.|C[oó]d\.|Emisi|Fecha|C\.U\.I\.T|CUIT|Ingresos|Ing\.|Inicio|Tel\.|Cliente|Domicilio|I\.V\.A|IVA|^\s*[A-C]\s*$|^\s*RI\b|\d{2}:\d{2}/i;
+    const cand = lineas.slice(0, 15).map(l => l.split(/\s{2,}/)[0].trim()).find(l => l.length > 4 && /[A-ZÁÉÍÓÚÑ]{3}/.test(l) && !prohib.test(l));
+    cab.proveedor = cand || '';
+  }
+  let neto = null;
+  lineas.forEach(l => {
+    const mm = l.match(/Neto\s*%\s*[\d.,]+\s+([\d.,]+)/i);
+    if (mm) neto = (neto || 0) + (fvNum_(mm[1]) || 0);
+  });
+  if (neto === null) { const mm = txt.match(/Importe Neto Gravado:\s*\$?\s*([\d.,]+)/i); if (mm) neto = fvNum_(mm[1]); }
+  if (neto === null) {
+    const i = lineas.findIndex(l => /SUBTOTAL/i.test(l) && /I\.?V\.?A/i.test(l));
+    if (i >= 0 && lineas[i + 1]) { const ns = lineas[i + 1].trim().split(/\s+/).map(fvNum_).filter(n => n !== null); if (ns.length) neto = ns[0]; }
+  }
+  cab.neto = neto;
+  const mt = txt.match(/(?:Importe Total|TOTAL)\s*:?\s*\$?\s*([\d.,]+)\s*$/im) || txt.match(/\$\s*([\d.,]{4,})\s*$/m);
+  if (mt) cab.total = fvNum_(mt[1]);
+  return cab;
+}
+
+function fvLineas_(lineas) {
+  const ini = lineas.findIndex(l => /DESCRIPCI[OÓ]N|Producto\s*\/\s*Servicio/i.test(l));
+  if (ini < 0) return [];
+  let fin = lineas.findIndex((l, i) => i > ini && (/^\s*(SUBTOTAL|Exento|Importe Otros Tributos|Importe Neto|Neto\s*%)/i.test(l) || /SUBTOTAL\s+DESCUENTO/i.test(l)));
+  if (fin < 0) fin = lineas.length;
+  const cuerpo = lineas.slice(ini + 1, fin).filter(l => l.trim() !== '' && !/^\s*(Alicuota|IVA|Subtotal c\/IVA)\s*$/i.test(l));
+  const bloques = [];
+  cuerpo.forEach(l => {
+    const t = l.trim();
+    if (/^\d+(?:[.,]\d+)?\s+\S/.test(t)) bloques.push([t]);
+    else if (bloques.length) bloques[bloques.length - 1].push(t);
+  });
+  return bloques.map(fvLinea_);
+}
+
+function fvLinea_(bloque) {
+  const texto = bloque.join(' ');
+  const toks = texto.split(/\s+/);
+  const nums = [];
+  toks.forEach((t, i) => {
+    if (/%/.test(t)) return;
+    if (/^\(?\d{1,2}\/\d{1,2}(\/\d{2,4})?\)?\)?$/.test(t)) return;
+    const n = fvNum_(t);
+    if (n !== null) nums.push({ i, n });
+  });
+  // total = cantidad × unitario (tolerancia 1%); se toma el último total que cierra.
+  let mejor = null;
+  for (let a = nums.length - 1; a >= 0 && !mejor; a--)
+    for (let b = a - 1; b >= 0 && !mejor; b--)
+      for (let c = b - 1; c >= 0 && !mejor; c--) {
+        const q = nums[c].n, u = nums[b].n, t = nums[a].n;
+        if (q > 0 && u > 0 && t > 0 && Math.abs(q * u - t) <= Math.max(1, t * 0.01)) mejor = { q: nums[c], u: nums[b], t: nums[a] };
+      }
+  const usados = new Set();
+  let cant = null, total = 0;
+  if (mejor) { cant = mejor.q.n; total = mejor.t.n; [mejor.q, mejor.u, mejor.t].forEach(x => usados.add(x.i)); }
+  else if (nums.length) { cant = nums[0].n; usados.add(nums[0].i); }
+  let desc = toks.filter((t, i) => {
+    if (usados.has(i) || /%/.test(t) || /^unidades?$/i.test(t)) return false;
+    if (mejor && i > mejor.u.i && fvNum_(t) !== null) return false;
+    return true;
+  });
+  while (desc.length && /^\d+$/.test(desc[0])) desc.shift();
+  desc = desc.join(' ').replace(/\s+/g, ' ').trim();
+  const mf = desc.match(/\(?\b(\d{1,2})\/(\d{1,2})\b\)?/);
+  return { cant, unit: cant ? total / cant : 0, total, desc, fechaDesc: mf ? mf[1] + '/' + mf[2] : '', presentacion: fvPresentacion_(desc), texto };
+}
+
+// "X 500ML", "x 1L", "X 50 ML.", "x 40 dosis", "x 100 uni" -> contenido por frasco/envase
+function fvPresentacion_(desc) {
+  const m = String(desc).match(/\bx\s*(\d+(?:[.,]\d+)?)\s*(ml|cc|lts?|l|litros?|dosis|ds|un|uni|unid|unidades)\b\.?/i);
+  if (!m) return null;
+  const n = fvNum_(m[1]); const u = m[2].toLowerCase();
+  if (n === null) return null;
+  if (/^(l|lt|lts|litro|litros)$/.test(u)) return { cant: n * 1000, unidad: 'cc', texto: m[0].trim() };
+  if (/^(ml|cc)$/.test(u)) return { cant: n, unidad: 'cc', texto: m[0].trim() };
+  if (/^(dosis|ds)$/.test(u)) return { cant: n, unidad: 'dosis', texto: m[0].trim() };
+  return { cant: n, unidad: 'unidad', texto: m[0].trim() };
+}
+
+function fvLeerPaginas_(paginas) {
+  const facturas = [];
+  paginas.forEach((items, ip) => {
+    const renglones = fvRenglones_(items);
+    const cab = fvCabecera_(renglones);
+    const lineas = fvLineas_(renglones);
+    const clave = cab.cuit + '|' + cab.pv + '-' + cab.nro;
+    // Original / duplicado / triplicado: la misma factura en otra página se ignora.
+    if (cab.nro && facturas.some(f => f.clave === clave)) return;
+    if (!lineas.length && facturas.length) return;
+    facturas.push(Object.assign(cab, { clave, lineas, renglones, pagina: ip + 1 }));
+  });
+  return facturas;
+}
+
+function fvCargarPdfjs_() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise((ok, mal) => {
+    const s = document.createElement('script');
+    s.src = FV_PDFJS_ + 'pdf.min.js';
+    s.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = FV_PDFJS_ + 'pdf.worker.min.js'; ok(window.pdfjsLib); } catch (e) { mal(e); } };
+    s.onerror = () => mal(new Error('No se pudo cargar el lector de PDF (pdf.js). Revisá la conexión.'));
+    document.head.appendChild(s);
+  });
+}
+
+async function fvLeerArchivo_(file) {
+  const lib = await fvCargarPdfjs_();
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await lib.getDocument({ data }).promise;
+  const paginas = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const tc = await (await doc.getPage(p)).getTextContent();
+    paginas.push(tc.items.map(i => ({ s: i.str, x: i.transform[4], y: i.transform[5], w: i.width })));
+  }
+  return fvLeerPaginas_(paginas);
+}
+
+// Clasificación propuesta de cada línea.
+//   med   = medicamento -> compra del producto (cantidad = envases × contenido)
+//   gasto = Veterinaria sin stock (IATF, caravanas, agujas, pinza...) -> Cría
+//   hon   = Honorarios veterinarios
+//   no    = no es veterinaria (estructura) -> no se graba
+//   rev   = no se reconoce -> a revisar
+const FV_CLASES_ = { med: 'Medicamento', gasto: 'Gasto veterinaria', hon: 'Honorarios', no: 'No va (estructura)', rev: 'Revisar' };
+function fvNormTxt_(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+function fvProductoDe_(desc) {
+  const d = ' ' + fvNormTxt_(desc).replace(/[^a-z0-9]+/g, ' ') + ' ';
+  const prods = ((S.catalogs && S.catalogs.productos) || []).filter(p => p.categoria === 'Veterinaria');
+  let mejor = null, largo = 0;
+  prods.forEach(p => {
+    const pal = fvNormTxt_(String(p.nombre).replace(/\(.*?\)/g, '')).replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(w => w.length >= 4);
+    if (!pal.length) return;
+    const w = pal[0];
+    if (d.indexOf(' ' + w + ' ') !== -1 && w.length > largo) { mejor = p; largo = w.length; }
+  });
+  return mejor;
+}
+function fvClasificar_(l) {
+  const d = fvNormTxt_(l.desc);
+  if (/aislador|alambre|poste|varilla|tranquera|boyero|torniquete|tensor/.test(d)) return { clase: 'no' };
+  if (/tacto|necropsia|analisis|laboratorio|viatico|movilidad|honorario|consulta|visita|ecograf|raspaje|sangrado/.test(d)) return { clase: 'hon' };
+  if (/iatf|dispositivo|\bdisp\b|vaina|gnrh|gonaxal|celo test|semen|pajuela|insemin|estradiol|benzoato|cipionato|prostaglandin/.test(d)) return { clase: 'gasto', motivo: 'IATF' };
+  if (/carav|aguja|jeringa|pinza|anillo|goma|cuchilla|guante|aplicador|pistola|marcador|pintura|crayon/.test(d)) return { clase: 'gasto', motivo: 'Elementos varios' };
+  const p = fvProductoDe_(l.desc);
+  if (p) return { clase: 'med', producto: p };
+  if (l.presentacion) return { clase: 'med', producto: null };
+  return { clase: 'rev' };
+}
+
+function buildImportarFacturas() {
+  if (!S.fv) S.fv = { facturas: [], errores: [], leyendo: false };
+  const st = S.fv;
+  const hechas = new Set((S.cache.fielddata_importados || []).map(h => String(h.huella)));
+  let h = `<div class="panel">
+    <div class="panel-title">1. Facturas (PDF)</div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (una o varias). El importador lee cada una y muestra sus líneas con la clasificación propuesta: <b>medicamento</b> (entra al stock del producto), <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b>, o <b>no va</b> (gastos de estructura). Todo sin IVA. Esta versión <b>solo lee y controla</b>: no graba nada.</p>
+    <div class="fgrid"><div class="fg"><label>Facturas (.pdf)</label><input type="file" id="fv-files" accept=".pdf,application/pdf" multiple ${st.leyendo ? 'disabled' : ''}></div></div>
+    ${st.leyendo ? '<div style="margin-top:8px;font-size:12.5px;color:var(--text2)">⏳ Leyendo…</div>' : ''}
+    ${st.facturas.length ? `<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="fv-limpiar">Quitar todas</button></div>` : ''}
+    ${st.errores.length ? `<ul style="margin:10px 0 0;padding-left:18px;font-size:12.5px;color:var(--red)">${st.errores.map(e => `<li>${fdEsc_(e)}</li>`).join('')}</ul>` : ''}
+  </div>`;
+  if (!st.facturas.length) return h;
+  const fm = n => '$ ' + fn(Math.round((Number(n) || 0) * 100) / 100, 2);
+  const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
+  // Resumen
+  h += `<div class="panel"><div class="panel-title">Resumen <span class="pill pill-gold">${st.facturas.length} factura${st.facturas.length === 1 ? '' : 's'}</span></div>
+    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Proveedor</th><th>Factura</th><th>Fecha</th><th class="tr">Neto factura</th><th class="tr">Suma de líneas</th><th class="tc">Control</th><th>Estado</th></tr></thead><tbody>` +
+    st.facturas.map(f => {
+      const suma = f.lineas.reduce((a, l) => a + (Number(l.total) || 0), 0);
+      const ok = f.neto !== null && Math.abs(suma - f.neto) <= 1;
+      const ya = hechas.has('fac|' + f.cuit + '|' + f.pv + '-' + f.nro);
+      const dup = st.facturas.filter(x => x.clave === f.clave).length > 1;
+      return `<tr><td><b>${fdEsc_(f.proveedor || '—')}</b><div style="font-size:11px;color:var(--text3)">CUIT ${fdEsc_(f.cuit || '—')} · ${fdEsc_(f.archivo)}</div></td>
+        <td>${f.nro ? fdEsc_(f.pv + '-' + f.nro) : '<span style="color:var(--red)">sin número</span>'}</td><td>${f.fecha ? fd(f.fecha) : '<span style="color:var(--red)">sin fecha</span>'}</td>
+        <td class="tr">${f.neto === null ? '<span style="color:var(--red)">no lo encontré</span>' : fm(f.neto)}</td><td class="tr">${fm(suma)}</td>
+        <td class="tc">${ok ? '<span class="pill pill-green">✓ cierra</span>' : `<span class="pill pill-red">difiere${f.neto !== null ? ' ' + fm(suma - f.neto) : ''}</span>`}</td>
+        <td>${ya ? '<span class="pill pill-gold">Ya importada</span>' : (dup ? '<span class="pill pill-gold">Repetida en esta carga</span>' : '<span class="pill pill-green">Nueva</span>')}</td></tr>`;
+    }).join('') + `</tbody></table></div></div>`;
+  // Detalle de cada factura
+  st.facturas.forEach((f, fi) => {
+    const suma = f.lineas.reduce((a, l) => a + (Number(l.total) || 0), 0);
+    const ok = f.neto !== null && Math.abs(suma - f.neto) <= 1;
+    h += `<div class="panel"><div class="panel-title">${fdEsc_(f.proveedor || 'Proveedor sin nombre')} — ${fdEsc_(f.pv + '-' + f.nro)} <span style="font-weight:400;color:var(--text2);font-size:12.5px">· ${f.fecha ? fd(f.fecha) : 'sin fecha'}</span> ${ok ? '<span class="pill pill-green">✓ cierra con el neto</span>' : '<span class="pill pill-red">no cierra con el neto</span>'}</div>
+      <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tr">Cant.</th><th>Descripción</th><th>Envase</th><th class="tr">Unitario s/IVA</th><th class="tr">Total s/IVA</th><th>Fecha en la línea</th><th>Va a</th><th>Detalle</th></tr></thead><tbody>` +
+      f.lineas.map(l => {
+        const c = fvClasificar_(l);
+        const pill = { med: 'pill-green', gasto: 'pill-gold', hon: 'pill-gold', no: 'pill-red', rev: 'pill-red' }[c.clase];
+        let det = '';
+        if (c.clase === 'med') {
+          const env = l.presentacion;
+          det = (c.producto ? 'Producto: <b>' + fdEsc_(c.producto.nombre) + '</b>' : 'Producto nuevo (no está en el sistema)')
+            + (env ? ` · ${fq(l.cant)} × ${fq(env.cant)} ${fdEsc_(env.unidad)} = <b>${fq(l.cant * env.cant)} ${fdEsc_(env.unidad)}</b> · ${fm(l.total / (l.cant * env.cant))} por ${fdEsc_(env.unidad)}` : ' · falta el contenido del envase');
+          if (c.producto && env && c.producto.unidad && fvNormTxt_(c.producto.unidad) !== env.unidad) det += ` <span style="color:var(--red)">· el producto está en ${fdEsc_(c.producto.unidad)}</span>`;
+        } else if (c.clase === 'gasto') det = (c.motivo || '') + ' · a Cría';
+        else if (c.clase === 'hon') det = 'Se pregunta actividad y campo al grabar';
+        else if (c.clase === 'no') det = 'Gasto de estructura: no se graba';
+        else det = 'No lo reconozco';
+        if (!l.total) det += ' <span style="color:var(--text3)">· sin importe</span>';
+        return `<tr><td class="tr">${l.cant === null ? '—' : fq(l.cant)}</td><td style="white-space:normal">${fdEsc_(l.desc)}</td><td>${l.presentacion ? fdEsc_(l.presentacion.texto) : '—'}</td>
+          <td class="tr">${fm(l.unit)}</td><td class="tr">${fm(l.total)}</td><td>${fdEsc_(l.fechaDesc || '—')}</td>
+          <td><span class="pill ${pill}">${FV_CLASES_[c.clase]}</span></td><td style="white-space:normal;font-size:12.5px">${det}</td></tr>`;
+      }).join('') + `</tbody><tfoot><tr><td colspan="4" class="tr"><b>Suma de líneas</b></td><td class="tr"><b>${fm(suma)}</b></td><td colspan="3" style="font-size:12.5px;color:var(--text2)">Neto de la factura: ${f.neto === null ? '—' : fm(f.neto)}${f.total ? ' · Total con IVA: ' + fm(f.total) : ''}</td></tr></tfoot></table></div>
+      <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">Ver el texto leído del PDF (página ${f.pagina})</summary><pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow:auto;background:var(--bg2);padding:8px;border-radius:6px">${fdEsc_(f.renglones.join('\n'))}</pre></details>
+      <div style="margin-top:6px"><button class="btn btn-secondary btn-sm fv-quitar" data-i="${fi}">Quitar esta factura</button></div></div>`;
+  });
+  return h;
+}
+
+function attachImportarFacturasEvents() {
+  const st = S.fv;
+  if (!st) return;
+  const inp = document.getElementById('fv-files');
+  if (inp) inp.onchange = async () => {
+    const files = [...inp.files];
+    if (!files.length) return;
+    st.leyendo = true; st.errores = []; render();
+    for (const f of files) {
+      try {
+        const fs = await fvLeerArchivo_(f);
+        if (!fs.length || !fs.some(x => x.lineas.length)) st.errores.push(f.name + ': no encontré líneas de detalle (¿es una factura escaneada como imagen?).');
+        fs.forEach(x => { x.archivo = f.name; st.facturas.push(x); });
+      } catch (err) {
+        st.errores.push(f.name + ': ' + err.message);
+      }
+    }
+    st.leyendo = false;
+    render();
+  };
+  const limp = document.getElementById('fv-limpiar');
+  if (limp) limp.onclick = () => { st.facturas = []; st.errores = []; render(); };
+  document.querySelectorAll('.fv-quitar').forEach(b => b.onclick = () => { st.facturas.splice(Number(b.dataset.i), 1); render(); });
 }
 
 function buildImportarFielddata() {
