@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_283';
+const APP_VERSION = 'index_consolidado_4_6_155_284';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1334,6 +1334,7 @@ async function goto(page) {
       loadEntity('compras_insumos', true).catch(()=>{}),
       loadEntity('consumos_insumos', true).catch(()=>{}),
       loadEntity('traslados_insumos', true).catch(()=>{}),
+      loadEntity('ajustes_insumos', true).catch(()=>{ S.cache.ajustes_insumos = []; }), // v284 -- stock a la fecha en Tratamientos
       loadEntity('fielddata_importados', true).catch(()=>{ S.cache.fielddata_importados = []; }),
       loadEntity('fielddata_equivalencias', true).catch(()=>{ S.cache.fielddata_equivalencias = []; }),
     ];
@@ -23272,24 +23273,68 @@ async function fdGrabarTrat_(modo) {
   // Compras sin precio que hacen falta (por producto, y por campo si el producto es por campo)
   const compras = [];
   if (esGrabar) {
-    const stock = insStockAFecha_(null);
-    const nec = {};
+    // v284 -- El stock se mira A LA FECHA de cada uso, no el total de hoy: un
+    // uso de julio no puede tomar el stock de una factura de octubre. Se recorre
+    // cada producto en orden de fecha (compras, ajustes, traslados, usos ya
+    // grabados y los nuevos); donde el saldo daría negativo se graba antes una
+    // compra SIN PRECIO con la fecha de ese uso. Nunca frena la carga.
+    const evs = {};
+    const add = (k, e) => { (evs[k] || (evs[k] = [])).push(e); };
+    const claveDe = (pid, pc, cid) => String(pid) + '|' + (pc ? String(cid || '') : '');
+    const info = {};
     sel.forEach(it => {
       const prod = fdTratProducto_(it.prodId);
       const pc = esPorCampo_(prod.por_campo);
-      const k = it.prodId + '|' + (pc ? it.campo_id : '');
+      const k = claveDe(prod.producto_id, pc, it.campo_id);
+      info[k] = { prod, pc };
       const q = it.reparto.filter(p => !p.hecho).reduce((s, p) => s + p.cantidad, 0);
-      if (!nec[k]) nec[k] = { prod, pc, campo_id: it.campo_id, fecha: it.fecha, cant: 0 };
-      nec[k].cant += q;
-      if (it.fecha < nec[k].fecha) { nec[k].fecha = it.fecha; if (!pc) nec[k].campo_id = it.campo_id; }
+      if (q > 0) add(k, { fecha: it.fecha, cant: -q, nuevo: true, campo_id: it.campo_id });
     });
-    Object.values(nec).forEach(n => {
-      const s0 = stock[String(n.prod.producto_id)] || { total: 0, porCampo: {} };
-      const disp = Math.max(0, n.pc ? (s0.porCampo[n.campo_id] || 0) : s0.total);
-      const falta = Math.round((n.cant - disp) * 100) / 100;
-      if (falta > 0) compras.push({ fecha: n.fecha, producto_id: String(n.prod.producto_id), cantidad: falta, precio_unitario: 0, proveedor: '',
-        observaciones: 'Fielddata tratamientos — FALTA PRECIO (completar con la factura)', campo_id: n.campo_id, _nombre: n.prod.nombre, _unidad: n.prod.unidad });
+    Object.keys(info).forEach(k => {
+      const { prod, pc } = info[k];
+      const pid = String(prod.producto_id), cid = k.split('|')[1];
+      const mio = (p, c) => String(p) === pid && (!pc || String(c || '') === cid);
+      // Lo que entró por una factura del veterinario puede haberse retirado hasta 60
+      // días antes (la factura llega a fin de mes o a los dos meses): para esta
+      // cuenta se toma como disponible desde 60 días antes, pero nunca antes del
+      // inicio del control de facturas (FV_DESDE_).
+      const fechaEf = c => {
+        if (!/\[fac:/.test(String(c.observaciones || ''))) return c.fecha;
+        const d = new Date(String(c.fecha) + 'T00:00:00'); d.setDate(d.getDate() - 60);
+        const f = d.toISOString().slice(0, 10);
+        return f < FV_DESDE_ ? FV_DESDE_ : f;
+      };
+      (S.cache.compras_insumos || []).forEach(c => { if (mio(c.producto_id, c.campo_id) && Number(c.cantidad)) add(k, { fecha: fechaEf(c), cant: Number(c.cantidad) || 0 }); });
+      (S.cache.ajustes_insumos || []).forEach(c => { if (mio(c.producto_id, c.campo_id) && Number(c.cantidad)) add(k, { fecha: c.fecha, cant: Number(c.cantidad) || 0 }); });
+      (S.cache.consumos_insumos || []).forEach(c => { if (mio(c.producto_id, c.campo_id) && Number(c.cantidad)) add(k, { fecha: c.fecha, cant: -(Number(c.cantidad) || 0), campo_id: c.campo_id }); });
+      if (pc) (S.cache.traslados_insumos || []).forEach(t => {
+        if (String(t.producto_id) !== pid) return;
+        if (String(t.campo_origen_id) === cid) add(k, { fecha: t.fecha, cant: -(Number(t.cantidad) || 0) });
+        if (String(t.campo_destino_id) === cid) add(k, { fecha: t.fecha, cant: Number(t.cantidad) || 0 });
+      });
+      // Mismo día: primero lo que entra, después lo que sale.
+      const lista = evs[k].sort((x, y) => String(x.fecha || '').localeCompare(String(y.fecha || '')) || (y.cant - x.cant));
+      let saldo = 0, vistoNuevo = false;
+      const porFecha = {};
+      lista.forEach(e => {
+        if (e.nuevo) vistoNuevo = true;
+        saldo += e.cant;
+        if (saldo < -0.005) {
+          if (vistoNuevo) {
+            const f = String(e.fecha || '');
+            if (!porFecha[f]) porFecha[f] = { cant: 0, campo_id: pc ? cid : (e.campo_id || '') };
+            porFecha[f].cant += -saldo;
+          }
+          saldo = 0; // lo que ya faltaba antes de los usos nuevos no es asunto de esta carga
+        }
+      });
+      Object.keys(porFecha).sort().forEach(f => {
+        const falta = Math.round(porFecha[f].cant * 100) / 100;
+        if (falta > 0) compras.push({ fecha: f, producto_id: pid, cantidad: falta, precio_unitario: 0, proveedor: '',
+          observaciones: 'Fielddata tratamientos — FALTA PRECIO (completar con la factura)', campo_id: porFecha[f].campo_id, _nombre: prod.nombre, _unidad: prod.unidad });
+      });
     });
+    compras.sort((x, y) => String(x.fecha).localeCompare(String(y.fecha)));
   }
   const msg = modo === 'dup_ya'
     ? '¿Marcar ' + sel.length + ' líneas como ya cargadas? No se graba nada en el sistema.'
