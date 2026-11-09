@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_276';
+const APP_VERSION = 'index_consolidado_4_6_155_277';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -22324,6 +22324,26 @@ function fdAnalizarHacienda_() {
       return;
     }
     porResolver.push(it);
+  });
+  // v277 -- Lo que quedó "Ya cargado" o grabado en una importación anterior sin
+  // registro_id (o con un id que ya no está) igual tiene que usar el registro del
+  // sistema que le corresponde, para no aparecer en "Solo en el sistema".
+  items.filter(it => it.conHuella && it.estado !== 'descartado').forEach(it => {
+    const ids = [];
+    it.huellas.forEach(x => { const h = huellaEstado[x]; if (h && h.registro_id) String(h.registro_id).split(',').forEach(y => ids.push(String(y).trim())); });
+    if (ids.some(y => (sis[it.entidad] || []).some(s => s.id === y || String(s.id).split(',').includes(y)))) return;
+    const ok = rodeosOk(it);
+    let mejor = null, mejorSc = -99;
+    (sis[it.entidad] || []).forEach(s => {
+      if (usados.has(s.ent + '|' + s.id) || s.qty !== it.cab) return;
+      const d = Math.abs(fdDias_(s.fecha, it.fecha));
+      if (d > FD_TOLERANCIA_DIAS_CASI_IGUAL_) return;
+      const mismoRodeo = ok.includes(s.rodeo);
+      if (!mismoRodeo && fdHacCampoDeRodeo_(s.rodeo) !== it.campo_id) return;
+      const sc = (mismoRodeo ? 10 : 0) - d;
+      if (sc > mejorSc) { mejor = s; mejorSc = sc; }
+    });
+    if (mejor) usados.add(mejor.ent + '|' + mejor.id);
   });
   const lista = it => sis[it.entidad].filter(s => !usados.has(s.ent + '|' + s.id));
   // A. Igual: misma fecha, rodeo y cabezas
