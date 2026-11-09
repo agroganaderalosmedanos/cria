@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_280';
+const APP_VERSION = 'index_consolidado_4_6_155_281';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -15695,7 +15695,7 @@ function mbControlDatos_(campanaId, corte) {
   // v275 -- Honorarios veterinarios: aviso por campo sin ninguna factura en la campaña
   const honEnRango = honorariosGetAll_().filter(s => String(s.periodo || '').slice(0, 7) >= mesDesde && String(s.periodo || '').slice(0, 7) <= mesHasta);
   camposConSueldo.forEach(cid => {
-    if (honEnRango.some(s => String(s.campo_id) === cid)) return;
+    if (honEnRango.some(s => String(s.campo_id) === cid || !s.campo_id)) return; // v281 -- las del importador de facturas no tienen campo
     const nombreC = (((S.catalogs && S.catalogs.campos) || []).find(c => String(c.campo_id) === cid) || {}).nombre || ('campo ' + cid);
     fila(sSue, 'amarillo', mesDesde + '-01', 'Honorarios veterinarios', nombreC, 'No hay ninguna factura del veterinario cargada en la campaña (desde ' + mbMesNombre_(mesDesde) + '). Si hubo, cargalas en Sueldos → Honorarios veterinarios.');
   });
@@ -19826,7 +19826,7 @@ function buildSueldos() {
     </div>
     ${honor.length ? `<div class="tw" style="margin-top:14px"><table class="dt"><thead><tr><th>Período</th><th>Campo</th><th>Observación</th>
       <th class="tr" style="color:var(--green-text)">🐄 Cría</th><th class="tr" style="color:var(--gold-text)">🐃 Recría</th><th class="tr" style="color:var(--clay-text)">🥩 Terminación</th><th class="tr">Total</th><th></th></tr></thead><tbody>` +
-      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : s.campo_id}</td><td style="font-size:12px;color:var(--text2)">${s.observacion || ''}</td>
+      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : (s.campo_id ? s.campo_id : '<span style="color:var(--text3)">Sin campo</span>')}</td><td style="font-size:12px;color:var(--text2)">${s.observacion || ''}</td>
         <td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'cria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'recria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'engorde')))}</td>
         <td class="tr"><strong>$ ${fn(Number(s.monto)||0)}</strong></td><td><button class="btn btn-danger btn-sm" onclick="window.hvEliminar_('${s.sueldo_id}')" title="Eliminar">🗑</button></td></tr>`; }).join('') +
       `</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3);margin-top:10px">Todavía no hay honorarios cargados.</div>'}
@@ -23804,6 +23804,7 @@ function fvPrepararLinea_(l) {
   l._prep = true;
   const c = fvClasificar_(l);
   l.clase = c.clase; l.motivo = c.motivo || '';
+  if (c.clase === 'hon') { l.act = 'cria'; return; } // v281 -- honorarios: solo la actividad (Crist, 08/11/2026)
   if (c.clase !== 'med') return;
   const eq = fvEquivProd_(l.desc);
   l.prod = eq && fvProdPorId_(eq) ? eq : (c.producto ? String(c.producto.producto_id) : '__nuevo');
@@ -23827,10 +23828,13 @@ function fvPlan_() {
   const usadas = new Set();
   const plan = [];
   st.facturas.forEach((f, fi) => f.lineas.forEach((l, j) => {
-    if (l.clase !== 'med' || !l.sel || hechas.has(fvHuellaLinea_(f, j))) return;
+    if (!['med', 'hon', 'no'].includes(l.clase) || !l.sel || hechas.has(fvHuellaLinea_(f, j))) return;
     if (st.facturas.findIndex(x => x.clave === f.clave) !== fi) return; // repetida en esta carga
+    // v281 -- honorarios (solo actividad, sin campo) y líneas de estructura (se descartan)
+    if (l.clase === 'hon') { plan.push({ f, fi, l, j, tipo: 'hon', error: !f.fecha ? 'La factura no tiene fecha.' : (!(Number(l.total) > 0) ? 'La línea no tiene importe.' : (!l.act ? 'Elegí la actividad.' : '')) }); return; }
+    if (l.clase === 'no') { plan.push({ f, fi, l, j, tipo: 'no', error: '' }); return; }
     const c = fvLineaCalc_(l);
-    const p = { f, fi, l, j, calc: c, absorber: [], entra: 0, error: '' };
+    const p = { f, fi, l, j, tipo: 'med', calc: c, absorber: [], entra: 0, error: '' };
     if (!l.prod) p.error = 'Elegí el producto.';
     else if (l.prod === '__nuevo' && !String(l.nuevoNombre || '').trim()) p.error = 'Poné el nombre del producto nuevo.';
     else if (!(c.qty > 0)) p.error = 'Falta el contenido del envase.';
@@ -23860,7 +23864,7 @@ function buildImportarFacturas() {
   const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
   let h = `<div class="panel">
     <div class="panel-title">1. Facturas (PDF)</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (desde el ${fd(FV_DESDE_)}). Cada línea se clasifica en <b>medicamento</b>, <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b> o <b>no va</b> (estructura). Todo sin IVA. En esta versión se graban los <b>medicamentos</b>: los remedios entran al stock con el precio de la factura; los productos que lleva Fielddata (rumex, sales…) solo toman el precio. Honorarios y gastos, en la próxima versión.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (desde el ${fd(FV_DESDE_)}). Cada línea se clasifica en <b>medicamento</b>, <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b> o <b>no va</b> (estructura). Todo sin IVA. Se graban los <b>medicamentos</b> (los remedios entran al stock con el precio de la factura; los productos que lleva Fielddata —rumex, sales…— solo toman el precio), los <b>honorarios</b> (con la actividad, en la línea aparte del margen) y se descartan las líneas de <b>estructura</b>. Los gastos de IATF y elementos varios, en la próxima versión.</p>
     <div class="fgrid"><div class="fg"><label>Facturas (.pdf)</label><input type="file" id="fv-files" accept=".pdf,application/pdf" multiple ${st.leyendo || st.grabando ? 'disabled' : ''}></div></div>
     ${st.leyendo ? '<div style="margin-top:8px;font-size:12.5px;color:var(--text2)">⏳ Leyendo…</div>' : ''}
     ${st.facturas.length ? `<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="fv-limpiar">Quitar todas</button></div>` : ''}
@@ -23905,7 +23909,14 @@ function buildImportarFacturas() {
           const attr = `data-f="${fi}" data-j="${j}"`;
           let celdas;
           if (hecha) celdas = `<td colspan="4" style="color:var(--text3)">Ya importada.</td>`;
-          else if (l.clase !== 'med' || dup) celdas = `<td colspan="4" style="font-size:12.5px;color:var(--text2)">${dup ? 'Repetida.' : l.clase === 'no' ? 'Gasto de estructura: no se graba.' : l.clase === 'rev' ? 'No la reconozco: se resuelve en la próxima versión.' : (l.motivo ? fdEsc_(l.motivo) + ' · ' : '') + 'Se graba en la próxima versión.'}</td>`;
+          else if (l.clase === 'hon' && !dup) {
+            const p = planDe(fi, j);
+            const mes = f.fecha ? f.fecha.slice(5, 7) + '/' + f.fecha.slice(0, 4) : '—';
+            celdas = `<td><select class="fv-in" ${attr} data-k="act"><option value="">— Actividad —</option>${[['cria', 'Cría'], ['recria', 'Recría'], ['engorde', 'Terminación']].map(a => `<option value="${a[0]}" ${l.act === a[0] ? 'selected' : ''}>${a[1]}</option>`).join('')}</select></td><td colspan="2" style="font-size:12.5px;color:var(--text2)">Período ${mes}</td>
+              <td style="white-space:normal;font-size:12.5px">${!l.sel ? '<span style="color:var(--text3)">No seleccionada.</span>' : (p && p.error ? `<span style="color:var(--red)">${fdEsc_(p.error)}</span>` : 'Honorarios veterinarios de ' + ({ cria: 'Cría', recria: 'Recría', engorde: 'Terminación' }[l.act] || '—') + ': <b>' + fm(l.total) + '</b> (línea aparte del margen).')}</td>`;
+          }
+          else if (l.clase === 'no' && !dup) celdas = `<td colspan="4" style="font-size:12.5px;color:var(--text2)">${l.sel ? 'Gasto de estructura: <b>se descarta</b> (queda anotado para no volver a ofrecerlo).' : 'No seleccionada.'}</td>`;
+          else if (l.clase !== 'med' || dup) celdas = `<td colspan="4" style="font-size:12.5px;color:var(--text2)">${dup ? 'Repetida.' : l.clase === 'rev' ? 'No la reconozco: se resuelve en la próxima versión.' : (l.motivo ? fdEsc_(l.motivo) + ' · ' : '') + 'Gasto de Cría: se graba en la próxima versión.'}</td>`;
           else {
             const c = fvLineaCalc_(l);
             const p = planDe(fi, j);
@@ -23928,7 +23939,7 @@ function buildImportarFacturas() {
             }
             celdas = `<td>${sel}</td><td style="white-space:nowrap">${env}</td><td class="tr">${pr}</td><td style="white-space:normal;font-size:12.5px;min-width:200px">${que}</td>`;
           }
-          const chk = !hecha && l.clase === 'med' && !dup ? `<input type="checkbox" class="fv-in" ${attr} data-k="sel" ${l.sel ? 'checked' : ''}>` : '';
+          const chk = !hecha && ['med', 'hon', 'no'].includes(l.clase) && !dup ? `<input type="checkbox" class="fv-in" ${attr} data-k="sel" ${l.sel ? 'checked' : ''}>` : '';
           return `<tr><td>${chk}</td><td class="tr">${l.cant === null ? '—' : fq(l.cant)}</td><td style="white-space:normal">${fdEsc_(l.desc)}${l.fechaDesc ? ` <span style="color:var(--text3);font-size:11px">(${fdEsc_(l.fechaDesc)})</span>` : ''}</td>
             <td class="tr">${fm(l.total)}</td><td><span class="pill ${pill}">${FV_CLASES_[l.clase]}</span></td>${celdas}</tr>`;
         }).join('') + `</tbody><tfoot><tr><td colspan="3" class="tr"><b>Suma de líneas</b></td><td class="tr"><b>${fm(suma)}</b></td><td colspan="5" style="font-size:12.5px;color:var(--text2)">Neto de la factura: ${f.neto === null ? '—' : fm(f.neto)}${f.total ? ' · Total con IVA: ' + fm(f.total) : ''}</td></tr></tfoot></table></div>
@@ -23936,7 +23947,7 @@ function buildImportarFacturas() {
         <div style="margin-top:6px"><button class="btn btn-secondary btn-sm fv-quitar" data-i="${fi}">Quitar esta factura</button></div></div>`;
     });
     h += `<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <button class="btn btn-primary" id="fv-grabar" ${nSel && !nErr && !st.grabando ? '' : 'disabled'}>${st.grabando ? '⏳ Grabando…' : 'Grabar medicamentos seleccionados (' + nSel + ')'}</button>
+      <button class="btn btn-primary" id="fv-grabar" ${nSel && !nErr && !st.grabando ? '' : 'disabled'}>${st.grabando ? '⏳ Grabando…' : 'Grabar seleccionados (' + nSel + ')'}</button>
       ${nErr ? `<span style="font-size:12.5px;color:var(--red)">Hay ${nErr} línea${nErr > 1 ? 's' : ''} seleccionada${nErr > 1 ? 's' : ''} con datos faltantes.</span>` : ''}</div></div>`;
   }
   h += fvControlHtml_();
@@ -23992,18 +24003,40 @@ async function fvGrabar_() {
   const plan = fvPlan_();
   if (!plan.length || plan.some(p => p.error)) return;
   const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
+  const actNom = { cria: 'Cría', recria: 'Recría', engorde: 'Terminación' };
   const txt = plan.map(p => {
+    if (p.tipo === 'hon') return '· Honorarios ' + (actNom[p.l.act] || '') + ': $ ' + fn(p.l.total, 2) + ' — ' + p.l.desc;
+    if (p.tipo === 'no') return '· Se descarta (estructura): ' + p.l.desc;
     const nom = p.l.prod === '__nuevo' ? p.l.nuevoNombre + ' (nuevo)' : p.calc.prod.nombre;
     return '· ' + nom + ': ' + fq(p.calc.qty) + ' ' + (p.calc.unidad || '') + ' a $ ' + fn(p.calc.precioU, 2) + (p.calc.stockFD ? ' — solo precio' : ' — entra al stock ' + fq(p.entra)) + (p.absorber.length ? ' — completa ' + p.absorber.length + ' sin precio' : '');
   }).join('\n');
-  if (!confirm('¿Grabar ' + plan.length + ' medicamento' + (plan.length > 1 ? 's' : '') + ' de las facturas?\n\n' + txt + '\n\nRevisá los precios: son por ' + 'unidad (cc, dosis…) y sin IVA.')) return;
+  if (!confirm('¿Grabar ' + plan.length + ' línea' + (plan.length > 1 ? 's' : '') + ' de las facturas?\n\n' + txt + '\n\nRevisá los precios: son por ' + 'unidad (cc, dosis…) y sin IVA.')) return;
   st.grabando = true; st.log = []; render();
-  let ok = 0, err = 0, nuevos = 0;
+  let ok = 0, err = 0, nuevos = 0, honOk = 0;
   for (const p of plan) {
     const f = p.f, l = p.l, c = p.calc;
     const prov = f.proveedor || ('CUIT ' + f.cuit);
     const nroFac = f.pv + '-' + f.nro;
     try {
+      if (p.tipo === 'hon') {
+        // v281 -- Igual que el panel de Sueldos → Honorarios veterinarios, pero sin campo:
+        // el margen se mira por actividad (Crist, 08/11/2026).
+        const r = await apiCall('create', { body: { entity: 'sueldos', data: { periodo: f.fecha.slice(0, 7), campo_id: '', monto: Math.round(Number(l.total) * 100) / 100,
+          observacion: 'Factura ' + prov + ' ' + nroFac + ': ' + l.desc, fecha_carga: today(),
+          dist_cria: l.act === 'cria' ? 100 : 0, dist_recria: l.act === 'recria' ? 100 : 0, dist_engorde: l.act === 'engorde' ? 100 : 0, dist_estructura: 0, concepto: CONCEPTO_HON_VET_ } } });
+        await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'ya_cargado', huellas: [fvHuellaLinea_(f, p.j)], campo_id: '', fecha: f.fecha, rubro: 'factura_vet',
+          entity: 'sueldos', registro_id: r.id, detalle: 'Honorarios — factura ' + prov + ' ' + nroFac + ' — ' + l.desc }], equivalencias: [] } });
+        honOk++; ok++;
+        st.log.push({ ok: true, txt: 'Honorarios ' + (actNom[l.act] || '') + ' $ ' + fn(l.total, 2) + ': ' + l.desc + ' (' + prov + ' ' + nroFac + ').' });
+        continue;
+      }
+      if (p.tipo === 'no') {
+        await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'descartado', huellas: [fvHuellaLinea_(f, p.j)], campo_id: '', fecha: f.fecha, rubro: 'factura_vet',
+          entity: '', registro_id: '', detalle: 'Estructura (no va) — factura ' + prov + ' ' + nroFac + ' — ' + l.desc }], equivalencias: [] } });
+        ok++;
+        st.log.push({ ok: true, txt: 'Descartada (estructura): ' + l.desc + ' (' + prov + ' ' + nroFac + ').' });
+        continue;
+      }
       let pid = c.prod ? String(c.prod.producto_id) : '';
       if (l.prod === '__nuevo') {
         const ya = ((S.catalogs && S.catalogs.productos) || []).find(x => fvNormTxt_(x.nombre) === fvNormTxt_(l.nuevoNombre));
@@ -24035,14 +24068,14 @@ async function fvGrabar_() {
       st.log.push({ ok: false, txt: l.desc + ' (' + prov + ' ' + nroFac + '): ' + e.message });
     }
   }
-  st.log.unshift({ ok: !err, txt: 'Medicamentos grabados: ' + ok + (nuevos ? ' · productos nuevos: ' + nuevos : '') + (err ? ' · con error: ' + err : '') });
+  st.log.unshift({ ok: !err, txt: 'Líneas grabadas: ' + ok + (honOk ? ' · honorarios: ' + honOk : '') + (nuevos ? ' · productos nuevos: ' + nuevos : '') + (err ? ' · con error: ' + err : '') });
   S.stockProductos = null; S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
   try {
-    await Promise.all([loadEntity('compras_insumos', true), loadEntity('fielddata_importados', true), loadEntity('fielddata_equivalencias', true)]);
+    await Promise.all([loadEntity('compras_insumos', true), loadEntity('fielddata_importados', true), loadEntity('fielddata_equivalencias', true), loadEntity('sueldos', true)]);
     if (nuevos) await loadCatalogs();
   } catch (e) { /* si falla la recarga, se ve al volver a entrar */ }
   st.grabando = false;
-  toast(err ? 'Grabado con errores: revisá el resultado' : 'Medicamentos grabados', err ? 'err' : 'ok');
+  toast(err ? 'Grabado con errores: revisá el resultado' : 'Líneas grabadas', err ? 'err' : 'ok');
   render();
 }
 
@@ -24062,7 +24095,7 @@ function attachImportarFacturasEvents() {
         if (!fs.length || !fs.some(x => x.lineas.length)) st.errores.push(f.name + ': no encontré líneas de detalle (¿es una factura escaneada como imagen?).');
         fs.forEach(x => {
           x.archivo = f.name; x.campo_id = campoDef;
-          x.lineas.forEach(l => { fvPrepararLinea_(l); l.sel = l.clase === 'med'; });
+          x.lineas.forEach(l => { fvPrepararLinea_(l); l.sel = ['med', 'hon', 'no'].includes(l.clase); });
           st.facturas.push(x);
         });
       } catch (err) {
