@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_279';
+const APP_VERSION = 'index_consolidado_4_6_155_280';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -23965,12 +23965,20 @@ function fvControlHtml_() {
     if (fdStock) {
       if (fac - rec > 0.0001) avisos.push(`<span style="color:var(--red)">Faltan recibir ${fq(fac - rec)}</span>`);
       if (rec - fac > 0.0001) avisos.push(`<span style="color:var(--red)">Falta factura de ${fq(rec - fac)}</span>`);
-    } else if (sp.length) avisos.push(`<span style="color:var(--red)">Usado sin factura: ${fq(spCant)} — conseguí el precio (llamá al veterinario) y cargalo con "Actualizar precio" en Insumos</span>`);
+    } else if (sp.length) {
+      // v280 -- Es normal retirar remedios y que la factura llegue a fin de mes o a los dos meses:
+      // solo se alarma si la entrada sin precio más vieja tiene más de 60 días.
+      const vieja = sp.map(c => String(c.fecha || '')).sort()[0];
+      const dias = vieja ? Math.round((new Date(today() + 'T00:00:00') - new Date(vieja + 'T00:00:00')) / 86400000) : 0;
+      avisos.push(dias > 60
+        ? `<span style="color:var(--red)">Usado sin factura: ${fq(spCant)} desde el ${fd(vieja)} (hace ${dias} días) — si la factura no llega, pedile el precio al veterinario y cargalo con "Actualizar precio" en Insumos</span>`
+        : `<span style="color:var(--gold-text,#8a6d1f)">Usado, esperando factura: ${fq(spCant)} desde el ${fd(vieja)}</span>`);
+    }
     if (fdStock && sp.length) avisos.push(`<span style="color:var(--red)">${sp.length} entrada${sp.length > 1 ? 's' : ''} sin precio</span>`);
     return { p, fac, rec, usado, stock, fdStock, avisos };
   }).filter(Boolean).sort((a, b) => String(a.p.nombre).localeCompare(String(b.p.nombre), 'es'));
   let h = `<div class="panel"><div class="panel-title">Control de compras de veterinaria <span style="font-weight:400;color:var(--text2);font-size:12.5px">· desde el ${fd(FV_DESDE_)}</span></div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55"><b>Remedios</b>: el stock es lo facturado menos lo usado según los tratamientos de Fielddata. Si se usó algo sin factura, el importador de Tratamientos creó una entrada sin precio: aparece como "usado sin factura". <b>Productos que lleva Fielddata</b> (rumex, sales…): el stock es lo que carga Nacho; acá se compara lo facturado con lo recibido.</p>`;
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55"><b>Remedios</b>: el stock es lo facturado menos lo usado según los tratamientos de Fielddata. Si se usó algo antes de que llegue la factura, el importador de Tratamientos creó una entrada sin precio: aparece como "esperando factura" y, cuando importás la factura, toma su precio. Pasados 60 días sin factura, el aviso se pone en rojo. <b>Productos que lleva Fielddata</b> (rumex, sales…): el stock es lo que carga Nacho; acá se compara lo facturado con lo recibido.</p>`;
   if (!filas.length) return h + `<div style="font-size:12.5px;color:var(--text3)">Todavía no hay compras ni usos de veterinaria desde el ${fd(FV_DESDE_)}.</div></div>`;
   h += `<div style="overflow-x:auto"><table class="dt"><thead><tr><th>Producto</th><th>Stock lo lleva</th><th class="tr">Facturado</th><th class="tr">Recibido (Fielddata)</th><th class="tr">Usado</th><th class="tr">Stock hoy</th><th>Aviso</th></tr></thead><tbody>` +
     filas.map(r => `<tr><td><b>${fdEsc_(r.p.nombre)}</b> <span style="color:var(--text3);font-size:11px">${fdEsc_(r.p.unidad || '')}</span></td><td>${r.fdStock ? 'Fielddata' : 'Factura'}</td>
