@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_278';
+const APP_VERSION = 'index_consolidado_4_6_155_279';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1345,7 +1345,10 @@ async function goto(page) {
     // v278 -- Para saber si una factura ya se importó (huella) y cruzar con las compras.
     const fvLoads = [
       loadEntity('compras_insumos', true).catch(()=>{}),
+      loadEntity('consumos_insumos', true).catch(()=>{}),
+      loadEntity('ajustes_insumos', true).catch(()=>{ S.cache.ajustes_insumos = []; }),
       loadEntity('fielddata_importados', true).catch(()=>{ S.cache.fielddata_importados = []; }),
+      loadEntity('fielddata_equivalencias', true).catch(()=>{ S.cache.fielddata_equivalencias = []; }),
     ];
     S.loading = true; render(); await Promise.all(fvLoads); S.loading = false;
   }
@@ -1622,7 +1625,7 @@ function pageSubtitle(p) {
     margenbruto: 'Resultado económico consolidado de las tres actividades',
     config: 'Conexión con la planilla de datos',
     importar_fielddata: 'Cruce de los exports de Fielddata contra el sistema — insumos (rollos, sales, concentrado, calostro, rumex) y hacienda',
-    importar_facturas: 'Lectura de facturas PDF de veterinaria — medicamentos, gastos de veterinaria y honorarios',
+    importar_facturas: 'Facturas PDF de veterinaria — medicamentos al stock con su precio y control de compras',
   };
   return subs[p] || '';
 }
@@ -23762,68 +23765,284 @@ function fvClasificar_(l) {
   return { clase: 'rev' };
 }
 
+// v279 -- Grabación de medicamentos desde la factura (Crist, 08/11/2026):
+// - Remedios (Nacho NO carga ingresos en Fielddata): la factura da el ingreso
+//   al stock con su precio. Si hay entradas "Falta precio" (las crea el
+//   importador de Tratamientos cuando se usa un remedio sin stock) desde el
+//   01/10/2026, la factura les pone el precio y entra al stock solo el resto.
+// - Productos con stock en Fielddata (rumex, sales, calostro...): la factura
+//   NO suma stock; solo deja el precio (compra con cantidad 0, como "Actualizar
+//   precio") y completa el precio de las entradas sin precio.
+// - Cada compra grabada lleva "[fac:<cantidad facturada>]" en observaciones:
+//   de ahí sale el control "facturado / usado / stock".
+// Honorarios y gastos de veterinaria se graban en la próxima versión.
+const FV_DESDE_ = '2026-10-01';
+function fvHuellaFac_(f) { return 'fac|' + f.cuit + '|' + f.pv + '-' + f.nro; }
+function fvHuellaLinea_(f, j) { return fvHuellaFac_(f) + '|' + j; }
+function fvClaveDesc_(d) { return fvNormTxt_(d).replace(/\(?\b\d{1,2}\/\d{1,2}\b\)?/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim(); }
+function fvEquivProd_(desc) {
+  const k = fvClaveDesc_(desc);
+  const e = (S.cache.fielddata_equivalencias || []).find(x => String(x.tipo) === 'fac_prod' && String(x.texto) === k);
+  return e ? String(e.destino_id) : '';
+}
+function fvProdPorId_(id) { return ((S.catalogs && S.catalogs.productos) || []).find(p => String(p.producto_id) === String(id)) || null; }
+function fvEsStockFD_(p) {
+  if (!p) return false;
+  return Object.keys(FD_RUBROS_).some(k => { const r = FD_RUBROS_[k]; return !r.hacienda && !r.trat && r.producto(p); });
+}
+function fvNombreNuevo_(desc) {
+  let s = String(desc).replace(/\(?\b\d{1,2}\/\d{1,2}\b\)?/g, ' ').replace(/\bx\s*\d+(?:[.,]\d+)?\s*(ml|cc|lts?|l|litros?|dosis|ds|un|uni|unid|unidades)\b\.?/i, ' ').replace(/\s+/g, ' ').trim();
+  return s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+}
+function fvFaltaPrecio_(pid) {
+  return (S.cache.compras_insumos || []).filter(c => String(c.producto_id) === String(pid) && Number(c.cantidad) > 0 && !(Number(c.precio_unitario) > 0) && String(c.fecha || '') >= FV_DESDE_)
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || Number(a.compra_id) - Number(b.compra_id));
+}
+// Estado inicial de cada línea (producto propuesto, contenido del envase, precio).
+function fvPrepararLinea_(l) {
+  if (l._prep) return;
+  l._prep = true;
+  const c = fvClasificar_(l);
+  l.clase = c.clase; l.motivo = c.motivo || '';
+  if (c.clase !== 'med') return;
+  const eq = fvEquivProd_(l.desc);
+  l.prod = eq && fvProdPorId_(eq) ? eq : (c.producto ? String(c.producto.producto_id) : '__nuevo');
+  l.nuevoNombre = fvNombreNuevo_(l.desc);
+  l.nuevaUnidad = l.presentacion ? l.presentacion.unidad : 'unidad';
+  l.envase = l.presentacion ? l.presentacion.cant : 1;
+  l.precioU = null;
+}
+function fvLineaCalc_(l) {
+  const qty = Math.round((Number(l.cant) || 0) * (Number(l.envase) || 0) * 10000) / 10000;
+  const precioAuto = qty > 0 ? (Number(l.total) || 0) / qty : 0;
+  const precioU = l.precioU != null && l.precioU !== '' ? Number(l.precioU) : precioAuto;
+  const prod = l.prod && l.prod !== '__nuevo' ? fvProdPorId_(l.prod) : null;
+  const unidad = prod ? (prod.unidad || '') : l.nuevaUnidad;
+  return { qty, precioU, precioAuto, prod, unidad, stockFD: fvEsStockFD_(prod) };
+}
+// Plan de grabación de las líneas seleccionadas (en orden): qué entradas sin
+// precio completa cada una y cuánto entra al stock.
+function fvPlan_() {
+  const st = S.fv, hechas = new Set((S.cache.fielddata_importados || []).map(h => String(h.huella)));
+  const usadas = new Set();
+  const plan = [];
+  st.facturas.forEach((f, fi) => f.lineas.forEach((l, j) => {
+    if (l.clase !== 'med' || !l.sel || hechas.has(fvHuellaLinea_(f, j))) return;
+    if (st.facturas.findIndex(x => x.clave === f.clave) !== fi) return; // repetida en esta carga
+    const c = fvLineaCalc_(l);
+    const p = { f, fi, l, j, calc: c, absorber: [], entra: 0, error: '' };
+    if (!l.prod) p.error = 'Elegí el producto.';
+    else if (l.prod === '__nuevo' && !String(l.nuevoNombre || '').trim()) p.error = 'Poné el nombre del producto nuevo.';
+    else if (!(c.qty > 0)) p.error = 'Falta el contenido del envase.';
+    else if (!(c.precioU > 0)) p.error = 'Falta el precio.';
+    else if (!f.fecha) p.error = 'La factura no tiene fecha.';
+    if (!p.error && c.prod) {
+      let resto = c.qty;
+      fvFaltaPrecio_(c.prod.producto_id).forEach(x => {
+        if (usadas.has(String(x.compra_id)) || resto <= 0) return;
+        const q = Number(x.cantidad) || 0;
+        if (!c.stockFD && q > resto + 0.0001) return; // remedios: solo entradas que entran enteras en lo facturado
+        usadas.add(String(x.compra_id)); p.absorber.push(x); resto -= q;
+      });
+      p.entra = c.stockFD ? 0 : Math.max(0, Math.round(resto * 10000) / 10000);
+    } else if (!p.error) p.entra = c.qty;
+    plan.push(p);
+  }));
+  return plan;
+}
+
 function buildImportarFacturas() {
-  if (!S.fv) S.fv = { facturas: [], errores: [], leyendo: false };
+  if (!S.fv) S.fv = { facturas: [], errores: [], leyendo: false, grabando: false, log: [] };
   const st = S.fv;
   const hechas = new Set((S.cache.fielddata_importados || []).map(h => String(h.huella)));
+  const campos = (S.catalogs && S.catalogs.campos) || [];
+  const fm = n => '$ ' + fn(Math.round((Number(n) || 0) * 100) / 100, 2);
+  const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
   let h = `<div class="panel">
     <div class="panel-title">1. Facturas (PDF)</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (una o varias). El importador lee cada una y muestra sus líneas con la clasificación propuesta: <b>medicamento</b> (entra al stock del producto), <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b>, o <b>no va</b> (gastos de estructura). Todo sin IVA. Esta versión <b>solo lee y controla</b>: no graba nada.</p>
-    <div class="fgrid"><div class="fg"><label>Facturas (.pdf)</label><input type="file" id="fv-files" accept=".pdf,application/pdf" multiple ${st.leyendo ? 'disabled' : ''}></div></div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (desde el ${fd(FV_DESDE_)}). Cada línea se clasifica en <b>medicamento</b>, <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b> o <b>no va</b> (estructura). Todo sin IVA. En esta versión se graban los <b>medicamentos</b>: los remedios entran al stock con el precio de la factura; los productos que lleva Fielddata (rumex, sales…) solo toman el precio. Honorarios y gastos, en la próxima versión.</p>
+    <div class="fgrid"><div class="fg"><label>Facturas (.pdf)</label><input type="file" id="fv-files" accept=".pdf,application/pdf" multiple ${st.leyendo || st.grabando ? 'disabled' : ''}></div></div>
     ${st.leyendo ? '<div style="margin-top:8px;font-size:12.5px;color:var(--text2)">⏳ Leyendo…</div>' : ''}
     ${st.facturas.length ? `<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="fv-limpiar">Quitar todas</button></div>` : ''}
     ${st.errores.length ? `<ul style="margin:10px 0 0;padding-left:18px;font-size:12.5px;color:var(--red)">${st.errores.map(e => `<li>${fdEsc_(e)}</li>`).join('')}</ul>` : ''}
   </div>`;
-  if (!st.facturas.length) return h;
-  const fm = n => '$ ' + fn(Math.round((Number(n) || 0) * 100) / 100, 2);
-  const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
-  // Resumen
-  h += `<div class="panel"><div class="panel-title">Resumen <span class="pill pill-gold">${st.facturas.length} factura${st.facturas.length === 1 ? '' : 's'}</span></div>
-    <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Proveedor</th><th>Factura</th><th>Fecha</th><th class="tr">Neto factura</th><th class="tr">Suma de líneas</th><th class="tc">Control</th><th>Estado</th></tr></thead><tbody>` +
-    st.facturas.map(f => {
+  if (st.log && st.log.length) h += `<div class="panel"><div class="panel-title">Resultado de la última grabación</div><ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6">${st.log.map(l => `<li style="color:${l.ok ? 'var(--text)' : 'var(--red)'}">${fdEsc_(l.txt)}</li>`).join('')}</ul></div>`;
+  if (st.facturas.length) {
+    st.facturas.forEach(f => f.lineas.forEach(fvPrepararLinea_));
+    // Resumen
+    h += `<div class="panel"><div class="panel-title">Resumen <span class="pill pill-gold">${st.facturas.length} factura${st.facturas.length === 1 ? '' : 's'}</span></div>
+      <div style="overflow-x:auto"><table class="dt"><thead><tr><th>Proveedor</th><th>Factura</th><th>Fecha</th><th class="tr">Neto factura</th><th class="tr">Suma de líneas</th><th class="tc">Control</th><th>Estado</th></tr></thead><tbody>` +
+      st.facturas.map(f => {
+        const suma = f.lineas.reduce((a, l) => a + (Number(l.total) || 0), 0);
+        const ok = f.neto !== null && Math.abs(suma - f.neto) <= 1;
+        const nHechas = f.lineas.filter((l, j) => hechas.has(fvHuellaLinea_(f, j))).length;
+        const dup = st.facturas.filter(x => x.clave === f.clave).length > 1;
+        const estado = dup ? '<span class="pill pill-red">Repetida en esta carga</span>'
+          : nHechas === f.lineas.length ? '<span class="pill pill-gold">Ya importada</span>'
+          : nHechas ? `<span class="pill pill-gold">Parcial (${nHechas} de ${f.lineas.length} líneas)</span>` : '<span class="pill pill-green">Nueva</span>';
+        return `<tr><td><b>${fdEsc_(f.proveedor || '—')}</b><div style="font-size:11px;color:var(--text3)">CUIT ${fdEsc_(f.cuit || '—')} · ${fdEsc_(f.archivo)}</div></td>
+          <td>${f.nro ? fdEsc_(f.pv + '-' + f.nro) : '<span style="color:var(--red)">sin número</span>'}</td><td>${f.fecha ? fd(f.fecha) : '<span style="color:var(--red)">sin fecha</span>'}</td>
+          <td class="tr">${f.neto === null ? '<span style="color:var(--red)">no lo encontré</span>' : fm(f.neto)}</td><td class="tr">${fm(suma)}</td>
+          <td class="tc">${ok ? '<span class="pill pill-green">✓ cierra</span>' : `<span class="pill pill-red">difiere${f.neto !== null ? ' ' + fm(suma - f.neto) : ''}</span>`}</td><td>${estado}</td></tr>`;
+      }).join('') + `</tbody></table></div></div>`;
+    // Plan (para mostrar en cada línea qué va a pasar)
+    const plan = fvPlan_();
+    const planDe = (fi, j) => plan.find(p => p.fi === fi && p.j === j);
+    const prodsVet = ((S.catalogs && S.catalogs.productos) || []).filter(p => p.categoria === 'Veterinaria');
+    const prodsOtros = ((S.catalogs && S.catalogs.productos) || []).filter(p => p.categoria !== 'Veterinaria');
+    const nSel = plan.length, nErr = plan.filter(p => p.error).length;
+    st.facturas.forEach((f, fi) => {
       const suma = f.lineas.reduce((a, l) => a + (Number(l.total) || 0), 0);
       const ok = f.neto !== null && Math.abs(suma - f.neto) <= 1;
-      const ya = hechas.has('fac|' + f.cuit + '|' + f.pv + '-' + f.nro);
-      const dup = st.facturas.filter(x => x.clave === f.clave).length > 1;
-      return `<tr><td><b>${fdEsc_(f.proveedor || '—')}</b><div style="font-size:11px;color:var(--text3)">CUIT ${fdEsc_(f.cuit || '—')} · ${fdEsc_(f.archivo)}</div></td>
-        <td>${f.nro ? fdEsc_(f.pv + '-' + f.nro) : '<span style="color:var(--red)">sin número</span>'}</td><td>${f.fecha ? fd(f.fecha) : '<span style="color:var(--red)">sin fecha</span>'}</td>
-        <td class="tr">${f.neto === null ? '<span style="color:var(--red)">no lo encontré</span>' : fm(f.neto)}</td><td class="tr">${fm(suma)}</td>
-        <td class="tc">${ok ? '<span class="pill pill-green">✓ cierra</span>' : `<span class="pill pill-red">difiere${f.neto !== null ? ' ' + fm(suma - f.neto) : ''}</span>`}</td>
-        <td>${ya ? '<span class="pill pill-gold">Ya importada</span>' : (dup ? '<span class="pill pill-gold">Repetida en esta carga</span>' : '<span class="pill pill-green">Nueva</span>')}</td></tr>`;
-    }).join('') + `</tbody></table></div></div>`;
-  // Detalle de cada factura
-  st.facturas.forEach((f, fi) => {
-    const suma = f.lineas.reduce((a, l) => a + (Number(l.total) || 0), 0);
-    const ok = f.neto !== null && Math.abs(suma - f.neto) <= 1;
-    h += `<div class="panel"><div class="panel-title">${fdEsc_(f.proveedor || 'Proveedor sin nombre')} — ${fdEsc_(f.pv + '-' + f.nro)} <span style="font-weight:400;color:var(--text2);font-size:12.5px">· ${f.fecha ? fd(f.fecha) : 'sin fecha'}</span> ${ok ? '<span class="pill pill-green">✓ cierra con el neto</span>' : '<span class="pill pill-red">no cierra con el neto</span>'}</div>
-      <div style="overflow-x:auto"><table class="dt"><thead><tr><th class="tr">Cant.</th><th>Descripción</th><th>Envase</th><th class="tr">Unitario s/IVA</th><th class="tr">Total s/IVA</th><th>Fecha en la línea</th><th>Va a</th><th>Detalle</th></tr></thead><tbody>` +
-      f.lineas.map(l => {
-        const c = fvClasificar_(l);
-        const pill = { med: 'pill-green', gasto: 'pill-gold', hon: 'pill-gold', no: 'pill-red', rev: 'pill-red' }[c.clase];
-        let det = '';
-        if (c.clase === 'med') {
-          const env = l.presentacion;
-          det = (c.producto ? 'Producto: <b>' + fdEsc_(c.producto.nombre) + '</b>' : 'Producto nuevo (no está en el sistema)')
-            + (env ? ` · ${fq(l.cant)} × ${fq(env.cant)} ${fdEsc_(env.unidad)} = <b>${fq(l.cant * env.cant)} ${fdEsc_(env.unidad)}</b> · ${fm(l.total / (l.cant * env.cant))} por ${fdEsc_(env.unidad)}` : ' · falta el contenido del envase');
-          if (c.producto && env && c.producto.unidad && fvNormTxt_(c.producto.unidad) !== env.unidad) det += ` <span style="color:var(--red)">· el producto está en ${fdEsc_(c.producto.unidad)}</span>`;
-        } else if (c.clase === 'gasto') det = (c.motivo || '') + ' · a Cría';
-        else if (c.clase === 'hon') det = 'Se pregunta actividad y campo al grabar';
-        else if (c.clase === 'no') det = 'Gasto de estructura: no se graba';
-        else det = 'No lo reconozco';
-        if (!l.total) det += ' <span style="color:var(--text3)">· sin importe</span>';
-        return `<tr><td class="tr">${l.cant === null ? '—' : fq(l.cant)}</td><td style="white-space:normal">${fdEsc_(l.desc)}</td><td>${l.presentacion ? fdEsc_(l.presentacion.texto) : '—'}</td>
-          <td class="tr">${fm(l.unit)}</td><td class="tr">${fm(l.total)}</td><td>${fdEsc_(l.fechaDesc || '—')}</td>
-          <td><span class="pill ${pill}">${FV_CLASES_[c.clase]}</span></td><td style="white-space:normal;font-size:12.5px">${det}</td></tr>`;
-      }).join('') + `</tbody><tfoot><tr><td colspan="4" class="tr"><b>Suma de líneas</b></td><td class="tr"><b>${fm(suma)}</b></td><td colspan="3" style="font-size:12.5px;color:var(--text2)">Neto de la factura: ${f.neto === null ? '—' : fm(f.neto)}${f.total ? ' · Total con IVA: ' + fm(f.total) : ''}</td></tr></tfoot></table></div>
-      <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">Ver el texto leído del PDF (página ${f.pagina})</summary><pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow:auto;background:var(--bg2);padding:8px;border-radius:6px">${fdEsc_(f.renglones.join('\n'))}</pre></details>
-      <div style="margin-top:6px"><button class="btn btn-secondary btn-sm fv-quitar" data-i="${fi}">Quitar esta factura</button></div></div>`;
-  });
+      const dup = st.facturas.findIndex(x => x.clave === f.clave) !== fi;
+      h += `<div class="panel"><div class="panel-title">${fdEsc_(f.proveedor || 'Proveedor sin nombre')} — ${fdEsc_(f.pv + '-' + f.nro)} <span style="font-weight:400;color:var(--text2);font-size:12.5px">· ${f.fecha ? fd(f.fecha) : 'sin fecha'}</span> ${ok ? '<span class="pill pill-green">✓ cierra con el neto</span>' : '<span class="pill pill-red">no cierra con el neto</span>'}</div>
+        ${dup ? '<div style="font-size:12.5px;color:var(--red);margin-bottom:8px">Esta factura está dos veces en esta carga: se usa la primera.</div>' : ''}
+        <div style="font-size:12.5px;margin-bottom:8px">Campo donde entra: <select class="fv-campo" data-f="${fi}">${campos.map(c => `<option value="${c.campo_id}" ${String(c.campo_id) === String(f.campo_id) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></div>
+        <div style="overflow-x:auto"><table class="dt"><thead><tr><th></th><th class="tr">Cant.</th><th>Descripción</th><th class="tr">Total s/IVA</th><th>Va a</th><th>Producto</th><th>Contenido × envase</th><th class="tr">Precio por unidad</th><th>Qué se graba</th></tr></thead><tbody>` +
+        f.lineas.map((l, j) => {
+          const hecha = hechas.has(fvHuellaLinea_(f, j));
+          const pill = { med: 'pill-green', gasto: 'pill-gold', hon: 'pill-gold', no: 'pill-red', rev: 'pill-red' }[l.clase];
+          const attr = `data-f="${fi}" data-j="${j}"`;
+          let celdas;
+          if (hecha) celdas = `<td colspan="4" style="color:var(--text3)">Ya importada.</td>`;
+          else if (l.clase !== 'med' || dup) celdas = `<td colspan="4" style="font-size:12.5px;color:var(--text2)">${dup ? 'Repetida.' : l.clase === 'no' ? 'Gasto de estructura: no se graba.' : l.clase === 'rev' ? 'No la reconozco: se resuelve en la próxima versión.' : (l.motivo ? fdEsc_(l.motivo) + ' · ' : '') + 'Se graba en la próxima versión.'}</td>`;
+          else {
+            const c = fvLineaCalc_(l);
+            const p = planDe(fi, j);
+            const opt = (p2) => `<option value="${p2.producto_id}" ${String(p2.producto_id) === String(l.prod) ? 'selected' : ''}>${fdEsc_(p2.nombre)}${p2.unidad ? ' (' + fdEsc_(p2.unidad) + ')' : ''}</option>`;
+            let sel = `<select class="fv-in" ${attr} data-k="prod" style="max-width:220px"><option value="">— Elegí —</option><option value="__nuevo" ${l.prod === '__nuevo' ? 'selected' : ''}>➕ Crear producto nuevo</option><optgroup label="Veterinaria">${prodsVet.map(opt).join('')}</optgroup><optgroup label="Otros">${prodsOtros.map(opt).join('')}</optgroup></select>`;
+            if (l.prod === '__nuevo') sel += `<div style="margin-top:4px;display:flex;gap:4px"><input class="fv-in" ${attr} data-k="nuevoNombre" value="${fdEsc_(l.nuevoNombre)}" style="width:150px;padding:3px 5px"><select class="fv-in" ${attr} data-k="nuevaUnidad">${['cc', 'dosis', 'unidad', 'kg'].map(u => `<option ${u === l.nuevaUnidad ? 'selected' : ''}>${u}</option>`).join('')}</select></div>`;
+            const aviso = c.prod && l.presentacion && c.prod.unidad && fvNormTxt_(c.prod.unidad) !== l.presentacion.unidad ? `<div style="color:var(--red);font-size:11.5px">El producto está en ${fdEsc_(c.prod.unidad)} y la factura en ${fdEsc_(l.presentacion.unidad)}.</div>` : '';
+            const env = `${fq(l.cant)} × <input type="number" step="any" min="0" class="fv-in" ${attr} data-k="envase" value="${l.envase == null ? '' : l.envase}" style="width:70px;padding:3px 5px"> ${fdEsc_(c.unidad || '')}<div style="font-size:11.5px;color:var(--text2)">= ${fq(c.qty)} ${fdEsc_(c.unidad || '')}</div>${aviso}`;
+            const pr = `<input type="number" step="any" min="0" class="fv-in" ${attr} data-k="precioU" value="${c.precioU ? Math.round(c.precioU * 10000) / 10000 : ''}" style="width:90px;padding:3px 5px">${l.precioU != null && Math.abs(c.precioU - c.precioAuto) > 0.0001 ? `<div style="font-size:11px;color:var(--gold-text,#8a6d1f)">factura: ${fm(c.precioAuto)}</div>` : ''}`;
+            let que = '';
+            if (!l.sel) que = '<span style="color:var(--text3)">No seleccionada.</span>';
+            else if (!p) que = '';
+            else if (p.error) que = `<span style="color:var(--red)">${fdEsc_(p.error)}</span>`;
+            else {
+              const abs = p.absorber.length ? `Pone precio a ${p.absorber.length} entrada${p.absorber.length > 1 ? 's' : ''} sin precio (${p.absorber.map(x => fd(x.fecha) + ': ' + fq(x.cantidad)).join(', ')}). ` : '';
+              que = c.stockFD
+                ? `Solo precio (el stock lo lleva Fielddata). ${abs}`
+                : `${abs}${p.entra > 0 ? 'Entra al stock: <b>' + fq(p.entra) + ' ' + fdEsc_(c.unidad || '') + '</b>.' : 'No entra stock nuevo (ya estaba como entrada sin precio).'}`;
+              if (l.prod === '__nuevo') que = 'Crea el producto "' + fdEsc_(l.nuevoNombre) + '". ' + que;
+            }
+            celdas = `<td>${sel}</td><td style="white-space:nowrap">${env}</td><td class="tr">${pr}</td><td style="white-space:normal;font-size:12.5px;min-width:200px">${que}</td>`;
+          }
+          const chk = !hecha && l.clase === 'med' && !dup ? `<input type="checkbox" class="fv-in" ${attr} data-k="sel" ${l.sel ? 'checked' : ''}>` : '';
+          return `<tr><td>${chk}</td><td class="tr">${l.cant === null ? '—' : fq(l.cant)}</td><td style="white-space:normal">${fdEsc_(l.desc)}${l.fechaDesc ? ` <span style="color:var(--text3);font-size:11px">(${fdEsc_(l.fechaDesc)})</span>` : ''}</td>
+            <td class="tr">${fm(l.total)}</td><td><span class="pill ${pill}">${FV_CLASES_[l.clase]}</span></td>${celdas}</tr>`;
+        }).join('') + `</tbody><tfoot><tr><td colspan="3" class="tr"><b>Suma de líneas</b></td><td class="tr"><b>${fm(suma)}</b></td><td colspan="5" style="font-size:12.5px;color:var(--text2)">Neto de la factura: ${f.neto === null ? '—' : fm(f.neto)}${f.total ? ' · Total con IVA: ' + fm(f.total) : ''}</td></tr></tfoot></table></div>
+        <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">Ver el texto leído del PDF (página ${f.pagina})</summary><pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow:auto;background:var(--bg2);padding:8px;border-radius:6px">${fdEsc_(f.renglones.join('\n'))}</pre></details>
+        <div style="margin-top:6px"><button class="btn btn-secondary btn-sm fv-quitar" data-i="${fi}">Quitar esta factura</button></div></div>`;
+    });
+    h += `<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" id="fv-grabar" ${nSel && !nErr && !st.grabando ? '' : 'disabled'}>${st.grabando ? '⏳ Grabando…' : 'Grabar medicamentos seleccionados (' + nSel + ')'}</button>
+      ${nErr ? `<span style="font-size:12.5px;color:var(--red)">Hay ${nErr} línea${nErr > 1 ? 's' : ''} seleccionada${nErr > 1 ? 's' : ''} con datos faltantes.</span>` : ''}</div></div>`;
+  }
+  h += fvControlHtml_();
   return h;
+}
+
+// Control de compras de veterinaria desde el 01/10/2026: facturado, recibido
+// (Fielddata, para los productos que lleva Fielddata), usado y stock.
+function fvControlHtml_() {
+  const prods = ((S.catalogs && S.catalogs.productos) || []).filter(p => p.categoria === 'Veterinaria' || fvEsStockFD_(p));
+  const compras = S.cache.compras_insumos || [], consumos = S.cache.consumos_insumos || [], ajustes = S.cache.ajustes_insumos || [];
+  const fq = n => fn(n, Math.abs(Number(n)) % 1 ? 2 : 0);
+  const filas = prods.map(p => {
+    const id = String(p.producto_id);
+    const cp = compras.filter(c => String(c.producto_id) === id), cs = consumos.filter(c => String(c.producto_id) === id), aj = ajustes.filter(a => String(a.producto_id) === id);
+    const fac = cp.filter(c => String(c.fecha || '') >= FV_DESDE_).reduce((s, c) => { const m = String(c.observaciones || '').match(/\[fac:([\d.]+)\]/); return s + (m ? Number(m[1]) : 0); }, 0);
+    const rec = cp.filter(c => String(c.fecha || '') >= FV_DESDE_ && Number(c.cantidad) > 0 && !/\[fac:/.test(String(c.observaciones || ''))).reduce((s, c) => s + (Number(c.cantidad) || 0), 0);
+    const usado = cs.filter(c => String(c.fecha || '') >= FV_DESDE_).reduce((s, c) => s + (Number(c.cantidad) || 0), 0);
+    const stock = cp.reduce((s, c) => s + (Number(c.cantidad) || 0), 0) - cs.reduce((s, c) => s + (Number(c.cantidad) || 0), 0) + aj.reduce((s, a) => s + (Number(a.cantidad) || 0), 0);
+    const sp = cp.filter(c => Number(c.cantidad) > 0 && !(Number(c.precio_unitario) > 0));
+    const spCant = sp.reduce((s, c) => s + (Number(c.cantidad) || 0), 0);
+    if (!fac && !usado && !sp.length && !rec) return null;
+    if (p.categoria !== 'Veterinaria' && !fac) return null; // alimentos (rollos, sales…): solo si ya hay facturas
+    const fdStock = fvEsStockFD_(p);
+    const avisos = [];
+    if (fdStock) {
+      if (fac - rec > 0.0001) avisos.push(`<span style="color:var(--red)">Faltan recibir ${fq(fac - rec)}</span>`);
+      if (rec - fac > 0.0001) avisos.push(`<span style="color:var(--red)">Falta factura de ${fq(rec - fac)}</span>`);
+    } else if (sp.length) avisos.push(`<span style="color:var(--red)">Usado sin factura: ${fq(spCant)} — conseguí el precio (llamá al veterinario) y cargalo con "Actualizar precio" en Insumos</span>`);
+    if (fdStock && sp.length) avisos.push(`<span style="color:var(--red)">${sp.length} entrada${sp.length > 1 ? 's' : ''} sin precio</span>`);
+    return { p, fac, rec, usado, stock, fdStock, avisos };
+  }).filter(Boolean).sort((a, b) => String(a.p.nombre).localeCompare(String(b.p.nombre), 'es'));
+  let h = `<div class="panel"><div class="panel-title">Control de compras de veterinaria <span style="font-weight:400;color:var(--text2);font-size:12.5px">· desde el ${fd(FV_DESDE_)}</span></div>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55"><b>Remedios</b>: el stock es lo facturado menos lo usado según los tratamientos de Fielddata. Si se usó algo sin factura, el importador de Tratamientos creó una entrada sin precio: aparece como "usado sin factura". <b>Productos que lleva Fielddata</b> (rumex, sales…): el stock es lo que carga Nacho; acá se compara lo facturado con lo recibido.</p>`;
+  if (!filas.length) return h + `<div style="font-size:12.5px;color:var(--text3)">Todavía no hay compras ni usos de veterinaria desde el ${fd(FV_DESDE_)}.</div></div>`;
+  h += `<div style="overflow-x:auto"><table class="dt"><thead><tr><th>Producto</th><th>Stock lo lleva</th><th class="tr">Facturado</th><th class="tr">Recibido (Fielddata)</th><th class="tr">Usado</th><th class="tr">Stock hoy</th><th>Aviso</th></tr></thead><tbody>` +
+    filas.map(r => `<tr><td><b>${fdEsc_(r.p.nombre)}</b> <span style="color:var(--text3);font-size:11px">${fdEsc_(r.p.unidad || '')}</span></td><td>${r.fdStock ? 'Fielddata' : 'Factura'}</td>
+      <td class="tr">${fq(r.fac)}</td><td class="tr">${r.fdStock ? fq(r.rec) : '—'}</td><td class="tr">${fq(r.usado)}</td><td class="tr" style="${r.stock < -0.0001 ? 'color:var(--red);font-weight:600' : ''}">${fq(r.stock)}</td>
+      <td style="white-space:normal;font-size:12.5px">${r.avisos.join(' · ') || '<span style="color:var(--green,#3F5A2A)">OK</span>'}</td></tr>`).join('') + `</tbody></table></div></div>`;
+  return h;
+}
+
+async function fvGrabar_() {
+  const st = S.fv;
+  const plan = fvPlan_();
+  if (!plan.length || plan.some(p => p.error)) return;
+  const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
+  const txt = plan.map(p => {
+    const nom = p.l.prod === '__nuevo' ? p.l.nuevoNombre + ' (nuevo)' : p.calc.prod.nombre;
+    return '· ' + nom + ': ' + fq(p.calc.qty) + ' ' + (p.calc.unidad || '') + ' a $ ' + fn(p.calc.precioU, 2) + (p.calc.stockFD ? ' — solo precio' : ' — entra al stock ' + fq(p.entra)) + (p.absorber.length ? ' — completa ' + p.absorber.length + ' sin precio' : '');
+  }).join('\n');
+  if (!confirm('¿Grabar ' + plan.length + ' medicamento' + (plan.length > 1 ? 's' : '') + ' de las facturas?\n\n' + txt + '\n\nRevisá los precios: son por ' + 'unidad (cc, dosis…) y sin IVA.')) return;
+  st.grabando = true; st.log = []; render();
+  let ok = 0, err = 0, nuevos = 0;
+  for (const p of plan) {
+    const f = p.f, l = p.l, c = p.calc;
+    const prov = f.proveedor || ('CUIT ' + f.cuit);
+    const nroFac = f.pv + '-' + f.nro;
+    try {
+      let pid = c.prod ? String(c.prod.producto_id) : '';
+      if (l.prod === '__nuevo') {
+        const ya = ((S.catalogs && S.catalogs.productos) || []).find(x => fvNormTxt_(x.nombre) === fvNormTxt_(l.nuevoNombre));
+        if (ya) pid = String(ya.producto_id);
+        else {
+          const r = await apiCall('create', { body: { entity: 'productos', data: { nombre: l.nuevoNombre.trim(), categoria: 'Veterinaria', unidad: l.nuevaUnidad, activo: true, por_campo: false, materia_seca_pct: '' } } });
+          pid = String(r.id); nuevos++;
+          S.catalogs.productos.push({ producto_id: pid, nombre: l.nuevoNombre.trim(), categoria: 'Veterinaria', unidad: l.nuevaUnidad, activo: true, por_campo: false });
+          st.log.push({ ok: true, txt: 'Producto nuevo: ' + l.nuevoNombre.trim() + ' (' + l.nuevaUnidad + ').' });
+        }
+      }
+      const precio = Math.round(c.precioU * 10000) / 10000;
+      for (const x of p.absorber) {
+        await apiCall('update', { body: { entity: 'compras_insumos', id: x.compra_id, data: { precio_unitario: precio, proveedor: prov,
+          observaciones: (String(x.observaciones || '').replace(/\s*—?\s*FALTA PRECIO \(completar con la factura\)/i, '') + ' · Precio de la factura ' + prov + ' ' + nroFac).trim() } } });
+      }
+      const prodGrab = fvProdPorId_(pid);
+      const r = await apiCall('create', { body: { entity: 'compras_insumos', data: {
+        fecha: f.fecha, producto_id: pid, cantidad: c.stockFD ? 0 : p.entra, precio_unitario: precio, proveedor: prov,
+        observaciones: 'Factura ' + prov + ' ' + nroFac + ': ' + fq(l.cant) + ' × ' + fq(l.envase) + ' ' + (c.unidad || '') + (c.stockFD ? ' (solo precio, el stock lo lleva Fielddata)' : '') + (p.absorber.length ? ' · completó ' + p.absorber.length + ' entrada(s) sin precio' : '') + ' [fac:' + c.qty + ']',
+        campo_id: f.campo_id || '' } } });
+      await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'ya_cargado', huellas: [fvHuellaLinea_(f, p.j)], campo_id: f.campo_id || '', fecha: f.fecha, rubro: 'factura_vet',
+        entity: 'compras_insumos', registro_id: r.id, detalle: 'Factura ' + prov + ' ' + nroFac + ' — ' + l.desc }],
+        equivalencias: [{ tipo: 'fac_prod', campo_id: '', texto: fvClaveDesc_(l.desc), destino_id: pid }] } });
+      ok++;
+      st.log.push({ ok: true, txt: (prodGrab ? prodGrab.nombre : l.desc) + ': ' + (c.stockFD ? 'precio $ ' + fn(precio, 2) + ' por ' + (c.unidad || 'unidad') : 'entran ' + fq(p.entra) + ' ' + (c.unidad || '') + ' a $ ' + fn(precio, 2)) + (p.absorber.length ? ' · completó ' + p.absorber.length + ' entrada(s) sin precio' : '') + ' (' + prov + ' ' + nroFac + ').' });
+    } catch (e) {
+      err++;
+      st.log.push({ ok: false, txt: l.desc + ' (' + prov + ' ' + nroFac + '): ' + e.message });
+    }
+  }
+  st.log.unshift({ ok: !err, txt: 'Medicamentos grabados: ' + ok + (nuevos ? ' · productos nuevos: ' + nuevos : '') + (err ? ' · con error: ' + err : '') });
+  S.stockProductos = null; S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
+  try {
+    await Promise.all([loadEntity('compras_insumos', true), loadEntity('fielddata_importados', true), loadEntity('fielddata_equivalencias', true)]);
+    if (nuevos) await loadCatalogs();
+  } catch (e) { /* si falla la recarga, se ve al volver a entrar */ }
+  st.grabando = false;
+  toast(err ? 'Grabado con errores: revisá el resultado' : 'Medicamentos grabados', err ? 'err' : 'ok');
+  render();
 }
 
 function attachImportarFacturasEvents() {
   const st = S.fv;
   if (!st) return;
+  const camposCat = (S.catalogs && S.catalogs.campos) || [];
+  const campoDef = (camposCat.find(c => /clavo chico/i.test(fvNormTxt_(c.nombre))) || camposCat[0] || {}).campo_id || '';
   const inp = document.getElementById('fv-files');
   if (inp) inp.onchange = async () => {
     const files = [...inp.files];
@@ -23833,7 +24052,11 @@ function attachImportarFacturasEvents() {
       try {
         const fs = await fvLeerArchivo_(f);
         if (!fs.length || !fs.some(x => x.lineas.length)) st.errores.push(f.name + ': no encontré líneas de detalle (¿es una factura escaneada como imagen?).');
-        fs.forEach(x => { x.archivo = f.name; st.facturas.push(x); });
+        fs.forEach(x => {
+          x.archivo = f.name; x.campo_id = campoDef;
+          x.lineas.forEach(l => { fvPrepararLinea_(l); l.sel = l.clase === 'med'; });
+          st.facturas.push(x);
+        });
       } catch (err) {
         st.errores.push(f.name + ': ' + err.message);
       }
@@ -23842,8 +24065,26 @@ function attachImportarFacturasEvents() {
     render();
   };
   const limp = document.getElementById('fv-limpiar');
-  if (limp) limp.onclick = () => { st.facturas = []; st.errores = []; render(); };
+  if (limp) limp.onclick = () => { st.facturas = []; st.errores = []; st.log = []; render(); };
   document.querySelectorAll('.fv-quitar').forEach(b => b.onclick = () => { st.facturas.splice(Number(b.dataset.i), 1); render(); });
+  document.querySelectorAll('.fv-campo').forEach(s => s.onchange = () => { const f = st.facturas[Number(s.dataset.f)]; if (f) { f.campo_id = s.value; render(); } });
+  document.querySelectorAll('.fv-in').forEach(el => el.onchange = () => {
+    const f = st.facturas[Number(el.dataset.f)]; if (!f) return;
+    const l = f.lineas[Number(el.dataset.j)]; if (!l) return;
+    const k = el.dataset.k;
+    if (k === 'sel') l.sel = el.checked;
+    else if (k === 'envase') l.envase = el.value === '' ? null : Number(el.value);
+    else if (k === 'precioU') l.precioU = el.value === '' ? null : Number(el.value);
+    else if (k === 'prod') {
+      l.prod = el.value;
+      const p = fvProdPorId_(el.value);
+      if (p && !l.presentacion) l.envase = 1;
+    }
+    else l[k] = el.value;
+    render();
+  });
+  const g = document.getElementById('fv-grabar');
+  if (g) g.onclick = () => fvGrabar_();
 }
 
 function buildImportarFielddata() {
