@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_281';
+const APP_VERSION = 'index_consolidado_4_6_155_283';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -19826,7 +19826,8 @@ function buildSueldos() {
     </div>
     ${honor.length ? `<div class="tw" style="margin-top:14px"><table class="dt"><thead><tr><th>Período</th><th>Campo</th><th>Observación</th>
       <th class="tr" style="color:var(--green-text)">🐄 Cría</th><th class="tr" style="color:var(--gold-text)">🐃 Recría</th><th class="tr" style="color:var(--clay-text)">🥩 Terminación</th><th class="tr">Total</th><th></th></tr></thead><tbody>` +
-      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : (s.campo_id ? s.campo_id : '<span style="color:var(--text3)">Sin campo</span>')}</td><td style="font-size:12px;color:var(--text2)">${s.observacion || ''}</td>
+      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : (s.campo_id ? s.campo_id : '<span style="color:var(--text3)">Sin campo</span>')}</td><td style="font-size:12px;color:var(--text2)">${s.observacion || ''}
+          <div style="margin-top:4px">${(() => { const d = distEfectiva_(s); const un = ['cria', 'recria', 'engorde'].find(a => Math.round(d[a] || 0) === 100) || ''; return `<select style="font-size:12px;padding:2px 4px" onchange="window.hvCambiarActividad_('${s.sueldo_id}', this)" title="Cambiar la actividad (va el 100% a la elegida)">${un ? '' : '<option value="" selected>Repartido entre actividades</option>'}${[['cria', '🐄 Cría'], ['recria', '🐃 Recría'], ['engorde', '🥩 Terminación']].map(a => `<option value="${a[0]}" ${un === a[0] ? 'selected' : ''}>${a[1]}</option>`).join('')}</select>`; })()}</div></td>
         <td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'cria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'recria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'engorde')))}</td>
         <td class="tr"><strong>$ ${fn(Number(s.monto)||0)}</strong></td><td><button class="btn btn-danger btn-sm" onclick="window.hvEliminar_('${s.sueldo_id}')" title="Eliminar">🗑</button></td></tr>`; }).join('') +
       `</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3);margin-top:10px">Todavía no hay honorarios cargados.</div>'}
@@ -20172,6 +20173,24 @@ function attachSueldosEvents() {
       if (btn) { btn.disabled = false; btn.textContent = '💾 Guardar factura'; }
     }
   };
+  // v282 -- Cambiar la actividad de un honorario (sobre todo los que trae el
+  // importador de facturas, que no tienen campo): pasa el 100% a la elegida.
+  window.hvCambiarActividad_ = async function(id, sel) {
+    const act = sel.value;
+    if (!act) return;
+    const nom = { cria: 'Cría', recria: 'Recría', engorde: 'Terminación' }[act];
+    if (!confirm('¿Pasar el 100% de este honorario a ' + nom + '?')) { render(); return; }
+    sel.disabled = true;
+    try {
+      await apiCall('update', { body: { entity: 'sueldos', id, data: { dist_cria: act === 'cria' ? 100 : 0, dist_recria: act === 'recria' ? 100 : 0, dist_engorde: act === 'engorde' ? 100 : 0, dist_estructura: 0 } } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      S.margenBruto = null; S._resultCria = null; S._resultRecria = null; S._resultEng = null;
+      toast('Honorario pasado a ' + nom, 'ok');
+    } catch (err) { toast('Error: ' + err.message, 'err'); }
+    render();
+  };
+
   window.hvEliminar_ = async function(id) {
     if (!confirm('¿Eliminar esta factura de honorarios?')) return;
     try {
@@ -23611,6 +23630,8 @@ function fvCabecera_(lineas) {
     || txt.match(/\b(\d{4,5})\s*-\s*(\d{8})\b/);
   if (m) { cab.pv = String(Number(m[1])); cab.nro = String(Number(m[2])); }
   m = txt.match(/Fecha de Emisi[oó]n:\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i) || txt.match(/Emisi[oó]n:\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i) || txt.match(/\bFecha\s*:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  // v282 -- Villa y Moreno: "FECHA" en un renglón y la fecha en el siguiente
+  if (!m) m = txt.match(/\bFECHA\b[\s\S]{0,300}?\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/i);
   if (m) cab.fecha = fvFechaIso_(m[1], m[2], m[3]);
   const rs = lineas.find(l => /Raz[oó]n Social:/i.test(l));
   if (rs) cab.proveedor = rs.replace(/.*Raz[oó]n Social:\s*/i, '').split(/\s{2,}/)[0].trim();
@@ -23629,8 +23650,9 @@ function fvCabecera_(lineas) {
     const i = lineas.findIndex(l => /SUBTOTAL/i.test(l) && /I\.?V\.?A/i.test(l));
     if (i >= 0 && lineas[i + 1]) { const ns = lineas[i + 1].trim().split(/\s+/).map(fvNum_).filter(n => n !== null); if (ns.length) neto = ns[0]; }
   }
+  if (neto === null) { const mm = txt.match(/\bSubtotal\s*:\s*\$?\s*([\d.,]+)/i); if (mm) neto = fvNum_(mm[1]); } // v282
   cab.neto = neto;
-  const mt = txt.match(/(?:Importe Total|TOTAL)\s*:?\s*\$?\s*([\d.,]+)\s*$/im) || txt.match(/\$\s*([\d.,]{4,})\s*$/m);
+  const mt = txt.match(/(?:Importe Total|(?<![a-z])TOTAL)\s*:?\s*\$?\s*([\d.,]+)\s*$/im) || txt.match(/\$\s*([\d.,]{4,})\s*$/m);
   if (mt) cab.total = fvNum_(mt[1]);
   return cab;
 }
@@ -23641,16 +23663,18 @@ function fvLineas_(lineas) {
   let fin = lineas.findIndex((l, i) => i > ini && (/^\s*(SUBTOTAL|Exento|Importe Otros Tributos|Importe Neto|Neto\s*%)/i.test(l) || /SUBTOTAL\s+DESCUENTO/i.test(l)));
   if (fin < 0) fin = lineas.length;
   const cuerpo = lineas.slice(ini + 1, fin).filter(l => l.trim() !== '' && !/^\s*(Alicuota|IVA|Subtotal c\/IVA)\s*$/i.test(l));
+  const conLote = /Lote|Serie/i.test(lineas[ini]); // v282 -- facturas con columnas Lote/Serie y Vencimiento
   const bloques = [];
   cuerpo.forEach(l => {
-    const t = l.trim();
+    // v282 -- código de artículo al principio (ej. "ENDC0034  4  FR  DECTOMAX…")
+    const t = l.trim().replace(/^[A-Z]{2,}\d{2,}[A-Z0-9]*\s+(?=\d)/, '');
     if (/^\d+(?:[.,]\d+)?\s+\S/.test(t)) bloques.push([t]);
     else if (bloques.length) bloques[bloques.length - 1].push(t);
   });
-  return bloques.map(fvLinea_);
+  return bloques.map(b => fvLinea_(b, conLote));
 }
 
-function fvLinea_(bloque) {
+function fvLinea_(bloque, conLote) {
   const texto = bloque.join(' ');
   const toks = texto.split(/\s+/);
   const nums = [];
@@ -23678,14 +23702,20 @@ function fvLinea_(bloque) {
     return true;
   });
   while (desc.length && /^\d+$/.test(desc[0])) desc.shift();
+  if (conLote) {
+    // v282 -- unidad de venta suelta (FR, UN…) y el número de lote al final de la descripción
+    while (desc.length && /^(FR|UN|UNI|KG|LT|BOL|CJ|ENV)$/i.test(desc[0])) desc.shift();
+    while (desc.length > 1 && /\d/.test(desc[desc.length - 1]) && !/^x$/i.test(desc[desc.length - 2])) desc.pop();
+  }
   desc = desc.join(' ').replace(/\s+/g, ' ').trim();
-  const mf = desc.match(/\(?\b(\d{1,2})\/(\d{1,2})\b\)?/);
+  const mf = conLote ? null : desc.match(/\(?\b(\d{1,2})\/(\d{1,2})\b\)?/);
   return { cant, unit: cant ? total / cant : 0, total, desc, fechaDesc: mf ? mf[1] + '/' + mf[2] : '', presentacion: fvPresentacion_(desc), texto };
 }
 
 // "X 500ML", "x 1L", "X 50 ML.", "x 40 dosis", "x 100 uni" -> contenido por frasco/envase
 function fvPresentacion_(desc) {
-  const m = String(desc).match(/\bx\s*(\d+(?:[.,]\d+)?)\s*(ml|cc|lts?|l|litros?|dosis|ds|un|uni|unid|unidades)\b\.?/i);
+  // v282 -- la unidad puede venir pegada a la marca ("x 100 mlBayer"): se corta en la mayúscula
+  const m = String(desc).match(/\b[xX]\s*(\d+(?:[.,]\d+)?)\s*(ml|ML|Ml|cc|CC|lts?|LTS?|Lts?|l|L|litros?|LITROS?|dosis|DOSIS|ds|DS|un|UN|uni|UNI|unid|UNID|unidades|UNIDADES)(?![a-z])\.?/);
   if (!m) return null;
   const n = fvNum_(m[1]); const u = m[2].toLowerCase();
   if (n === null) return null;
@@ -23750,6 +23780,9 @@ function fvProductoDe_(desc) {
     if (!pal.length) return;
     const w = pal[0];
     if (d.indexOf(' ' + w + ' ') !== -1 && w.length > largo) { mejor = p; largo = w.length; }
+    // v282 -- nombre pegado: "Tilo Plus" ↔ "TILOPLUS", "Baytril Max" ↔ "BAYTRIL MAX 10%"
+    const comp = fvNormTxt_(String(p.nombre).replace(/\(.*?\)/g, '')).replace(/[^a-z0-9]+/g, '');
+    if (comp.length >= 5 && d.replace(/\s+/g, '').indexOf(comp) !== -1 && comp.length > largo) { mejor = p; largo = comp.length; }
   });
   return mejor;
 }
@@ -23791,7 +23824,11 @@ function fvEsStockFD_(p) {
   return Object.keys(FD_RUBROS_).some(k => { const r = FD_RUBROS_[k]; return !r.hacienda && !r.trat && r.producto(p); });
 }
 function fvNombreNuevo_(desc) {
-  let s = String(desc).replace(/\(?\b\d{1,2}\/\d{1,2}\b\)?/g, ' ').replace(/\bx\s*\d+(?:[.,]\d+)?\s*(ml|cc|lts?|l|litros?|dosis|ds|un|uni|unid|unidades)\b\.?/i, ' ').replace(/\s+/g, ' ').trim();
+  // v282 -- el nombre es lo que está antes de la presentación ("DECTOMAX x 500 ml.Pfizer" -> "Dectomax")
+  let s = String(desc).replace(/\(?\b\d{1,2}\/\d{1,2}\b\)?/g, ' ');
+  const m = s.match(/\b[xX]\s*\d+(?:[.,]\d+)?\s*(ml|ML|Ml|cc|CC|lts?|LTS?|Lts?|l|L|litros?|LITROS?|dosis|DOSIS|ds|DS|un|UN|uni|UNI|unid|UNID|unidades|UNIDADES)(?![a-z])/);
+  if (m && m.index > 2) s = s.slice(0, m.index);
+  s = s.replace(/\s+/g, ' ').trim();
   return s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
 }
 function fvFaltaPrecio_(pid) {
@@ -23901,7 +23938,7 @@ function buildImportarFacturas() {
       const dup = st.facturas.findIndex(x => x.clave === f.clave) !== fi;
       h += `<div class="panel"><div class="panel-title">${fdEsc_(f.proveedor || 'Proveedor sin nombre')} — ${fdEsc_(f.pv + '-' + f.nro)} <span style="font-weight:400;color:var(--text2);font-size:12.5px">· ${f.fecha ? fd(f.fecha) : 'sin fecha'}</span> ${ok ? '<span class="pill pill-green">✓ cierra con el neto</span>' : '<span class="pill pill-red">no cierra con el neto</span>'}</div>
         ${dup ? '<div style="font-size:12.5px;color:var(--red);margin-bottom:8px">Esta factura está dos veces en esta carga: se usa la primera.</div>' : ''}
-        <div style="font-size:12.5px;margin-bottom:8px">Campo donde entra: <select class="fv-campo" data-f="${fi}">${campos.map(c => `<option value="${c.campo_id}" ${String(c.campo_id) === String(f.campo_id) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></div>
+        ${f.lineas.some(l => l.clase === 'med' && l.prod && l.prod !== '__nuevo' && esPorCampo_((fvProdPorId_(l.prod) || {}).por_campo)) ? `<div style="font-size:12.5px;margin-bottom:8px">Campo donde entra (hay un producto con stock por campo): <select class="fv-campo" data-f="${fi}">${campos.map(c => `<option value="${c.campo_id}" ${String(c.campo_id) === String(f.campo_id) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></div>` : ''}
         <div style="overflow-x:auto"><table class="dt"><thead><tr><th></th><th class="tr">Cant.</th><th>Descripción</th><th class="tr">Total s/IVA</th><th>Va a</th><th>Producto</th><th>Contenido × envase</th><th class="tr">Precio por unidad</th><th>Qué se graba</th></tr></thead><tbody>` +
         f.lineas.map((l, j) => {
           const hecha = hechas.has(fvHuellaLinea_(f, j));
