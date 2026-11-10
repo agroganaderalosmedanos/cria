@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_284';
+const APP_VERSION = 'index_consolidado_4_6_155_285';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3376,6 +3376,11 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   , _criaMoneda); // v275
+  totalVeter += gastosVetTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  , _criaMoneda); // v285 -- gastos de veterinaria de las facturas (globales de Cría)
 
   const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria + totalSueldosCria_hv;
   const margen = totalIngresos - totalEgresos;
@@ -3479,6 +3484,11 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   ); // v275 // sin moneda → siempre ARS
+  totalVeterARS += gastosVetTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  ); // v285 -- gastos de veterinaria de las facturas (globales de Cría)
   const totalEgresosARS = totalSaldoInicialARS + totalComprasARS + totalReposicionVientresARS + totalAlimARS + totalVeterARS + totalSueldosCriaARS + totalSueldosCriaARS_hv;
   const margenARS = totalIngresosARS - totalEgresosARS;
 
@@ -3554,6 +3564,11 @@ function buildDashboard() {
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
     String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
   , 'USD'); // v275
+  totalVeterUSD += gastosVetTotalActividad_('cria', s =>
+    (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
+    String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+    String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  , 'USD'); // v285 -- gastos de veterinaria de las facturas (globales de Cría)
   const totalEgresosUSD = totalSaldoInicialUSD + totalComprasUSD + totalReposicionVientresUSD + totalAlimUSD + totalVeterUSD + totalSueldosCriaUSD + totalSueldosCriaUSD_hv;
   const margenUSD = totalIngresosUSD - totalEgresosUSD;
 
@@ -15066,6 +15081,10 @@ function calcMargenCriaCampana_(campanaId, corte) {
       String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
       String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
     , moneda); // v275
+  totalVeter += gastosVetTotalActividad_('cria', s =>
+      String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
+      String(s.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+    , moneda); // v285 -- gastos de veterinaria de las facturas (globales de Cría)
     const totalEgresos = totalSaldoInicial + totalCompras + totalReposicionVientres + totalAlim + totalVeter + totalSueldosCria + totalSueldosCria_hv;
     return { ing: totalIngresos, eg: totalEgresos, margen: totalIngresos - totalEgresos, ingVentas: totalVentas, ingCesiones: totalCesiones, ef: stockValCria, ei: totalSaldoInicial, compras: totalCompras, reposicionVientres: totalReposicionVientres, egAlim: totalAlim, egVet: totalVeter, egSueldos: totalSueldosCria, egHonVet: totalSueldosCria_hv, nacImp: nacImpCria };
   }
@@ -17043,6 +17062,7 @@ async function exportarAuditoriaCriaExcel_() {
     });
     const resSueldos = sueldoTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria);
   const resSueldos_hv = honorariosTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria); // v275
+  resVet += gastosVetTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria); // v285 -- gastos de veterinaria de las facturas (globales de Cría)
     const resEgresos = resStockIni + resCompras + resAlim + resVet + resSueldos + resSueldos_hv;
     const resMargen = resIngresos - resEgresos;
 
@@ -19617,8 +19637,31 @@ function attachPesadasEvents() {
 // van por honorariosGetAll_ y se muestran en una línea aparte del margen.
 const CONCEPTO_HON_VET_ = 'Honorarios veterinarios';
 function esHonorarioVet_(s) { return String(s && s.concepto || '').trim().toLowerCase() === CONCEPTO_HON_VET_.toLowerCase(); }
+// v285 -- Gastos de veterinaria que vienen de las facturas y no son remedios
+// con stock (IATF: Gonaxal, vainas, celo test, pajuelas…; elementos: caravanas,
+// agujas, gomas…). Van a la línea Veterinaria del margen de CRÍA, globales (sin
+// rodeo). Se guardan en la hoja Sueldos con este concepto. "[iatf]" en la
+// observación = suma al Costo IATF (también en los honorarios).
+const CONCEPTO_GASTO_VET_ = 'Gastos veterinarios';
+function esGastoVet_(s) { return String(s && s.concepto || '').trim().toLowerCase() === CONCEPTO_GASTO_VET_.toLowerCase(); }
+function esIatf_(s) { return /\[iatf\]/i.test(String(s && s.observacion || '')); }
+function obsSinTags_(s) { return String(s && s.observacion || '').replace(/\s*\[iatf\]/ig, '').trim(); }
+function gastosVetGetAll_() {
+  return (S.cache.sueldos || []).filter(esGastoVet_);
+}
+function gastosVetTotalActividad_(actividad, filtro, moneda) {
+  if (actividad !== 'cria') return 0; // siempre Cría (Crist, 09/11/2026)
+  return gastosVetGetAll_()
+    .filter(s => !filtro || filtro(s))
+    .reduce((sum, s) => {
+      const importeARS = Number(s.monto) || 0;
+      if (!moneda) return sum + importeARS;
+      const fechaPeriodo = String(s.periodo||'').length === 7 ? s.periodo + '-01' : s.periodo;
+      return sum + convertirAMoneda_(importeARS, fechaPeriodo, moneda);
+    }, 0);
+}
 function sueldosGetAll_() {
-  return (S.cache.sueldos || []).filter(s => !esHonorarioVet_(s));
+  return (S.cache.sueldos || []).filter(s => !esHonorarioVet_(s) && !esGastoVet_(s));
 }
 function honorariosGetAll_() {
   return (S.cache.sueldos || []).filter(esHonorarioVet_);
@@ -19827,11 +19870,23 @@ function buildSueldos() {
     </div>
     ${honor.length ? `<div class="tw" style="margin-top:14px"><table class="dt"><thead><tr><th>Período</th><th>Campo</th><th>Observación</th>
       <th class="tr" style="color:var(--green-text)">🐄 Cría</th><th class="tr" style="color:var(--gold-text)">🐃 Recría</th><th class="tr" style="color:var(--clay-text)">🥩 Terminación</th><th class="tr">Total</th><th></th></tr></thead><tbody>` +
-      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : (s.campo_id ? s.campo_id : '<span style="color:var(--text3)">Sin campo</span>')}</td><td style="font-size:12px;color:var(--text2)">${s.observacion || ''}
-          <div style="margin-top:4px">${(() => { const d = distEfectiva_(s); const un = ['cria', 'recria', 'engorde'].find(a => Math.round(d[a] || 0) === 100) || ''; return `<select style="font-size:12px;padding:2px 4px" onchange="window.hvCambiarActividad_('${s.sueldo_id}', this)" title="Cambiar la actividad (va el 100% a la elegida)">${un ? '' : '<option value="" selected>Repartido entre actividades</option>'}${[['cria', '🐄 Cría'], ['recria', '🐃 Recría'], ['engorde', '🥩 Terminación']].map(a => `<option value="${a[0]}" ${un === a[0] ? 'selected' : ''}>${a[1]}</option>`).join('')}</select>`; })()}</div></td>
+      honor.map(s => { const campo = campos.find(c=>String(c.campo_id)===String(s.campo_id)); return `<tr><td>${String(s.periodo).slice(0,7)}</td><td>${campo ? campo.nombre : (s.campo_id ? s.campo_id : '<span style="color:var(--text3)">Sin campo</span>')}</td><td style="font-size:12px;color:var(--text2)">${fdEsc_(obsSinTags_(s))}
+          <div style="margin-top:4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">${(() => { const d = distEfectiva_(s); const un = ['cria', 'recria', 'engorde'].find(a => Math.round(d[a] || 0) === 100) || ''; return `<select style="font-size:12px;padding:2px 4px" onchange="window.hvCambiarActividad_('${s.sueldo_id}', this)" title="Cambiar la actividad (va el 100% a la elegida)">${un ? '' : '<option value="" selected>Repartido entre actividades</option>'}${[['cria', '🐄 Cría'], ['recria', '🐃 Recría'], ['engorde', '🥩 Terminación']].map(a => `<option value="${a[0]}" ${un === a[0] ? 'selected' : ''}>${a[1]}</option>`).join('')}</select>`; })()}<label style="font-size:12px;display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" ${esIatf_(s) ? 'checked' : ''} onchange="window.vetIatf_('${s.sueldo_id}', this)"> Es de IATF</label></div></td>
         <td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'cria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'recria')))}</td><td class="tr">$ ${fn(Math.round(sueldoImporteActividad_(s,'engorde')))}</td>
         <td class="tr"><strong>$ ${fn(Number(s.monto)||0)}</strong></td><td><button class="btn btn-danger btn-sm" onclick="window.hvEliminar_('${s.sueldo_id}')" title="Eliminar">🗑</button></td></tr>`; }).join('') +
       `</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3);margin-top:10px">Todavía no hay honorarios cargados.</div>'}
+  </div>`;
+
+  // v285 -- Gastos de veterinaria de las facturas (IATF y elementos varios)
+  const gvet = gastosVetGetAll_().slice().sort((a,b) => String(b.periodo).localeCompare(String(a.periodo)));
+  h += `<div class="panel">
+    <div class="panel-title">💉 Gastos de veterinaria de Cría (de las facturas)</div>
+    <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">Lo que no es un remedio con stock: lo de IATF (Gonaxal, vainas, celo test, pajuelas…) y elementos varios (caravanas, agujas, gomas…). Se cargan desde <b>Importar facturas veterinaria</b> y suman en la línea <b>Veterinaria</b> del margen de Cría, sin rodeo. "Es de IATF" decide si suma al Costo IATF.</div>
+    ${gvet.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Detalle</th><th class="tc">IATF</th><th class="tr">Importe (Cría)</th><th></th></tr></thead><tbody>` +
+      gvet.map(s => `<tr><td>${String(s.periodo).slice(0,7)}</td><td style="font-size:12px;color:var(--text2);white-space:normal">${fdEsc_(obsSinTags_(s))}</td>
+        <td class="tc"><input type="checkbox" ${esIatf_(s) ? 'checked' : ''} onchange="window.vetIatf_('${s.sueldo_id}', this)"></td>
+        <td class="tr"><strong>$ ${fn(Number(s.monto)||0)}</strong></td><td><button class="btn btn-danger btn-sm" onclick="window.hvEliminar_('${s.sueldo_id}')" title="Eliminar">🗑</button></td></tr>`).join('') +
+      `</tbody><tfoot><tr><td colspan="3" class="tr"><b>Total</b></td><td class="tr"><b>$ ${fn(gvet.reduce((a,s)=>a+(Number(s.monto)||0),0))}</b></td><td></td></tr></tfoot></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">Todavía no hay gastos cargados desde las facturas.</div>'}
   </div>`;
 
   // ── Panel: Distribución base por campo ──────────────────────────
@@ -20192,8 +20247,23 @@ function attachSueldosEvents() {
     render();
   };
 
+  // v285 -- Marcar / desmarcar un honorario o gasto de veterinaria como IATF
+  window.vetIatf_ = async function(id, chk) {
+    const reg = (S.cache.sueldos || []).find(x => String(x.sueldo_id) === String(id));
+    if (!reg) return;
+    const obs = obsSinTags_(reg) + (chk.checked ? ' [iatf]' : '');
+    chk.disabled = true;
+    try {
+      await apiCall('update', { body: { entity: 'sueldos', id, data: { observacion: obs } } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      toast(chk.checked ? 'Marcado como IATF' : 'Ya no suma a IATF', 'ok');
+    } catch (err) { toast('Error: ' + err.message, 'err'); }
+    render();
+  };
+
   window.hvEliminar_ = async function(id) {
-    if (!confirm('¿Eliminar esta factura de honorarios?')) return;
+    if (!confirm('¿Eliminar este registro?')) return;
     try {
       await apiCall('delete', { body: { entity: 'sueldos', id } });
       invalidateCache('sueldos');
@@ -23834,9 +23904,12 @@ function fvProductoDe_(desc) {
 function fvClasificar_(l) {
   const d = fvNormTxt_(l.desc);
   if (/aislador|alambre|poste|varilla|tranquera|boyero|torniquete|tensor/.test(d)) return { clase: 'no' };
-  if (/tacto|necropsia|analisis|laboratorio|viatico|movilidad|honorario|consulta|visita|ecograf|raspaje|sangrado/.test(d)) return { clase: 'hon' };
-  if (/iatf|dispositivo|\bdisp\b|vaina|gnrh|gonaxal|celo test|semen|pajuela|insemin|estradiol|benzoato|cipionato|prostaglandin/.test(d)) return { clase: 'gasto', motivo: 'IATF' };
-  if (/carav|aguja|jeringa|pinza|anillo|goma|cuchilla|guante|aplicador|pistola|marcador|pintura|crayon/.test(d)) return { clase: 'gasto', motivo: 'Elementos varios' };
+  // v285 -- elementos varios primero (ej. "CUCHILLA RETIRAR CARV" no es retirar dispositivo)
+  if (/carav|aguja|jeringa|pinza|anillo|goma|cuchilla|guante|aplicador|pistola|marcador|pintura|crayon/.test(d)) return { clase: 'gasto', motivo: 'Elementos varios', iatf: false };
+  // v285 -- colocar/retirar dispositivos e inseminar = trabajo del veterinario: honorarios de IATF
+  if (/(coloc|retir).{0,15}\bdisp|insemin/.test(d)) return { clase: 'hon', motivo: 'IATF', iatf: true };
+  if (/iatf|dispositivo|\bdisp\b|vaina|gnrh|gonaxal|celo test|semen|pajuela|estradiol|benzoato|cipionato|prostaglandin/.test(d)) return { clase: 'gasto', motivo: 'IATF', iatf: true };
+  if (/tacto|necropsia|analisis|laboratorio|viatico|movilidad|honorario|consulta|visita|ecograf|raspaje|sangrado/.test(d)) return { clase: 'hon', iatf: false };
   const p = fvProductoDe_(l.desc);
   if (p) return { clase: 'med', producto: p };
   if (l.presentacion) return { clase: 'med', producto: null };
@@ -23885,7 +23958,8 @@ function fvPrepararLinea_(l) {
   if (l._prep) return;
   l._prep = true;
   const c = fvClasificar_(l);
-  l.clase = c.clase; l.motivo = c.motivo || '';
+  l.clase = c.clase; l.motivo = c.motivo || ''; l.iatf = !!c.iatf;
+  if (c.clase === 'gasto') return; // v285 -- siempre Cría, global
   if (c.clase === 'hon') { l.act = 'cria'; return; } // v281 -- honorarios: solo la actividad (Crist, 08/11/2026)
   if (c.clase !== 'med') return;
   const eq = fvEquivProd_(l.desc);
@@ -23910,9 +23984,12 @@ function fvPlan_() {
   const usadas = new Set();
   const plan = [];
   st.facturas.forEach((f, fi) => f.lineas.forEach((l, j) => {
-    if (!['med', 'hon', 'no'].includes(l.clase) || !l.sel || hechas.has(fvHuellaLinea_(f, j))) return;
+    if (!['med', 'hon', 'no', 'gasto'].includes(l.clase) || !l.sel || hechas.has(fvHuellaLinea_(f, j))) return;
     if (st.facturas.findIndex(x => x.clave === f.clave) !== fi) return; // repetida en esta carga
     // v281 -- honorarios (solo actividad, sin campo) y líneas de estructura (se descartan)
+    // v285 -- sin importe (ej. "CUCHILLA RETIRAR CARV" $0): se descarta
+    if ((l.clase === 'hon' || l.clase === 'gasto') && !(Number(l.total) > 0)) { plan.push({ f, fi, l, j, tipo: 'no', error: '' }); return; }
+    if (l.clase === 'gasto') { plan.push({ f, fi, l, j, tipo: 'gasto', error: !f.fecha ? 'La factura no tiene fecha.' : '' }); return; }
     if (l.clase === 'hon') { plan.push({ f, fi, l, j, tipo: 'hon', error: !f.fecha ? 'La factura no tiene fecha.' : (!(Number(l.total) > 0) ? 'La línea no tiene importe.' : (!l.act ? 'Elegí la actividad.' : '')) }); return; }
     if (l.clase === 'no') { plan.push({ f, fi, l, j, tipo: 'no', error: '' }); return; }
     const c = fvLineaCalc_(l);
@@ -23946,7 +24023,7 @@ function buildImportarFacturas() {
   const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
   let h = `<div class="panel">
     <div class="panel-title">1. Facturas (PDF)</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (desde el ${fd(FV_DESDE_)}). Cada línea se clasifica en <b>medicamento</b>, <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b> o <b>no va</b> (estructura). Todo sin IVA. Se graban los <b>medicamentos</b> (los remedios entran al stock con el precio de la factura; los productos que lleva Fielddata —rumex, sales…— solo toman el precio), los <b>honorarios</b> (con la actividad, en la línea aparte del margen) y se descartan las líneas de <b>estructura</b>. Los gastos de IATF y elementos varios, en la próxima versión.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí las facturas de veterinaria en PDF (desde el ${fd(FV_DESDE_)}). Cada línea se clasifica en <b>medicamento</b>, <b>gasto de veterinaria</b> (IATF, caravanas, agujas…), <b>honorarios</b> o <b>no va</b> (estructura). Todo sin IVA. Se graban los <b>medicamentos</b> (los remedios entran al stock con el precio de la factura; los productos que lleva Fielddata —rumex, sales…— solo toman el precio), los <b>honorarios</b> (con la actividad, en la línea aparte del margen), los <b>gastos de veterinaria</b> (IATF y elementos varios: a Veterinaria de Cría, sin rodeo) y se descartan las líneas de <b>estructura</b>. "Es de IATF" marca lo que suma al Costo IATF; se puede cambiar después en Sueldos.</p>
     <div class="fgrid"><div class="fg"><label>Facturas (.pdf)</label><input type="file" id="fv-files" accept=".pdf,application/pdf" multiple ${st.leyendo || st.grabando ? 'disabled' : ''}></div></div>
     ${st.leyendo ? '<div style="margin-top:8px;font-size:12.5px;color:var(--text2)">⏳ Leyendo…</div>' : ''}
     ${st.facturas.length ? `<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="fv-limpiar">Quitar todas</button></div>` : ''}
@@ -23991,11 +24068,19 @@ function buildImportarFacturas() {
           const attr = `data-f="${fi}" data-j="${j}"`;
           let celdas;
           if (hecha) celdas = `<td colspan="4" style="color:var(--text3)">Ya importada.</td>`;
+          else if (l.clase === 'gasto' && !dup) {
+            const p = planDe(fi, j);
+            const mes = f.fecha ? f.fecha.slice(5, 7) + '/' + f.fecha.slice(0, 4) : '—';
+            const iat = `<label style="font-size:12px;display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" class="fv-in" ${attr} data-k="iatf" ${l.iatf ? 'checked' : ''}> Es de IATF</label>`;
+            celdas = `<td style="font-size:12.5px">🐄 Cría · global</td><td>${iat}</td><td style="font-size:12.5px;color:var(--text2)">Período ${mes}</td>
+              <td style="white-space:normal;font-size:12.5px">${!l.sel ? '<span style="color:var(--text3)">No seleccionada.</span>' : (p && p.tipo === 'no' ? 'Sin importe: se descarta.' : (p && p.error ? `<span style="color:var(--red)">${fdEsc_(p.error)}</span>` : 'Veterinaria de Cría: <b>' + fm(l.total) + '</b>' + (l.iatf ? ' · suma al Costo IATF' : '') + '.'))}</td>`;
+          }
           else if (l.clase === 'hon' && !dup) {
             const p = planDe(fi, j);
             const mes = f.fecha ? f.fecha.slice(5, 7) + '/' + f.fecha.slice(0, 4) : '—';
-            celdas = `<td><select class="fv-in" ${attr} data-k="act"><option value="">— Actividad —</option>${[['cria', 'Cría'], ['recria', 'Recría'], ['engorde', 'Terminación']].map(a => `<option value="${a[0]}" ${l.act === a[0] ? 'selected' : ''}>${a[1]}</option>`).join('')}</select></td><td colspan="2" style="font-size:12.5px;color:var(--text2)">Período ${mes}</td>
-              <td style="white-space:normal;font-size:12.5px">${!l.sel ? '<span style="color:var(--text3)">No seleccionada.</span>' : (p && p.error ? `<span style="color:var(--red)">${fdEsc_(p.error)}</span>` : 'Honorarios veterinarios de ' + ({ cria: 'Cría', recria: 'Recría', engorde: 'Terminación' }[l.act] || '—') + ': <b>' + fm(l.total) + '</b> (línea aparte del margen).')}</td>`;
+            const iat = `<label style="font-size:12px;display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" class="fv-in" ${attr} data-k="iatf" ${l.iatf ? 'checked' : ''}> Es de IATF</label>`;
+            celdas = `<td><select class="fv-in" ${attr} data-k="act"><option value="">— Actividad —</option>${[['cria', 'Cría'], ['recria', 'Recría'], ['engorde', 'Terminación']].map(a => `<option value="${a[0]}" ${l.act === a[0] ? 'selected' : ''}>${a[1]}</option>`).join('')}</select></td><td>${iat}</td><td style="font-size:12.5px;color:var(--text2)">Período ${mes}</td>
+              <td style="white-space:normal;font-size:12.5px">${!l.sel ? '<span style="color:var(--text3)">No seleccionada.</span>' : (p && p.tipo === 'no' ? 'Sin importe: se descarta.' : (p && p.error ? `<span style="color:var(--red)">${fdEsc_(p.error)}</span>` : 'Honorarios veterinarios de ' + ({ cria: 'Cría', recria: 'Recría', engorde: 'Terminación' }[l.act] || '—') + ': <b>' + fm(l.total) + '</b>' + (l.iatf ? ' · suma al Costo IATF' : '') + '.'))}</td>`;
           }
           else if (l.clase === 'no' && !dup) celdas = `<td colspan="4" style="font-size:12.5px;color:var(--text2)">${l.sel ? 'Gasto de estructura: <b>se descarta</b> (queda anotado para no volver a ofrecerlo).' : 'No seleccionada.'}</td>`;
           else if (l.clase !== 'med' || dup) celdas = `<td colspan="4" style="font-size:12.5px;color:var(--text2)">${dup ? 'Repetida.' : l.clase === 'rev' ? 'No la reconozco: se resuelve en la próxima versión.' : (l.motivo ? fdEsc_(l.motivo) + ' · ' : '') + 'Gasto de Cría: se graba en la próxima versión.'}</td>`;
@@ -24021,7 +24106,7 @@ function buildImportarFacturas() {
             }
             celdas = `<td>${sel}</td><td style="white-space:nowrap">${env}</td><td class="tr">${pr}</td><td style="white-space:normal;font-size:12.5px;min-width:200px">${que}</td>`;
           }
-          const chk = !hecha && ['med', 'hon', 'no'].includes(l.clase) && !dup ? `<input type="checkbox" class="fv-in" ${attr} data-k="sel" ${l.sel ? 'checked' : ''}>` : '';
+          const chk = !hecha && ['med', 'hon', 'no', 'gasto'].includes(l.clase) && !dup ? `<input type="checkbox" class="fv-in" ${attr} data-k="sel" ${l.sel ? 'checked' : ''}>` : '';
           return `<tr><td>${chk}</td><td class="tr">${l.cant === null ? '—' : fq(l.cant)}</td><td style="white-space:normal">${fdEsc_(l.desc)}${l.fechaDesc ? ` <span style="color:var(--text3);font-size:11px">(${fdEsc_(l.fechaDesc)})</span>` : ''}</td>
             <td class="tr">${fm(l.total)}</td><td><span class="pill ${pill}">${FV_CLASES_[l.clase]}</span></td>${celdas}</tr>`;
         }).join('') + `</tbody><tfoot><tr><td colspan="3" class="tr"><b>Suma de líneas</b></td><td class="tr"><b>${fm(suma)}</b></td><td colspan="5" style="font-size:12.5px;color:var(--text2)">Neto de la factura: ${f.neto === null ? '—' : fm(f.neto)}${f.total ? ' · Total con IVA: ' + fm(f.total) : ''}</td></tr></tfoot></table></div>
@@ -24087,8 +24172,9 @@ async function fvGrabar_() {
   const fq = n => fn(n, Number(n) % 1 ? 2 : 0);
   const actNom = { cria: 'Cría', recria: 'Recría', engorde: 'Terminación' };
   const txt = plan.map(p => {
-    if (p.tipo === 'hon') return '· Honorarios ' + (actNom[p.l.act] || '') + ': $ ' + fn(p.l.total, 2) + ' — ' + p.l.desc;
-    if (p.tipo === 'no') return '· Se descarta (estructura): ' + p.l.desc;
+    if (p.tipo === 'hon') return '· Honorarios ' + (actNom[p.l.act] || '') + (p.l.iatf ? ' (IATF)' : '') + ': $ ' + fn(p.l.total, 2) + ' — ' + p.l.desc;
+    if (p.tipo === 'gasto') return '· Veterinaria Cría' + (p.l.iatf ? ' (IATF)' : '') + ': $ ' + fn(p.l.total, 2) + ' — ' + p.l.desc;
+    if (p.tipo === 'no') return '· Se descarta (' + (p.l.clase === 'no' ? 'estructura' : 'sin importe') + '): ' + p.l.desc;
     const nom = p.l.prod === '__nuevo' ? p.l.nuevoNombre + ' (nuevo)' : p.calc.prod.nombre;
     return '· ' + nom + ': ' + fq(p.calc.qty) + ' ' + (p.calc.unidad || '') + ' a $ ' + fn(p.calc.precioU, 2) + (p.calc.stockFD ? ' — solo precio' : ' — entra al stock ' + fq(p.entra)) + (p.absorber.length ? ' — completa ' + p.absorber.length + ' sin precio' : '');
   }).join('\n');
@@ -24104,7 +24190,7 @@ async function fvGrabar_() {
         // v281 -- Igual que el panel de Sueldos → Honorarios veterinarios, pero sin campo:
         // el margen se mira por actividad (Crist, 08/11/2026).
         const r = await apiCall('create', { body: { entity: 'sueldos', data: { periodo: f.fecha.slice(0, 7), campo_id: '', monto: Math.round(Number(l.total) * 100) / 100,
-          observacion: 'Factura ' + prov + ' ' + nroFac + ': ' + l.desc, fecha_carga: today(),
+          observacion: 'Factura ' + prov + ' ' + nroFac + ': ' + l.desc + (l.iatf ? ' [iatf]' : ''), fecha_carga: today(),
           dist_cria: l.act === 'cria' ? 100 : 0, dist_recria: l.act === 'recria' ? 100 : 0, dist_engorde: l.act === 'engorde' ? 100 : 0, dist_estructura: 0, concepto: CONCEPTO_HON_VET_ } } });
         await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'ya_cargado', huellas: [fvHuellaLinea_(f, p.j)], campo_id: '', fecha: f.fecha, rubro: 'factura_vet',
           entity: 'sueldos', registro_id: r.id, detalle: 'Honorarios — factura ' + prov + ' ' + nroFac + ' — ' + l.desc }], equivalencias: [] } });
@@ -24112,11 +24198,22 @@ async function fvGrabar_() {
         st.log.push({ ok: true, txt: 'Honorarios ' + (actNom[l.act] || '') + ' $ ' + fn(l.total, 2) + ': ' + l.desc + ' (' + prov + ' ' + nroFac + ').' });
         continue;
       }
+      if (p.tipo === 'gasto') {
+        // v285 -- Gasto de veterinaria global de Cría (sin stock ni rodeo)
+        const r = await apiCall('create', { body: { entity: 'sueldos', data: { periodo: f.fecha.slice(0, 7), campo_id: '', monto: Math.round(Number(l.total) * 100) / 100,
+          observacion: 'Factura ' + prov + ' ' + nroFac + ': ' + l.desc + (l.iatf ? ' [iatf]' : ''), fecha_carga: today(),
+          dist_cria: 100, dist_recria: 0, dist_engorde: 0, dist_estructura: 0, concepto: CONCEPTO_GASTO_VET_ } } });
+        await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'ya_cargado', huellas: [fvHuellaLinea_(f, p.j)], campo_id: '', fecha: f.fecha, rubro: 'factura_vet',
+          entity: 'sueldos', registro_id: r.id, detalle: 'Gasto veterinaria Cría — factura ' + prov + ' ' + nroFac + ' — ' + l.desc }], equivalencias: [] } });
+        ok++;
+        st.log.push({ ok: true, txt: 'Veterinaria Cría' + (l.iatf ? ' (IATF)' : '') + ' $ ' + fn(l.total, 2) + ': ' + l.desc + ' (' + prov + ' ' + nroFac + ').' });
+        continue;
+      }
       if (p.tipo === 'no') {
         await apiCall('importarFielddata', { body: { items: [{ accion: 'marcar', estado: 'descartado', huellas: [fvHuellaLinea_(f, p.j)], campo_id: '', fecha: f.fecha, rubro: 'factura_vet',
-          entity: '', registro_id: '', detalle: 'Estructura (no va) — factura ' + prov + ' ' + nroFac + ' — ' + l.desc }], equivalencias: [] } });
+          entity: '', registro_id: '', detalle: (l.clase === 'no' ? 'Estructura (no va)' : 'Sin importe') + ' — factura ' + prov + ' ' + nroFac + ' — ' + l.desc }], equivalencias: [] } });
         ok++;
-        st.log.push({ ok: true, txt: 'Descartada (estructura): ' + l.desc + ' (' + prov + ' ' + nroFac + ').' });
+        st.log.push({ ok: true, txt: 'Descartada (' + (l.clase === 'no' ? 'estructura' : 'sin importe') + '): ' + l.desc + ' (' + prov + ' ' + nroFac + ').' });
         continue;
       }
       let pid = c.prod ? String(c.prod.producto_id) : '';
@@ -24177,7 +24274,7 @@ function attachImportarFacturasEvents() {
         if (!fs.length || !fs.some(x => x.lineas.length)) st.errores.push(f.name + ': no encontré líneas de detalle (¿es una factura escaneada como imagen?).');
         fs.forEach(x => {
           x.archivo = f.name; x.campo_id = campoDef;
-          x.lineas.forEach(l => { fvPrepararLinea_(l); l.sel = ['med', 'hon', 'no'].includes(l.clase); });
+          x.lineas.forEach(l => { fvPrepararLinea_(l); l.sel = ['med', 'hon', 'no', 'gasto'].includes(l.clase); });
           st.facturas.push(x);
         });
       } catch (err) {
@@ -24196,6 +24293,7 @@ function attachImportarFacturasEvents() {
     const l = f.lineas[Number(el.dataset.j)]; if (!l) return;
     const k = el.dataset.k;
     if (k === 'sel') l.sel = el.checked;
+    else if (k === 'iatf') l.iatf = el.checked;
     else if (k === 'envase') l.envase = el.value === '' ? null : Number(el.value);
     else if (k === 'precioU') l.precioU = el.value === '' ? null : Number(el.value);
     else if (k === 'prod') {
