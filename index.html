@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_286';
+const APP_VERSION = 'index_consolidado_4_6_155_287';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -19657,7 +19657,14 @@ function esHonorarioVet_(s) { return String(s && s.concepto || '').trim().toLowe
 const CONCEPTO_GASTO_VET_ = 'Gastos veterinarios';
 function esGastoVet_(s) { return String(s && s.concepto || '').trim().toLowerCase() === CONCEPTO_GASTO_VET_.toLowerCase(); }
 function esIatf_(s) { return /\[iatf\]/i.test(String(s && s.observacion || '')); }
-function obsSinTags_(s) { return String(s && s.observacion || '').replace(/\s*\[iatf\]/ig, '').trim(); }
+function obsSinTags_(s) { return String(s && s.observacion || '').replace(/\s*\[(iatf|camp:\d+)\]/ig, '').trim(); }
+// v287 -- arma la observación con sus marcas: [iatf] y [camp:<id>] (campaña de
+// los nacimientos a la que se imputa en Costo IATF, si se cambió a mano)
+function obsConTags_(s, iatf, campId) {
+  const m = String(s && s.observacion || '').match(/\[camp:(\d+)\]/i);
+  const camp = campId === undefined ? (m ? m[1] : '') : campId;
+  return obsSinTags_(s) + (iatf ? ' [iatf]' : '') + (camp ? ' [camp:' + camp + ']' : '');
+}
 function gastosVetGetAll_() {
   return (S.cache.sueldos || []).filter(esGastoVet_);
 }
@@ -20263,7 +20270,7 @@ function attachSueldosEvents() {
   window.vetIatf_ = async function(id, chk) {
     const reg = (S.cache.sueldos || []).find(x => String(x.sueldo_id) === String(id));
     if (!reg) return;
-    const obs = obsSinTags_(reg) + (chk.checked ? ' [iatf]' : '');
+    const obs = obsConTags_(reg, chk.checked);
     chk.disabled = true;
     try {
       await apiCall('update', { body: { entity: 'sueldos', id, data: { observacion: obs } } });
@@ -24332,10 +24339,18 @@ function attachImportarFacturasEvents() {
 // preñadas de IATF (Tactos "Tacto IATF"). Es una vista: no cambia el margen.
 // La IATF se imputa a la campaña en que se hace (criterio A).
 // ═══════════════════════════════════════════════════════════════════════
+// v287 -- La IATF se mide en la campaña de los NACIMIENTOS, igual que
+// Servicios y Tactos: por defecto, la campaña siguiente a la del mes del gasto
+// (IATF de oct-2026 -> terneros 2027/28). Se puede cambiar a mano ([camp:id]).
 function ciCampanaDeRegistro_(s) {
+  const m = String(s.observacion || '').match(/\[camp:(\d+)\]/i);
+  if (m) return m[1];
   const per = String(s.periodo || '').slice(0, 7);
   const c = per ? campanaDeFecha_(per + '-01') : null;
-  return c ? String(c.campana_id) : '';
+  if (!c) return '';
+  const orden = (S.cache.campanas || []).filter(x => x.fecha_inicio).slice().sort((a, b) => String(a.fecha_inicio).localeCompare(String(b.fecha_inicio)));
+  const i = orden.findIndex(x => String(x.campana_id) === String(c.campana_id));
+  return i >= 0 && orden[i + 1] ? String(orden[i + 1].campana_id) : '';
 }
 function buildCostoIatf() {
   const campanas = (S.cache.campanas || []).slice().sort((a, b) => String(b.fecha_inicio || '').localeCompare(String(a.fecha_inicio || '')));
@@ -24357,37 +24372,50 @@ function buildCostoIatf() {
   const fm = n => '$ ' + fn(Math.round(Number(n) || 0));
   const tipo = s => esHonorarioVet_(s) ? '🩺 Honorarios' : '💉 Veterinaria';
   const fila = s => `<tr><td>${String(s.periodo).slice(0, 7)}</td><td>${tipo(s)}</td><td style="white-space:normal;font-size:12.5px;color:var(--text2)">${fdEsc_(obsSinTags_(s)) || '—'}</td>
-    <td class="tr">${fm(s.monto)}</td><td class="tc"><input type="checkbox" ${esIatf_(s) ? 'checked' : ''} onchange="window.ciIatf_('${s.sueldo_id}', this)"></td></tr>`;
+    <td class="tr">${fm(s.monto)}</td><td class="tc"><input type="checkbox" ${esIatf_(s) ? 'checked' : ''} onchange="window.ciIatf_('${s.sueldo_id}', this)"></td>
+    <td><select style="font-size:12px;padding:2px 4px" onchange="window.ciCamp_('${s.sueldo_id}', this)" title="Campaña de los nacimientos a la que corresponde esta IATF">${campanas.map(c => `<option value="${c.campana_id}" ${String(c.campana_id) === ciCampanaDeRegistro_(s) ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select></td></tr>`;
   const kpi = (lbl, val, sub) => `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;min-width:170px;flex:1"><div style="font-size:11.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.03em">${lbl}</div><div style="font-size:22px;font-weight:800;margin-top:4px">${val}</div>${sub ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px">${sub}</div>` : ''}</div>`;
   let h = `<div class="panel">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
       <label style="font-size:13px">Campaña</label>
       <select id="ci-camp">${campanas.map(c => `<option value="${c.campana_id}" ${String(c.campana_id) === cid ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select>
-      <span style="font-size:12px;color:var(--text3)">Lo marcado como IATF en honorarios y gastos de veterinaria (de las facturas o cargados en Sueldos). Es una vista aparte: el margen de Cría ya incluye estos importes en Veterinaria y Honorarios.</span>
+      <span style="font-size:12px;color:var(--text3)">Campaña de los <b>nacimientos</b>, igual que Servicios y Tactos: la IATF de octubre 2026 es de 2027/2028. Suma lo marcado como IATF en honorarios y gastos de veterinaria. Es una vista aparte: el margen de Cría sigue cargando estos importes en la campaña en que se pagan.</span>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       ${kpi('Costo total IATF', fm(total), 'productos ' + fm(totGas) + ' · honorarios ' + fm(totHon))}
-      ${kpi('Inseminadas', insem ? fn(insem) : '—', serv.length ? serv.length + ' servicio' + (serv.length > 1 ? 's' : '') + ' IATF' + (servSinCant ? ' · ⚠ ' + servSinCant + ' sin cantidad' : '') : 'sin Servicios IATF en la campaña')}
+      ${kpi('Inseminadas', insem ? fn(insem) : '—', (serv.length ? serv.length + ' servicio' + (serv.length > 1 ? 's' : '') + ' IATF' + (servSinCant ? ' · ⚠ ' + servSinCant + ' sin cantidad' : '') : 'sin Servicios IATF en la campaña') + ' · se suman a medida que los cargás')}
       ${kpi('Preñadas IATF', pren ? fn(pren) : '—', tac.length ? tac.length + ' tacto' + (tac.length > 1 ? 's' : '') + ' IATF' + (insem ? ' · ' + fn(pren / insem * 100, 1) + '% de preñez' : '') : 'sin Tacto IATF en la campaña')}
       ${kpi('Costo por inseminada', insem ? fm(total / insem) : '—', '')}
       ${kpi('Costo por preñada', pren ? fm(total / pren) : '—', '')}
     </div></div>`;
   h += `<div class="panel"><div class="panel-title">✅ Gastos de IATF <span class="pill pill-gold">${iatf.length}</span></div>` +
-    (iatf.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th></tr></thead><tbody>${iatf.map(fila).join('')}</tbody>
-      <tfoot><tr><td colspan="3" class="tr"><b>Total</b></td><td class="tr"><b>${fm(total)}</b></td><td></td></tr></tfoot></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay nada marcado como IATF en esta campaña.</div>') + `</div>`;
+    (iatf.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th><th>Campaña nacimientos</th></tr></thead><tbody>${iatf.map(fila).join('')}</tbody>
+      <tfoot><tr><td colspan="3" class="tr"><b>Total</b></td><td class="tr"><b>${fm(total)}</b></td><td colspan="2"></td></tr></tfoot></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay nada marcado como IATF en esta campaña.</div>') + `</div>`;
   h += `<div class="panel"><div class="panel-title">Resto de veterinaria y honorarios de la campaña <span style="font-weight:400;font-size:12.5px;color:var(--text2)">· si algo era de IATF, tildalo</span></div>` +
-    (resto.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th></tr></thead><tbody>${resto.map(fila).join('')}</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay otros registros.</div>') + `</div>`;
+    (resto.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th><th>Campaña nacimientos</th></tr></thead><tbody>${resto.map(fila).join('')}</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay otros registros.</div>') + `</div>`;
   return h;
 }
 function attachCostoIatfEvents() {
   const sel = document.getElementById('ci-camp');
   if (sel) sel.onchange = () => { S.ciCamp = sel.value; render(); };
+  window.ciCamp_ = async function(id, sel) {
+    const reg = (S.cache.sueldos || []).find(x => String(x.sueldo_id) === String(id));
+    if (!reg) return;
+    sel.disabled = true;
+    try {
+      await apiCall('update', { body: { entity: 'sueldos', id, data: { observacion: obsConTags_(reg, esIatf_(reg), sel.value) } } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      toast('Campaña cambiada', 'ok');
+    } catch (err) { toast('Error: ' + err.message, 'err'); }
+    render();
+  };
   window.ciIatf_ = async function(id, chk) {
     const reg = (S.cache.sueldos || []).find(x => String(x.sueldo_id) === String(id));
     if (!reg) return;
     chk.disabled = true;
     try {
-      await apiCall('update', { body: { entity: 'sueldos', id, data: { observacion: obsSinTags_(reg) + (chk.checked ? ' [iatf]' : '') } } });
+      await apiCall('update', { body: { entity: 'sueldos', id, data: { observacion: obsConTags_(reg, chk.checked) } } });
       invalidateCache('sueldos');
       await loadEntity('sueldos', true);
       toast(chk.checked ? 'Marcado como IATF' : 'Ya no suma a IATF', 'ok');
