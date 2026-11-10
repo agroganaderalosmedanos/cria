@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_287';
+const APP_VERSION = 'index_consolidado_4_6_155_289';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1770,7 +1770,57 @@ function attachPageEvents(page) {
 // ══════════════════════════════════════════════════════════════════════
 // ÍNDICES DE REPRODUCCIÓN (antes era el "Resumen Cría" del panel)
 // ══════════════════════════════════════════════════════════════════════
+// ── v289 -- ENTORADAS DESDE SERVICIOS (Crist, 10/11/2026) ──────────────────
+// Desde la campaña 2027/2028 las entoradas son la SUMA de la cantidad de los
+// Servicios de la campaña (IATF + toros a campo; los repasos se cargan sin
+// cantidad). Hasta 2026/2027 sigue todo como antes (entoradas = tactadas).
+//  · Preñez IATF  = preñadas del tacto IATF ÷ inseminadas (Servicios IATF)
+//  · Preñez final = preñadas del tacto FINAL ÷ entoradas (solo tacto final)
+//  · Mientras falten tactos: % sobre las tactadas, con aviso "faltan tactar".
+//  · Muertes/ventas después del servicio siguen contando como entoradas.
+function entoradasPorServicios_(campanaId) {
+  const cs = S.cache.campanas || [];
+  const ref = cs.find(x => String(x.nombre || '').trim() === '2027/2028');
+  const c = cs.find(x => String(x.campana_id) === String(campanaId));
+  return !!(ref && c && ref.fecha_inicio && c.fecha_inicio && String(c.fecha_inicio) >= String(ref.fecha_inicio));
+}
+// Arma los índices del modo "servicios" a partir de los totales (sirve igual
+// para un rodeo, un campo o todo el establecimiento).
+function kpisModoServicios_(t) {
+  const r1 = n => (n === null || n === undefined || isNaN(n)) ? null : Math.round(n * 10) / 10;
+  const baseIatf = t.inseminadas > 0 ? Math.min(t.tactIatf, t.inseminadas) : t.tactIatf;
+  const baseFinal = t.entoradas > 0 ? Math.min(t.tactFinal, t.entoradas) : t.tactFinal;
+  const prenToro = t.tactFinal > 0 ? Math.max(0, t.prenFinal - t.prenIatf) : 0;
+  return {
+    rodeo_id: t.rodeo_id || null,
+    servicio: {
+      modo_servicios: true, entoradas: t.entoradas, inseminadas: t.inseminadas,
+      tactadas_final: t.tactFinal, faltan_tactar: Math.max(0, t.entoradas - t.tactFinal), faltan_tactar_iatf: Math.max(0, t.inseminadas - t.tactIatf),
+      total_serviciadas: t.entoradas, prenadas_iatf: t.prenIatf, prenadas_toro: prenToro, total_prenadas: t.prenFinal,
+      total_tacteadas_iatf: t.tactIatf, total_tacteadas_toro: Math.max(0, t.tactFinal - t.tactIatf), total_tacteadas: t.tactFinal,
+      indice_prenez: t.tactFinal > 0 && baseFinal > 0 ? r1(t.prenFinal / baseFinal * 100) : null,
+      indice_prenez_iatf: baseIatf > 0 ? r1(t.prenIatf / baseIatf * 100) : null,
+      indice_prenez_toro: t.tactFinal > 0 && (t.tactFinal - t.prenIatf) > 0 ? r1(prenToro / (t.tactFinal - t.prenIatf) * 100) : null,
+    },
+    gestacion: { abortos: t.abortos },
+    paricion: { nacidos_vivos: t.nacVivos, nacidos_muertos: t.nacMuertos, vacas_paridas: t.paridas, madres_guacho: t.madresGuacho || 0, base: t.prenFinal, indice_paricion: t.prenFinal > 0 ? r1((t.paridas + t.abortos) / t.prenFinal * 100) : null },
+    destete: { total_destetados: t.destetados, mortandad_terneros: t.mort, indice_destete: t.prenFinal > 0 ? r1(t.destetados / t.prenFinal * 100) : null, indice_destete_entorada: t.entoradas > 0 ? r1(t.destetados / t.entoradas * 100) : null },
+  };
+}
+
 function aggregateKpis_(rodeosArr) {
+  // v289 -- modo servicios (campaña 2027/2028 en adelante): se suman los totales y se recalcula
+  if (rodeosArr.some(r => r.kpis && r.kpis.servicio && r.kpis.servicio.modo_servicios)) {
+    const t = { entoradas: 0, inseminadas: 0, tactIatf: 0, prenIatf: 0, tactFinal: 0, prenFinal: 0, abortos: 0, nacVivos: 0, nacMuertos: 0, paridas: 0, madresGuacho: 0, destetados: 0, mort: 0 };
+    rodeosArr.forEach(r => { const k = r.kpis;
+      t.entoradas += k.servicio.entoradas || 0; t.inseminadas += k.servicio.inseminadas || 0;
+      t.tactIatf += k.servicio.total_tacteadas_iatf || 0; t.prenIatf += k.servicio.prenadas_iatf || 0;
+      t.tactFinal += k.servicio.tactadas_final || 0; t.prenFinal += k.servicio.total_prenadas || 0;
+      t.abortos += (k.gestacion && k.gestacion.abortos) || 0; t.nacVivos += k.paricion.nacidos_vivos || 0; t.nacMuertos += k.paricion.nacidos_muertos || 0;
+      t.paridas += k.paricion.vacas_paridas || 0; t.madresGuacho += k.paricion.madres_guacho || 0;
+      t.destetados += k.destete.total_destetados || 0; t.mort += k.destete.mortandad_terneros || 0; });
+    return kpisModoServicios_(t);
+  }
   let totServ = 0, prenIatf = 0, prenToro = 0, totPren = 0;
   let totTacteadasIatf = 0, totTacteadasToro = 0;
   let nacVivos = 0, nacMuertos = 0, abortos = 0, totDest = 0, mortTerneros = 0, parBase = 0, vacParidas = 0, madGuacho = 0;
@@ -1809,7 +1859,52 @@ function aggregateKpis_(rodeosArr) {
 }
 function round1_(n) { return n === null || n === undefined || isNaN(n) ? null : Math.round(n * 10) / 10; }
 
+// v289 -- Tarjetas para las campañas con entoradas desde Servicios (2027/2028 en adelante)
+function buildKpiRowServicios_(k) {
+  const sv = k.servicio;
+  const aviso = (txt) => `<div class="kpi-sub" style="color:var(--gold-text,#8a6d1f);font-weight:600">⚠ ${txt}</div>`;
+  const subFinal = sv.tactadas_final > 0
+    ? `${fn(sv.total_prenadas)} de ${fn(sv.tactadas_final)} tactadas (tacto final)` + (sv.faltan_tactar > 0 ? aviso('faltan tactar ' + fn(sv.faltan_tactar) + ' de ' + fn(sv.entoradas) + ' entoradas') : ` · ${fn(sv.entoradas)} entoradas`)
+    : `sin tactos finales todavía` + aviso('faltan tactar ' + fn(sv.entoradas) + ' entoradas');
+  const subIatf = sv.inseminadas > 0 || sv.total_tacteadas_iatf > 0
+    ? `${fn(sv.prenadas_iatf)} de ${fn(sv.total_tacteadas_iatf)} tactadas (tacto IATF)` + (sv.faltan_tactar_iatf > 0 ? aviso('faltan tactar ' + fn(sv.faltan_tactar_iatf) + ' de ' + fn(sv.inseminadas) + ' inseminadas') : ` · ${fn(sv.inseminadas)} inseminadas`)
+    : 'sin IATF en la campaña';
+  return `<div class="kpi-row">
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">⚭</div><div class="kpi-label">Preñez final</div>
+      <div class="kpi-value">${pct(sv.indice_prenez)}</div>
+      <div class="kpi-sub">${subFinal}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Preñadas del tacto final (IATF + repaso con toro) ÷ vacas entoradas (Servicios)</div>
+    </div>
+    <div class="kpi-card accent-gold">
+      <div class="kpi-icon">◔</div><div class="kpi-label">Preñez IATF</div>
+      <div class="kpi-value">${pct(sv.indice_prenez_iatf)}</div>
+      <div class="kpi-sub">${subIatf}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Preñadas del tacto IATF ÷ vacas inseminadas (Servicios IATF)</div>
+    </div>
+    <div class="kpi-card accent-clay">
+      <div class="kpi-icon">✦</div><div class="kpi-label">Índice de parición</div>
+      <div class="kpi-value">${pct(k.paricion.indice_paricion)}</div>
+      <div class="kpi-sub">${fn(k.paricion.vacas_paridas || 0)} paridas + ${fn((k.gestacion && k.gestacion.abortos) || 0)} abortos de ${fn(sv.total_prenadas)} preñadas${sv.tactadas_final ? '' : ' · todavía sin tacto final'}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">(Vacas que parieron — con ternero vivo o muerto — + vacas que abortaron) ÷ vacas preñadas</div>
+    </div>
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">⊞</div><div class="kpi-label">Destete / vaca preñada</div>
+      <div class="kpi-value">${pct(k.destete.indice_destete)}</div>
+      <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados de ${fn(sv.total_prenadas)} vacas preñadas${k.destete.total_destetados ? '' : ' · todavía sin destetes'}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Terneros destetados ÷ vacas preñadas</div>
+    </div>
+    <div class="kpi-card accent-green">
+      <div class="kpi-icon">⊞</div><div class="kpi-label">Destete / vaca entorada</div>
+      <div class="kpi-value">${pct(k.destete.indice_destete_entorada)}</div>
+      <div class="kpi-sub">${fn(k.destete.total_destetados)} destetados de ${fn(sv.entoradas)} vacas entoradas${k.destete.total_destetados ? '' : ' · todavía sin destetes'}</div>
+      <div class="kpi-sub" style="margin-top:6px;font-style:italic">Terneros destetados ÷ vacas entoradas (Servicios)</div>
+    </div>
+  </div>`;
+}
+
 function buildKpiRow(k) {
+  if (k && k.servicio && k.servicio.modo_servicios) return buildKpiRowServicios_(k); // v289
   return `<div class="kpi-row">
     <div class="kpi-card accent-green">
       <div class="kpi-icon">⚭</div><div class="kpi-label">Índice de preñez</div>
@@ -1927,6 +2022,15 @@ function calcKpisReproduccionJS_(datos, rodeoFiltro) {
   // v253: destete sobre vaca PREÑADA y sobre vaca ENTORADA (ya no sobre nacidos vivos)
   const indiceDestete = totalPrenadas > 0 ? (totalDestetados / totalPrenadas * 100) : null;
   const indiceDesteteEntorada = totalServiciadas > 0 ? (totalDestetados / totalServiciadas * 100) : null;
+  // v289 -- desde 2027/2028: entoradas e inseminadas salen de los Servicios; preñez final solo del tacto final
+  if (entoradasPorServicios_(datos.campanaId)) {
+    const servF = porRodeo(datos.servicios || []);
+    return kpisModoServicios_({ rodeo_id: rodeoFiltro,
+      entoradas: sum(servF, 'cantidad'), inseminadas: sum(servF.filter(x => x.tipo === 'IATF'), 'cantidad'),
+      tactIatf: totalTacteadasIatf, prenIatf: prenadasIatf, tactFinal: totalTacteadasFinal, prenFinal: prenadasFinalTotal,
+      abortos: abortosF, nacVivos: nacidosVivos + madresGuacho, nacMuertos: nacidosMuertos, paridas: vacasParidas, madresGuacho,
+      destetados: totalDestetados, mort: mortF });
+  }
   return {
     rodeo_id: rodeoFiltro,
     servicio: { total_serviciadas: totalServiciadas, prenadas_iatf: prenadasIatf, prenadas_toro: prenadasToro, total_prenadas: totalPrenadas, total_tacteadas_iatf: totalTacteadasIatf, total_tacteadas_toro: Math.max(0, totalTacteadasFinal - totalTacteadasIatf), indice_prenez: round1(indicePrenez), indice_prenez_iatf: round1(indicePrenezIatf), indice_prenez_toro: round1(indicePrenezToro) },
@@ -24369,6 +24473,12 @@ function buildCostoIatf() {
   const servSinCant = serv.filter(x => !(Number(x.cantidad) > 0)).length;
   const tac = (S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto IATF' && campanaEfectiva_(t.fecha, t.campana_id) === cid);
   const pren = tac.reduce((a, t) => a + (Number(t.prenadas) || 0), 0);
+  // v288 -- % de preñez sobre las TACTADAS (igual que Índices de reproducción); el
+  // costo por preñada = costo por inseminada ÷ % de preñez, así no sale inflado
+  // mientras faltan tactos (Crist, 10/11/2026).
+  const tacteadas = tac.reduce((a, t) => a + (Number(t.total_tacteadas) || 0), 0);
+  const pctPren = tacteadas > 0 ? pren / tacteadas : 0;
+  const faltanTactar = Math.max(0, insem - tacteadas);
   const fm = n => '$ ' + fn(Math.round(Number(n) || 0));
   const tipo = s => esHonorarioVet_(s) ? '🩺 Honorarios' : '💉 Veterinaria';
   const fila = s => `<tr><td>${String(s.periodo).slice(0, 7)}</td><td>${tipo(s)}</td><td style="white-space:normal;font-size:12.5px;color:var(--text2)">${fdEsc_(obsSinTags_(s)) || '—'}</td>
@@ -24384,9 +24494,9 @@ function buildCostoIatf() {
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       ${kpi('Costo total IATF', fm(total), 'productos ' + fm(totGas) + ' · honorarios ' + fm(totHon))}
       ${kpi('Inseminadas', insem ? fn(insem) : '—', (serv.length ? serv.length + ' servicio' + (serv.length > 1 ? 's' : '') + ' IATF' + (servSinCant ? ' · ⚠ ' + servSinCant + ' sin cantidad' : '') : 'sin Servicios IATF en la campaña') + ' · se suman a medida que los cargás')}
-      ${kpi('Preñadas IATF', pren ? fn(pren) : '—', tac.length ? tac.length + ' tacto' + (tac.length > 1 ? 's' : '') + ' IATF' + (insem ? ' · ' + fn(pren / insem * 100, 1) + '% de preñez' : '') : 'sin Tacto IATF en la campaña')}
+      ${kpi('Preñadas IATF', pren ? fn(pren) : '—', tac.length ? fn(pren) + ' de ' + fn(tacteadas) + ' tactadas · <b>' + fn(pctPren * 100, 1) + '% de preñez</b>' + (faltanTactar ? ' · faltan tactar ' + fn(faltanTactar) : '') : 'sin Tacto IATF en la campaña')}
       ${kpi('Costo por inseminada', insem ? fm(total / insem) : '—', '')}
-      ${kpi('Costo por preñada', pren ? fm(total / pren) : '—', '')}
+      ${kpi('Costo por preñada', insem && pctPren > 0 ? fm(total / insem / pctPren) : '—', insem && pctPren > 0 ? 'costo por inseminada ÷ ' + fn(pctPren * 100, 1) + '% de preñez' + (faltanTactar ? ' · estimado: faltan tactos' : '') : '')}
     </div></div>`;
   h += `<div class="panel"><div class="panel-title">✅ Gastos de IATF <span class="pill pill-gold">${iatf.length}</span></div>` +
     (iatf.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th><th>Campaña nacimientos</th></tr></thead><tbody>${iatf.map(fila).join('')}</tbody>
