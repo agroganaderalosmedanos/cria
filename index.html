@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_285';
+const APP_VERSION = 'index_consolidado_4_6_155_286';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1182,6 +1182,7 @@ const NAV = [
     { k: 'dashboard_costos',     icon: 'ti-coin',        label: 'Costos' },
     { k: 'cesiones_cria',        icon: 'ti-arrow-right', label: 'Cesiones' },
     { k: 'indices_reproduccion', icon: 'ti-activity',    label: 'Índices de reproducción' },
+    { k: 'costo_iatf',           icon: 'ti-needle',      label: 'Costo IATF' },
     { k: 'estado_vientres',       icon: 'ti-heartbeat',   label: 'Estado de Vientres' },
     { k: 'servicios',            icon: 'ti-heart',       label: 'Servicios' },
     { k: 'tactos',               icon: 'ti-stethoscope', label: 'Tactos' },
@@ -1282,6 +1283,16 @@ async function goto(page) {
     if (!S.cache.pariciones)       loads.push(loadEntity('pariciones').catch(()=>{}));
     if (!S.cache.servicios)        loads.push(loadEntity('servicios').catch(()=>{}));
     Promise.all(loads).then(() => { clearTimeout(t); render(); }).catch(err => { clearTimeout(t); render(); });
+  }
+  if (page === 'costo_iatf') {
+    // v286 -- honorarios/gastos (hoja Sueldos), servicios y tactos de la campaña
+    const ciLoads = [
+      loadEntity('sueldos', true).catch(()=>{}),
+      loadEntity('servicios', true).catch(()=>{}),
+      loadEntity('tactos', true).catch(()=>{}),
+    ];
+    if (!S.cache.campanas) ciLoads.push(loadEntity('campanas').catch(()=>{}));
+    S.loading = true; render(); await Promise.all(ciLoads); S.loading = false;
   }
   if (page === 'mortandad_analisis') {
     const maLoads = [];
@@ -1604,7 +1615,7 @@ function buildShell() {
 
 function pageTitle(p) {
   const titles = {
-    dashboard: 'Resultados Económicos Cría', dashboard_costos: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
+    dashboard: 'Resultados Económicos Cría', dashboard_costos: 'Resultados Económicos Cría', indices_reproduccion: 'Índices de Reproducción', costo_iatf: 'Costo IATF', estado_vientres: 'Estado de Vientres', precios_valorizacion: 'Precios para Valorización de Stock', servicios: 'Servicios', tactos: 'Tactos',
     abortos: 'Abortos', pariciones: 'Pariciones', mortandad: 'Mortandad',
     home: '', recria_dashboard: 'Dashboard Recría', recria_dashboard_costos: 'Dashboard Recría', campanas: 'Campañas', cesiones_cria: 'Cesiones — Cría a Recría', cesiones_recria: 'Cesiones — Recría a Terminación', destetes: 'Destetes', movimientos: 'Movimientos de Hacienda', ventas: 'Ventas de Hacienda', stock_hacienda: 'Stock de Hacienda', compras_hacienda: 'Compras de Hacienda', insumos: 'Insumos', margenbruto: 'Margen Bruto Ganadero', config: 'Configuración', abm: 'ABM — Catálogos', precios_valorizacion: 'Hacienda — Precios del mes', cotizacion: 'Cotización U$S', sueldos: 'Sueldos', pesadas: 'Pesadas', engorde: 'Resultado Económico Terminación', engorde_costos: 'Resultado Económico Terminación', engorde_comparacion: 'Resultado Económico Terminación', engorde_proyeccion: 'Resultado Económico Terminación', engorde_cierre: 'Resultado Económico Terminación', engorde_historial: 'Resultado Económico Terminación', engorde_pesadas: 'Pesadas — Engorde', importar_fielddata: 'Importar Fielddata', importar_facturas: 'Importar facturas veterinaria',
   };
@@ -1612,7 +1623,7 @@ function pageTitle(p) {
 }
 function pageSubtitle(p) {
   const subs = {
-    dashboard: 'Ingresos, egresos y margen por campaña', precios_valorizacion: 'Un registro por mes — el sistema usa el más reciente al generar informes', indices_reproduccion: 'Índices de preñez, parición y destete por rodeo',
+    dashboard: 'Ingresos, egresos y margen por campaña', precios_valorizacion: 'Un registro por mes — el sistema usa el más reciente al generar informes', indices_reproduccion: 'Índices de preñez, parición y destete por rodeo', costo_iatf: 'Lo que costó la IATF de la campaña: productos y honorarios marcados como IATF',
     estado_vientres: 'Preñadas, paridas, abortadas, muertas y pendientes de parir por rodeo',
     servicios: 'IATF y servicio con toros a campo',
     tactos: 'Resultado de tacto por rodeo',
@@ -1663,6 +1674,7 @@ function buildPage(page) {
     case 'engorde_alim':    return buildEngordeAlim();
     case 'sueldos':          return buildSueldos();
     case 'indices_reproduccion': return buildIndicesReproduccion();
+    case 'costo_iatf': return buildCostoIatf();
     case 'estado_vientres': return buildEstadoVientres();
     case 'compras_hacienda':     return buildComprasHacienda();
     case 'precios_valorizacion':  return buildPreciosValPage();
@@ -1749,7 +1761,7 @@ function attachPageEvents(page) {
   const fns = {
     dashboard: attachDashboardEvents, dashboard_costos: attachDashboardEvents, servicios: attachServiciosEvents, tactos: attachTactosEvents,
     abortos: attachAbortosEvents, pariciones: attachParicionesEvents, mortandad: attachMortandadEvents,
-    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents, importar_fielddata: attachImportarFielddataEvents, importar_facturas: attachImportarFacturasEvents,
+    destetes: attachDestetesEvents, movimientos: attachMovimientosEvents, ventas: attachVentasEvents, insumos: attachInsumosEvents, recria_dashboard: attachRecriaDashboardEvents, recria_dashboard_costos: attachRecriaDashboardEvents, cesiones_cria: attachCesionesCriaEvents, cesiones_recria: attachCesionesRecriaEvents, engorde: attachEngordeEvents, engorde_pesadas: attachEngordePesadasEvents, engorde_costos: attachEngordeEvents, engorde_comparacion: attachEngordeEvents, engorde_proyeccion: attachEngordeEvents, engorde_cierre: attachEngordeEvents, engorde_historial: attachEngordeEvents, margenbruto: attachMargenBrutoEvents, ia: attachIAEvents, stock_hacienda: attachStockHaciendaEvents, pesadas: attachPesadasEvents, cotizacion: attachCotizacionEvents, config: attachConfigEvents, abm: attachABMEvents, campanas: attachCampanasEvents, sueldos: attachSueldosEvents, indices_reproduccion: attachIndicesReproduccionEvents, costo_iatf: attachCostoIatfEvents, compras_hacienda: attachComprasHaciendaEvents, precios_valorizacion: attachPreciosValEvents, importar_fielddata: attachImportarFielddataEvents, importar_facturas: attachImportarFacturasEvents,
   };
   if (fns[page]) fns[page]();
 }
@@ -24144,19 +24156,24 @@ function fvControlHtml_() {
       if (fac - rec > 0.0001) avisos.push(`<span style="color:var(--red)">Faltan recibir ${fq(fac - rec)}</span>`);
       if (rec - fac > 0.0001) avisos.push(`<span style="color:var(--red)">Falta factura de ${fq(rec - fac)}</span>`);
     } else if (sp.length) {
-      // v280 -- Es normal retirar remedios y que la factura llegue a fin de mes o a los dos meses:
-      // solo se alarma si la entrada sin precio más vieja tiene más de 60 días.
-      const vieja = sp.map(c => String(c.fecha || '')).sort()[0];
+      // v286 -- Si el producto ya tiene algún precio (una factura), los usos sin
+      // factura se valorizan con ese precio: no es alarma. Lo anterior al inicio
+      // del control no se muestra. Rojo solo si NO tiene ningún precio.
+      const tienePrecio = cp.some(c => Number(c.precio_unitario) > 0);
+      const spNuevas = sp.filter(c => String(c.fecha || '') >= FV_DESDE_);
+      const vieja = (tienePrecio ? spNuevas : sp).map(c => String(c.fecha || '')).sort()[0];
+      const cantAviso = (tienePrecio ? spNuevas : sp).reduce((s, c) => s + (Number(c.cantidad) || 0), 0);
       const dias = vieja ? Math.round((new Date(today() + 'T00:00:00') - new Date(vieja + 'T00:00:00')) / 86400000) : 0;
-      avisos.push(dias > 60
-        ? `<span style="color:var(--red)">Usado sin factura: ${fq(spCant)} desde el ${fd(vieja)} (hace ${dias} días) — si la factura no llega, pedile el precio al veterinario y cargalo con "Actualizar precio" en Insumos</span>`
-        : `<span style="color:var(--gold-text,#8a6d1f)">Usado, esperando factura: ${fq(spCant)} desde el ${fd(vieja)}</span>`);
+      if (!tienePrecio) avisos.push(`<span style="color:var(--red)">Usado sin ningún precio: ${fq(spCant)} desde el ${fd(sp.map(c => String(c.fecha || '')).sort()[0])} — si no llega factura, pedile el precio al veterinario y cargalo con "Actualizar precio" en Insumos</span>`);
+      else if (spNuevas.length) avisos.push(dias > 60
+        ? `<span style="color:var(--gold-text,#8a6d1f)">Esperando factura hace ${dias} días: ${fq(cantAviso)} desde el ${fd(vieja)} (mientras tanto se valoriza con el último precio)</span>`
+        : `<span style="color:var(--gold-text,#8a6d1f)">Usado, esperando factura: ${fq(cantAviso)} desde el ${fd(vieja)}</span>`);
     }
     if (fdStock && sp.length) avisos.push(`<span style="color:var(--red)">${sp.length} entrada${sp.length > 1 ? 's' : ''} sin precio</span>`);
     return { p, fac, rec, usado, stock, fdStock, avisos };
   }).filter(Boolean).sort((a, b) => String(a.p.nombre).localeCompare(String(b.p.nombre), 'es'));
   let h = `<div class="panel"><div class="panel-title">Control de compras de veterinaria <span style="font-weight:400;color:var(--text2);font-size:12.5px">· desde el ${fd(FV_DESDE_)}</span></div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55"><b>Remedios</b>: el stock es lo facturado menos lo usado según los tratamientos de Fielddata. Si se usó algo antes de que llegue la factura, el importador de Tratamientos creó una entrada sin precio: aparece como "esperando factura" y, cuando importás la factura, toma su precio. Pasados 60 días sin factura, el aviso se pone en rojo. <b>Productos que lleva Fielddata</b> (rumex, sales…): el stock es lo que carga Nacho; acá se compara lo facturado con lo recibido.</p>`;
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55"><b>Remedios</b>: el stock es lo facturado menos lo usado según los tratamientos de Fielddata. Si se usó algo antes de que llegue la factura, el importador de Tratamientos creó una entrada sin precio: aparece como "esperando factura" y, cuando importás la factura, toma su precio. Si el remedio ya tiene algún precio, los usos sin factura se valorizan con ese precio; en rojo solo aparecen los usados que no tienen ningún precio. <b>Productos que lleva Fielddata</b> (rumex, sales…): el stock es lo que carga Nacho; acá se compara lo facturado con lo recibido.</p>`;
   if (!filas.length) return h + `<div style="font-size:12.5px;color:var(--text3)">Todavía no hay compras ni usos de veterinaria desde el ${fd(FV_DESDE_)}.</div></div>`;
   h += `<div style="overflow-x:auto"><table class="dt"><thead><tr><th>Producto</th><th>Stock lo lleva</th><th class="tr">Facturado</th><th class="tr">Recibido (Fielddata)</th><th class="tr">Usado</th><th class="tr">Stock hoy</th><th>Aviso</th></tr></thead><tbody>` +
     filas.map(r => `<tr><td><b>${fdEsc_(r.p.nombre)}</b> <span style="color:var(--text3);font-size:11px">${fdEsc_(r.p.unidad || '')}</span></td><td>${r.fdStock ? 'Fielddata' : 'Factura'}</td>
@@ -24306,6 +24323,77 @@ function attachImportarFacturasEvents() {
   });
   const g = document.getElementById('fv-grabar');
   if (g) g.onclick = () => fvGrabar_();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v286 -- COSTO IATF (Crist, 09/11/2026). Suma lo marcado "[iatf]" en la hoja
+// Sueldos (honorarios veterinarios y gastos de veterinaria de las facturas)
+// de la campaña, y lo divide por las inseminadas (Servicios tipo IATF) y las
+// preñadas de IATF (Tactos "Tacto IATF"). Es una vista: no cambia el margen.
+// La IATF se imputa a la campaña en que se hace (criterio A).
+// ═══════════════════════════════════════════════════════════════════════
+function ciCampanaDeRegistro_(s) {
+  const per = String(s.periodo || '').slice(0, 7);
+  const c = per ? campanaDeFecha_(per + '-01') : null;
+  return c ? String(c.campana_id) : '';
+}
+function buildCostoIatf() {
+  const campanas = (S.cache.campanas || []).slice().sort((a, b) => String(b.fecha_inicio || '').localeCompare(String(a.fecha_inicio || '')));
+  if (!campanas.length) return '<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay campañas cargadas.</div></div>';
+  if (!S.ciCamp) { const act = campanas.find(c => String(c.activa).toUpperCase() === 'TRUE') || campanaDeFecha_(today()) || campanas[0]; S.ciCamp = String(act.campana_id); }
+  const camp = campanas.find(c => String(c.campana_id) === String(S.ciCamp)) || campanas[0];
+  const cid = String(camp.campana_id);
+  const regs = (S.cache.sueldos || []).filter(s => (esHonorarioVet_(s) || esGastoVet_(s)) && ciCampanaDeRegistro_(s) === cid)
+    .sort((a, b) => String(a.periodo).localeCompare(String(b.periodo)) || Number(a.sueldo_id) - Number(b.sueldo_id));
+  const iatf = regs.filter(esIatf_), resto = regs.filter(s => !esIatf_(s));
+  const totHon = iatf.filter(esHonorarioVet_).reduce((a, s) => a + (Number(s.monto) || 0), 0);
+  const totGas = iatf.filter(esGastoVet_).reduce((a, s) => a + (Number(s.monto) || 0), 0);
+  const total = totHon + totGas;
+  const serv = (S.cache.servicios || []).filter(x => x.tipo === 'IATF' && campanaEfectiva_(x.fecha_inicio, x.campana_id) === cid);
+  const insem = serv.reduce((a, x) => a + (Number(x.cantidad) || 0), 0);
+  const servSinCant = serv.filter(x => !(Number(x.cantidad) > 0)).length;
+  const tac = (S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto IATF' && campanaEfectiva_(t.fecha, t.campana_id) === cid);
+  const pren = tac.reduce((a, t) => a + (Number(t.prenadas) || 0), 0);
+  const fm = n => '$ ' + fn(Math.round(Number(n) || 0));
+  const tipo = s => esHonorarioVet_(s) ? '🩺 Honorarios' : '💉 Veterinaria';
+  const fila = s => `<tr><td>${String(s.periodo).slice(0, 7)}</td><td>${tipo(s)}</td><td style="white-space:normal;font-size:12.5px;color:var(--text2)">${fdEsc_(obsSinTags_(s)) || '—'}</td>
+    <td class="tr">${fm(s.monto)}</td><td class="tc"><input type="checkbox" ${esIatf_(s) ? 'checked' : ''} onchange="window.ciIatf_('${s.sueldo_id}', this)"></td></tr>`;
+  const kpi = (lbl, val, sub) => `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;min-width:170px;flex:1"><div style="font-size:11.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.03em">${lbl}</div><div style="font-size:22px;font-weight:800;margin-top:4px">${val}</div>${sub ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px">${sub}</div>` : ''}</div>`;
+  let h = `<div class="panel">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <label style="font-size:13px">Campaña</label>
+      <select id="ci-camp">${campanas.map(c => `<option value="${c.campana_id}" ${String(c.campana_id) === cid ? 'selected' : ''}>${fdEsc_(c.nombre)}</option>`).join('')}</select>
+      <span style="font-size:12px;color:var(--text3)">Lo marcado como IATF en honorarios y gastos de veterinaria (de las facturas o cargados en Sueldos). Es una vista aparte: el margen de Cría ya incluye estos importes en Veterinaria y Honorarios.</span>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${kpi('Costo total IATF', fm(total), 'productos ' + fm(totGas) + ' · honorarios ' + fm(totHon))}
+      ${kpi('Inseminadas', insem ? fn(insem) : '—', serv.length ? serv.length + ' servicio' + (serv.length > 1 ? 's' : '') + ' IATF' + (servSinCant ? ' · ⚠ ' + servSinCant + ' sin cantidad' : '') : 'sin Servicios IATF en la campaña')}
+      ${kpi('Preñadas IATF', pren ? fn(pren) : '—', tac.length ? tac.length + ' tacto' + (tac.length > 1 ? 's' : '') + ' IATF' + (insem ? ' · ' + fn(pren / insem * 100, 1) + '% de preñez' : '') : 'sin Tacto IATF en la campaña')}
+      ${kpi('Costo por inseminada', insem ? fm(total / insem) : '—', '')}
+      ${kpi('Costo por preñada', pren ? fm(total / pren) : '—', '')}
+    </div></div>`;
+  h += `<div class="panel"><div class="panel-title">✅ Gastos de IATF <span class="pill pill-gold">${iatf.length}</span></div>` +
+    (iatf.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th></tr></thead><tbody>${iatf.map(fila).join('')}</tbody>
+      <tfoot><tr><td colspan="3" class="tr"><b>Total</b></td><td class="tr"><b>${fm(total)}</b></td><td></td></tr></tfoot></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay nada marcado como IATF en esta campaña.</div>') + `</div>`;
+  h += `<div class="panel"><div class="panel-title">Resto de veterinaria y honorarios de la campaña <span style="font-weight:400;font-size:12.5px;color:var(--text2)">· si algo era de IATF, tildalo</span></div>` +
+    (resto.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th></tr></thead><tbody>${resto.map(fila).join('')}</tbody></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay otros registros.</div>') + `</div>`;
+  return h;
+}
+function attachCostoIatfEvents() {
+  const sel = document.getElementById('ci-camp');
+  if (sel) sel.onchange = () => { S.ciCamp = sel.value; render(); };
+  window.ciIatf_ = async function(id, chk) {
+    const reg = (S.cache.sueldos || []).find(x => String(x.sueldo_id) === String(id));
+    if (!reg) return;
+    chk.disabled = true;
+    try {
+      await apiCall('update', { body: { entity: 'sueldos', id, data: { observacion: obsSinTags_(reg) + (chk.checked ? ' [iatf]' : '') } } });
+      invalidateCache('sueldos');
+      await loadEntity('sueldos', true);
+      toast(chk.checked ? 'Marcado como IATF' : 'Ya no suma a IATF', 'ok');
+    } catch (err) { toast('Error: ' + err.message, 'err'); }
+    render();
+  };
 }
 
 function buildImportarFielddata() {
