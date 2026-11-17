@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_291';
+const APP_VERSION = 'index_consolidado_4_6_155_292';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -23344,8 +23344,44 @@ function fdAnalizarTrat_() {
   st.items = items;
 }
 
+// v292 -- Asociaciones de Tratamientos (productos, rodeos y contenido del
+// frasco escrito a mano) que todavía no están guardadas. Antes se guardaban
+// solo al grabar algún tratamiento: si se recargaba la página, se perdían.
+function fdTratEquivPendientes_() {
+  const st = S.fd; const eq = [];
+  if (!st || !st.items) return eq;
+  Object.keys(st.tratProd || {}).forEach(k => { const e = st.tratProd[k]; if (e.confirmado && e.producto_id && e.origen !== 'guardado') eq.push({ tipo: 'trat_producto', campo_id: '', texto: k, destino_id: e.producto_id }); });
+  const env = {};
+  st.items.filter(it => it.clase === 'trat' && it.prodId).forEach(it => { const o = (st.tratOpts || {})[it.id] || {}; if (o.contOrigen === 'a mano' && !fdTratUnidadFija_(it.unidad) && Number(o.contenido) > 0) env[it.prodId] = String(Number(o.contenido)); });
+  Object.keys(env).forEach(pid => eq.push({ tipo: 'trat_envase', campo_id: '', texto: pid, destino_id: env[pid] }));
+  const rodKeys = new Set();
+  st.items.filter(it => it.clase === 'trat').forEach(it => it.ev.partes.forEach(p => rodKeys.add(p.equivKey)));
+  rodKeys.forEach(k => { const e = st.equiv[k]; if (e && e.hac && e.confirmado && e.rodeo_id && e.origen !== 'guardado') eq.push({ tipo: 'hac_rodeo', campo_id: e.campo_id, texto: e.texto, destino_id: e.rodeo_id }); });
+  return eq;
+}
+async function fdTratGuardarEquiv_() {
+  const st = S.fd;
+  const eq = fdTratEquivPendientes_();
+  if (!eq.length || st.grabando) return;
+  st.grabando = true; render();
+  try {
+    const res = await apiCall('importarFielddata', { body: { items: [], equivalencias: eq } });
+    toast('Asociaciones guardadas: ' + ((res && res.equivalencias_guardadas) || 0), 'ok');
+  } catch (e) { toast('No se pudieron guardar: ' + e.message, 'err'); }
+  finally {
+    st.grabando = false;
+    await fdRecargarDatos_();
+    fdSincronizarEquivGuardadas_();
+    fdAnalizarTodo_();
+    render();
+  }
+}
+
 function fdBuildTrat_(st) {
   let h = '';
+  { const pend = fdTratEquivPendientes_().length;
+    h += `<div class="panel" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" id="fd-trat-guardar-eq" ${pend && !st.grabando ? '' : 'disabled'}>Guardar asociaciones${pend ? ' (' + pend + ')' : ''}</button>
+      <span style="font-size:12.5px;color:var(--text2)">${pend ? 'Guarda lo que confirmaste (productos, rodeos y tamaños de frasco escritos a mano) sin grabar ningún tratamiento. Así no se pierde al recargar.' : 'No hay asociaciones sin guardar.'} La cantidad de frascos de cada tratamiento no se guarda acá: se graba con el tratamiento.</span></div>`; }
   const productos = (S.catalogs && S.catalogs.productos) || [];
   // Productos
   const usados = st.tratProdUsados || {};
@@ -24913,6 +24949,8 @@ function attachImportarFielddataEvents() {
     fdAnalizarTodo_(); render();
   });
   document.querySelectorAll('.fd-trat-prod-ok').forEach(b => b.onclick = () => { const e = st.tratProd[b.dataset.k]; if (!e || !e.producto_id) return; e.confirmado = true; e.origen = 'manual'; fdAnalizarTodo_(); render(); });
+  const tge = document.getElementById('fd-trat-guardar-eq');
+  if (tge) tge.onclick = () => fdTratGuardarEquiv_();
   const tcs = document.getElementById('fd-trat-conf-sug');
   if (tcs) tcs.onclick = () => { Object.keys(st.tratProdUsados || {}).forEach(k => { const e = st.tratProd[k]; if (e && !e.confirmado && e.producto_id) { e.confirmado = true; e.origen = 'manual'; } }); fdAnalizarTodo_(); render(); };
   document.querySelectorAll('.fd-trat-crear').forEach(b => b.onclick = () => fdTratCrearProducto_(b.dataset.k));
