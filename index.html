@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_294';
+const APP_VERSION = 'index_consolidado_4_6_155_295';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3761,6 +3761,12 @@ function buildDashboard() {
     comprasCab: clasCria.compras, cesRecCab: clasCria.cesionesRecibidas, cesEnvCab: clasCria.cesionesEnviadas,
     ventasCab: ventasCabCria, mortCab: mortCabCria,
   };
+  // v295 -- lo que usa el Excel de auditoría de Cría para respetar la campaña
+  // elegida y dar EXACTO lo mismo que este Dashboard.
+  S._auditCria = { campId: String(campSelec), campNombre: campSelecObj ? campSelecObj.nombre : String(campSelec), campo: campSelecField, corte: corteCria,
+    activa: esCampanaActivaCria, movs, ventasCria, cesiones, reposicionVientres, saldosIniciales, eiHeredadoStockPorRodeo,
+    campAnteriorFin: campAnteriorObj ? campAnteriorObj.fecha_fin : '', stockPorRodeo, consumosCria, comprasCria, mortandadCria,
+    rodeosCriaFilt, fechaValoracion: fechaValoracionCampSelec, pesadas };
 
   // ── KPIs reproductivos — Vacas Entoradas / Vacías / Preñadas / Índice de
   // Preñez, y la apertura de a dónde van esas preñadas (Paridas / Pendientes /
@@ -17078,13 +17084,30 @@ async function exportarAuditoriaCriaExcel_() {
       if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
     }
 
-    const rodeos = (S.catalogs && S.catalogs.rodeos) || [];
-    const rodeosCria = rodeos.filter(r => normAct_(r.actividad)==='cria');
+    for (const ent of ['consumos_insumos','compras_insumos','campanas']) {
+      if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
+    }
+    // v295 -- El Excel respeta la campaña (y el campo y la fecha de corte)
+    // elegidos en el Dashboard de Cría: se recalcula el Dashboard y se usan
+    // exactamente sus mismos datos, así los totales coinciden siempre.
+    S._auditCria = null;
+    // Desde Estado de Vientres manda la campaña elegida ahí.
+    const _dashCampPrev = S._dashCampana;
+    if (S.page === 'estado_vientres') S._dashCampana = S._evCamp || evCampanaDefault_();
+    try { buildDashboard(); } catch (e) { console.warn('auditoría: no se pudo recalcular el Dashboard', e); }
+    finally { S._dashCampana = _dashCampPrev; }
+    const AU = S._auditCria, RC = S._resultCria;
+    if (!AU || !RC) throw new Error('No se pudo calcular el Dashboard de Cría. Abrilo con la campaña elegida y volvé a exportar.');
+    const rodeosCria = AU.rodeosCriaFilt;
     const rodeosCriaIds = new Set(rodeosCria.map(r => String(r.rodeo_id)));
-    const corte = S._corteCria || today();
+    const corte = AU.corte;
     const stockACorte = stockPorRodeoACorte_(corte);
-    const movsTodos = (S.cache.movimientos || []).filter(m => (m.fecha||'') <= corte);
-    const ventasTodas = (S.cache.ventas || []).filter(v => rodeosCriaIds.has(String(v.rodeo_id)) && (v.fecha_salida||'') <= corte);
+    const eiCampStock = eiCriaCampana_(AU.campId).stockPorRodeo;
+    const efRealPorRodeo = AU.activa ? stockACorte : efCriaCampanaStockPorRodeo_(AU.campId);
+    const movsTodos = AU.movs;
+    const ventasTodas = AU.ventasCria;
+    const enCampDeEv_ = (fecha, campId) => campanaEfectiva_(fecha, campId) === AU.campId && (!AU.activa || (fecha||'') <= corte);
+    const tituloCamp = 'Campaña ' + AU.campNombre + (AU.campo ? ' · ' + campoNombre(AU.campo) : '');
     const tc = tipoCambioVigente_(corte);
     const tcVal = tc ? Number(tc.valor || tc) : null;
 
@@ -17117,8 +17140,7 @@ async function exportarAuditoriaCriaExcel_() {
     const headers1 = ['Rodeo','Campo','Categoría','EI','+ Nacimientos','+ Entradas (traslados)','− Salidas (traslados)','− Ventas','− Mortandad','= EF calculado','EF real (stock)','Diferencia'];
     const filas1 = rodeosCria.map(r => {
       const rid = String(r.rodeo_id);
-      const saldosR = movsTodos.filter(m => m.tipo==='Saldo inicial' && String(m.rodeo_destino_id)===rid && !esAltaPorParicion_(m));
-      const eiR = saldosR.reduce((s,m)=>s+(Number(m.cantidad)||0),0);
+      const eiR = Number(eiCampStock[rid]) || 0; // v295: EI de la campaña (heredada + saldos iniciales propios)
       // v22: esAltaPorParicion_ ya valida el tipo internamente (acepta 'Saldo
       // inicial'+tag viejo o 'Nacimiento' nuevo) — no hace falta repetir el
       // chequeo de tipo acá, y repetirlo mal (solo 'Saldo inicial') dejaba
@@ -17134,14 +17156,14 @@ async function exportarAuditoriaCriaExcel_() {
       // esMortandadPorParicion_). Eso hacía que el EF calculado quedara por
       // debajo del stock real en exactamente esa cantidad, marcando una
       // "Diferencia" que en realidad no era ningún problema de stock.
-      const mortR = (S.cache.mortandad||[]).filter(m => String(m.rodeo_id)===rid && (m.fecha||'')<=corte && !esMortandadPorParicion_(m)).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
+      const mortR = (AU.mortandadCria||[]).filter(m => String(m.rodeo_id)===rid && !esMortandadPorParicion_(m)).reduce((s,m)=>s+(Number(m.cantidad)||1),0);
       const efCalcR = eiR + nacR + entradasR - salidasR - ventasR - mortR;
-      const efRealR = Math.max(0, stockACorte[rid]||0);
+      const efRealR = Math.max(0, efRealPorRodeo[rid]||0);
       return { nombre: r.nombre, campo: campoNombre(r.campo_id), categoria: r.categoria||'—', eiR, nacR, entradasR, salidasR, ventasR, mortR, efCalcR, efRealR, diff: efRealR-efCalcR };
     }).filter(f => f.eiR||f.nacR||f.entradasR||f.salidasR||f.ventasR||f.mortR||f.efRealR);
     const aoa1 = [
-      [`Agroganadera Los Médanos — Auditoría Cría (cabezas)`],
-      ['Fecha de corte', fd(corte)],
+      [`Agroganadera Los Médanos — Auditoría Cría (cabezas) — ${tituloCamp}`],
+      ['Fecha de corte', fd(corte), AU.activa ? 'EF real = stock de hoy' : 'Campaña cerrada: EF real = existencia final de la campaña'],
       [],
       headers1,
     ];
@@ -17180,146 +17202,84 @@ async function exportarAuditoriaCriaExcel_() {
     // que usa el Dashboard (convertirAMoneda_ por transacción), y se agrega
     // primero un bloque de "Resumen campaña" con los mismos rubros que se ven
     // en pantalla, para que se pueda comparar línea por línea sin diferencias.
-    const monedaCria = S.criaMoneda || 'ARS';
-    const monedaLabelCria = monedaCria === 'USD' ? 'U$S' : 'ARS';
-    const rodeosCriaIdsSet = new Set(rodeosCria.map(r=>String(r.rodeo_id)));
+    // v295 -- Resumen = los mismos totales del Dashboard (en pesos). El
+    // detalle por rodeo se arma con los mismos registros de la campaña.
+    const monedaLabelCria = 'ARS';
+    const pesadasAudit = AU.pesadas || [];
     const rodeosPorIdAudit = Object.fromEntries((S.catalogs&&S.catalogs.rodeos||[]).map(r=>[String(r.rodeo_id),r]));
-    const pesadasAudit = S.cache.pesadas||[];
-
-    const ventasCriaAudit = ventasTodas.filter(v=>rodeosCriaIdsSet.has(String(v.rodeo_id)));
-    const resVentas = ventasCriaAudit.reduce((s,v)=>{
-      const imp = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
-      return s + convertirAMoneda_(imp, v.fecha_salida, monedaCria);
-    },0);
-
-    const cesionesCriaAudit = movsTodos.filter(m=>{
-      if (m.tipo!=='Traslado en bloque'&&m.tipo!=='Traslado individual') return false;
-      const or = rodeosPorIdAudit[String(m.rodeo_origen_id)];
-      const de = rodeosPorIdAudit[String(m.rodeo_destino_id)];
-      return or&&normAct_(or.actividad)==='cria'&&de&&(normAct_(de.actividad)==='recria'||normAct_(de.actividad)==='engorde'||normAct_(de.actividad)==='terminacion');
-    });
-    const resCesiones = cesionesCriaAudit.reduce((s,m)=>{
-      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-      const precioCabeza=Number(m.precio_cabeza)||0;
-      const precioKg=Number(m.precio_kg)||0;
-      let importeARS;
-      if (precioCabeza>0) importeARS = cant*precioCabeza;
-      else if (precioKg&&peso) importeARS = cant*peso*precioKg;
-      else if (precioKg&&!peso) {
+    const valorTraslado_ = (m, catDefault) => {
+      const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0, precioCabeza=Number(m.precio_cabeza)||0, precioKg=Number(m.precio_kg)||0;
+      if (precioCabeza>0) return cant*precioCabeza;
+      if (precioKg&&peso) return cant*peso*precioKg;
+      if (precioKg&&!peso) {
         const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-        importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
-      } else {
-        const rodeo = rodeosPorIdAudit[String(m.rodeo_origen_id)];
-        const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-        importeARS = valorizarRodeo_(rodeo||{}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+        return cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
       }
-      return s + convertirAMoneda_(importeARS, m.fecha, monedaCria);
-    },0);
-
-    let resStockValARS = 0;
-    rodeosCria.forEach(r=>{
-      const stk = Math.max(0, stockACorte[String(r.rodeo_id)]||0);
-      if (!stk) return;
-      const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(r.rodeo_id)&&(p.fecha||'')<=corte).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-      resStockValARS += valorizarRodeo_(r, stk, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
-    });
-    // "Stock valorizado" es un ítem de BALANCE — se convierte una sola vez a la
-    // cotización del corte (igual que en el Dashboard), a diferencia de los
-    // ítems de FLUJO de arriba/abajo que se convierten cada uno a su propia fecha.
-    const resStockVal = convertirAMoneda_(resStockValARS, corte, monedaCria);
-    const resIngresos = resVentas + resCesiones + resStockVal;
-
-    const saldosCriaAudit = movsTodos.filter(m=>m.tipo==='Saldo inicial'&&!esAltaPorParicion_(m)&&rodeosCriaIdsSet.has(String(m.rodeo_destino_id)));
-    const resStockIni = saldosCriaAudit.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaCria),0);
-    const comprasCriaAudit = comprasHacGetAll_().filter(c=>rodeosCriaIdsSet.has(String(c.rodeo_id))&&(c.fecha||'')<=corte);
-    const resCompras = comprasCriaAudit.reduce((s,c)=>s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, monedaCria),0);
-    const consumosCriaAudit = (S.cache.consumos_insumos||[]).filter(c=>rodeosCriaIdsSet.has(String(c.rodeo_id))&&(c.fecha||'')<=corte);
-    const productosAudit = (S.catalogs&&S.catalogs.productos)||[];
-    const prodPorIdAudit = Object.fromEntries(productosAudit.map(p=>[String(p.producto_id),p]));
-    let resAlim = 0, resVet = 0;
-    consumosCriaAudit.forEach(c=>{
-      const prod = prodPorIdAudit[String(c.producto_id)];
-      const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-      const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
-      const importe = convertirAMoneda_(importeARS, c.fecha, monedaCria);
-      if (cat.includes('veterin')||cat.includes('sanid')) resVet += importe; else resAlim += importe;
-    });
-    const resSueldos = sueldoTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria);
-  const resSueldos_hv = honorariosTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria); // v275
-  resVet += gastosVetTotalActividad_('cria', s => String(s.periodo).slice(0,7) <= corte.slice(0,7), monedaCria); // v285 -- gastos de veterinaria de las facturas (globales de Cría)
-    const resEgresos = resStockIni + resCompras + resAlim + resVet + resSueldos + resSueldos_hv;
-    const resMargen = resIngresos - resEgresos;
-
+      const rodeo = rodeosPorIdAudit[String(m.rodeo_origen_id)];
+      const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+      return valorizarRodeo_(rodeo||{categoria:catDefault||''}, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
+    };
+    const R0 = n => Math.round(Number(n)||0);
     const aoa2 = [
-      [`Agroganadera Los Médanos — Auditoría Cría (economía)`],
+      [`Agroganadera Los Médanos — Auditoría Cría (economía) — ${tituloCamp}`],
       ['Fecha de corte', fd(corte)],
-      ['Nota', `Importes en ${monedaLabelCria === 'U$S' ? 'dólares — cada movimiento convertido a la cotización DE SU PROPIA FECHA, no la del corte' : 'pesos ARS crudos'}. Esta hoja debe coincidir con el Dashboard.`],
+      ['Nota', 'Importes en pesos ARS. El resumen es el mismo del Dashboard de Cría para esta campaña, campo y fecha de corte.'],
       [],
-      ['RESUMEN CAMPAÑA', `(${monedaLabelCria})`],
-      ['💰 Ventas de hacienda', Math.round(resVentas)],
-      ['🔄 Cesiones a Recría/Engorde', Math.round(resCesiones)],
-      ['📦 Stock valorizado actual', Math.round(resStockVal)],
-      ['TOTAL INGRESOS', Math.round(resIngresos)],
-      ['🐄 Stock inicial', Math.round(resStockIni)],
-      ['🛒 Compras de hacienda', Math.round(resCompras)],
-      ['🌾 Alimentación', Math.round(resAlim)],
-      ['💉 Veterinaria', Math.round(resVet)],
-      ['👤 Sueldos imputados a Cría', Math.round(resSueldos)],
-      ['🩺 Honorarios veterinarios', Math.round(resSueldos_hv)],
-      ['TOTAL EGRESOS', Math.round(resEgresos)],
-      ['MARGEN', Math.round(resMargen)],
+      ['RESUMEN CAMPAÑA', `(ARS)`],
+      ['💰 Ventas de hacienda', R0(RC.ingVentas)],
+      ['🔄 Cesiones a Recría/Engorde', R0(RC.ingCesiones)],
+      ['📦 Stock valorizado', R0(RC.ef)],
+      ['TOTAL INGRESOS', R0(RC.ing)],
+      ['🐄 Stock inicial', R0(RC.ei)],
+      ['🛒 Compras de hacienda', R0(RC.compras)],
+      ['🐮 Cesiones recibidas (reposición de vientres desde Recría)', R0(RC.reposicionVientres)],
+      ['🌾 Alimentación', R0(RC.egAlim)],
+      ['💉 Veterinaria', R0(RC.egVet)],
+      ['👤 Sueldos imputados a Cría', R0(RC.egSueldos)],
+      ['🩺 Honorarios veterinarios', R0(RC.egHonVet)],
+      ['TOTAL EGRESOS', R0(RC.eg)],
+      ['MARGEN', R0(RC.margen)],
+      ['MARGEN en U$S (cada movimiento a su cotización)', R0(RC.margenUSD)],
       [],
     ];
     const detalleLabelIdx = aoa2.length;
-    aoa2.push(['DETALLE POR RODEO']);
-    const headers2 = ['Rodeo','Campo','Categoría', `Stock inicial (${monedaLabelCria})`, `Compras (${monedaLabelCria})`, `Alimentación (${monedaLabelCria})`, `Cesiones enviadas (${monedaLabelCria})`, `Ventas (${monedaLabelCria})`, `Stock valorizado (${monedaLabelCria})`];
+    aoa2.push(['DETALLE POR RODEO (sueldos, honorarios y gastos globales de veterinaria no se reparten por rodeo)']);
+    const headers2 = ['Rodeo','Campo','Categoría','Stock inicial (ARS)','Compras (ARS)','Cesiones recibidas (ARS)','Alimentación (ARS)','Veterinaria (ARS)','Cesiones enviadas (ARS)','Ventas (ARS)','Stock valorizado (ARS)'];
     aoa2.push(headers2);
     const filaHeaderIdx = aoa2.length - 1;
+    const prodPorIdAudit = Object.fromEntries(((S.catalogs&&S.catalogs.productos)||[]).map(p=>[String(p.producto_id),p]));
     const filas2 = rodeosCria.map(r => {
-      const rid = r.rodeo_id;
-      const stk = Math.max(0, stockACorte[String(rid)]||0);
-      const pes = pesadasAudit.filter(p=>String(p.rodeo_id)===String(rid)&&(p.fecha||'')<=corte).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
-      const pesoUltima = pes.length ? Number(pes[pes.length-1].peso_prom_kg)||0 : 0;
-      const saldos = saldosCriaAudit.filter(m=>String(m.rodeo_destino_id)===String(rid));
-      const stockIni = saldos.reduce((s,m)=>s+convertirAMoneda_(valorMovimientoEntrada_(m).total, m.fecha, monedaCria),0);
-      const compras = comprasCriaAudit.filter(c=>String(c.rodeo_id)===String(rid)).reduce((s,c)=>s+convertirAMoneda_(Number(c.importe_total)||0, c.fecha, monedaCria),0);
-      const alim = consumosCriaAudit.filter(c=>String(c.rodeo_id)===String(rid)).reduce((s,c)=>{
-        const importeARS = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
-        return s + convertirAMoneda_(importeARS, c.fecha, monedaCria);
-      },0);
-      const cesionesR = cesionesCriaAudit.filter(m=>String(m.rodeo_origen_id)===String(rid)).reduce((s,m)=>{
-        const cant=Number(m.cantidad)||0, peso=Number(m.peso_prom_kg)||0;
-        const precioCabeza=Number(m.precio_cabeza)||0;
-        const precioKg=Number(m.precio_kg)||0;
-        let importeARS;
-        if (precioCabeza>0) importeARS = cant*precioCabeza;
-        else if (precioKg&&peso) importeARS = cant*peso*precioKg;
-        else if (precioKg&&!peso) {
-          const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)&&String(p.fecha)<=String(m.fecha)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-          importeARS = cant*(pr[0]?Number(pr[0].peso_prom_kg)||0:0)*precioKg;
-        } else {
-          const pr = pesadasAudit.filter(p=>String(p.rodeo_id)===String(m.rodeo_origen_id)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
-          importeARS = valorizarRodeo_(r, cant, pr[0]?Number(pr[0].peso_prom_kg)||0:0);
-        }
-        return s + convertirAMoneda_(importeARS, m.fecha, monedaCria);
-      },0);
-      const iv = ventasCriaAudit.filter(v=>String(v.rodeo_id)===String(rid)).reduce((s,v)=>{
-        const importeARS = Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0;
-        return s + convertirAMoneda_(importeARS, v.fecha_salida, monedaCria);
-      },0);
-      const ivStockARS = valorizarRodeo_(r, stk, pesoUltima);
-      const ivStock = convertirAMoneda_(ivStockARS, corte, monedaCria);
-      return { nombre:r.nombre, campo:campoNombre(r.campo_id), categoria: r.categoria||'—', stockIni, compras, alim, cesionesR, iv, ivStock };
-    }).filter(f => f.stockIni||f.compras||f.alim||f.cesionesR||f.iv||f.ivStock);
+      const rid = String(r.rodeo_id);
+      const eiH = Number((AU.eiHeredadoStockPorRodeo||{})[rid]) || 0;
+      const stockIni = (eiH && AU.campAnteriorFin ? valorizarStockPorRodeoAFecha_({ [rid]: eiH }, [r], AU.campAnteriorFin) : 0)
+        + AU.saldosIniciales.filter(m=>String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+valorMovimientoEntrada_(m).total,0);
+      const compras = AU.comprasCria.filter(c=>String(c.rodeo_id)===rid).reduce((s,c)=>s+(Number(c.importe_total)||0),0);
+      const repos = AU.reposicionVientres.filter(m=>String(m.rodeo_destino_id)===rid).reduce((s,m)=>s+valorTraslado_(m,'vaquillona'),0);
+      let alim = 0, vet = 0;
+      AU.consumosCria.filter(c=>String(c.rodeo_id)===rid).forEach(c=>{
+        const prod = prodPorIdAudit[String(c.producto_id)];
+        const cat = (prod?.categoria||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+        const imp = (Number(c.cantidad)||0) * egPrecioVigenteProducto_(c.producto_id, c.fecha);
+        if (cat.includes('veterin')||cat.includes('sanid')) vet += imp; else alim += imp;
+      });
+      const cesionesR = AU.cesiones.filter(m=>String(m.rodeo_origen_id)===rid).reduce((s,m)=>s+valorTraslado_(m, r.categoria),0);
+      const iv = AU.ventasCria.filter(v=>String(v.rodeo_id)===rid).reduce((s,v)=>s+(Number(v.importe_liq)||(Number(v.precio_pactado)*(Number(v.peso_campo_kg)||Number(v.cant_animales)))||0),0);
+      const stk = Math.max(0, Number(AU.stockPorRodeo[rid])||0);
+      const ivStock = stk ? valorizarRodeoAFecha_(r, stk, AU.fechaValoracion) : 0;
+      return { nombre:r.nombre, campo:campoNombre(r.campo_id), categoria: r.categoria||'—', stockIni, compras, repos, alim, vet, cesionesR, iv, ivStock };
+    }).filter(f => f.stockIni||f.compras||f.repos||f.alim||f.vet||f.cesionesR||f.iv||f.ivStock);
     filas2.forEach(f => {
-      aoa2.push([f.nombre, f.campo, f.categoria, Math.round(f.stockIni), Math.round(f.compras), Math.round(f.alim), Math.round(f.cesionesR), Math.round(f.iv), Math.round(f.ivStock)]);
+      aoa2.push([f.nombre, f.campo, f.categoria, R0(f.stockIni), R0(f.compras), R0(f.repos), R0(f.alim), R0(f.vet), R0(f.cesionesR), R0(f.iv), R0(f.ivStock)]);
     });
+    const sumF = k => filas2.reduce((s,x)=>s+(x[k]||0),0);
+    aoa2.push(['TOTAL rodeos','','', R0(sumF('stockIni')), R0(sumF('compras')), R0(sumF('repos')), R0(sumF('alim')), R0(sumF('vet')), R0(sumF('cesionesR')), R0(sumF('iv')), R0(sumF('ivStock'))]);
+    aoa2.push(['Resumen (Dashboard)','','', R0(RC.ei), R0(RC.compras), R0(RC.reposicionVientres), '', '', R0(RC.ingCesiones), R0(RC.ingVentas), R0(RC.ef)]);
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:22},{wch:14},{wch:12},{wch:15},{wch:13},{wch:14},{wch:15},{wch:12},{wch:16}];
+    ws2['!cols'] = [{wch:34},{wch:14},{wch:12},{wch:15},{wch:13},{wch:15},{wch:14},{wch:13},{wch:15},{wch:13},{wch:16}];
     ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }, { s:{r:detalleLabelIdx,c:0}, e:{r:detalleLabelIdx,c:headers2.length-1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
     estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
-    for (let i=5;i<=15;i++) estilarFila_(ws2, i, 2, ST_ROW);
+    for (let i=5;i<=18;i++) estilarFila_(ws2, i, 2, ST_ROW);
     estilarFila_(ws2, filaHeaderIdx, headers2.length, ST_HEADER);
     filas2.forEach((f,i) => {
       const r0 = filaHeaderIdx+1+i, alt = i%2===1;
@@ -17332,11 +17292,11 @@ async function exportarAuditoriaCriaExcel_() {
     XLSX.utils.book_append_sheet(wb, ws2, 'Resumen económico');
 
     // ── HOJA 3: Pariciones (crudo) ────────────────────────────────────────
-    const pariciones = (S.cache.pariciones||[]).filter(p => rodeosCriaIds.has(String(p.rodeo_id)) && (p.fecha||'')<=corte)
+    const pariciones = (S.cache.pariciones||[]).filter(p => rodeosCriaIds.has(String(p.rodeo_id)) && enCampDeEv_(p.fecha, p.campana_id))
       .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
     const headers3 = ['Fecha','Rodeo (madres)','Nacidos vivos','Nacidos muertos','Observación'];
     const aoa3 = [
-      [`Agroganadera Los Médanos — Pariciones (crudo)`], ['Fecha de corte', fd(corte)], [], headers3,
+      [`Agroganadera Los Médanos — Pariciones (crudo) — ${tituloCamp}`], ['Fecha de corte', fd(corte)], [], headers3,
     ];
     pariciones.forEach(p => aoa3.push([fd(p.fecha), rodeoNombre(p.rodeo_id), Number(p.nacidos_vivos)||0, Number(p.nacidos_muertos)||0, p.observacion||'']));
     aoa3.push(['TOTAL','', pariciones.reduce((s,p)=>s+(Number(p.nacidos_vivos)||0),0), pariciones.reduce((s,p)=>s+(Number(p.nacidos_muertos)||0),0), '']);
@@ -17358,11 +17318,11 @@ async function exportarAuditoriaCriaExcel_() {
     XLSX.utils.book_append_sheet(wb, ws3, 'Pariciones');
 
     // ── HOJA 4: Destetes (crudo) ──────────────────────────────────────────
-    const destetes = (S.cache.destetes||[]).filter(d => rodeosCriaIds.has(String(d.rodeo_id)) && (d.fecha||'')<=corte)
+    const destetes = (S.cache.destetes||[]).filter(d => rodeosCriaIds.has(String(d.rodeo_id)) && enCampDeEv_(d.fecha, d.campana_id))
       .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
     const headers4 = ['Fecha','Rodeo origen','Machos','Hembras','Total','Peso prom. (kg)','Observación'];
     const aoa4 = [
-      [`Agroganadera Los Médanos — Destetes (crudo)`], ['Fecha de corte', fd(corte)], [], headers4,
+      [`Agroganadera Los Médanos — Destetes (crudo) — ${tituloCamp}`], ['Fecha de corte', fd(corte)], [], headers4,
     ];
     destetes.forEach(d => aoa4.push([fd(d.fecha), rodeoNombre(d.rodeo_id), Number(d.machos)||0, Number(d.hembras)||0, Number(d.total)||0, Number(d.peso_prom_kg)||'—', d.observacion||'']));
     aoa4.push(['TOTAL','', destetes.reduce((s,d)=>s+(Number(d.machos)||0),0), destetes.reduce((s,d)=>s+(Number(d.hembras)||0),0), destetes.reduce((s,d)=>s+(Number(d.total)||0),0), '', '']);
@@ -17388,7 +17348,7 @@ async function exportarAuditoriaCriaExcel_() {
       .sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)));
     const headers5 = ['Fecha','Tipo','Rodeo origen','Rodeo destino','Cantidad','Peso prom. (kg)','Precio $/kg','Precio $/cab.','¿Es nacimiento?','Observaciones'];
     const aoa5 = [
-      [`Agroganadera Los Médanos — Movimientos de Cría (crudo)`], ['Fecha de corte', fd(corte)], [], headers5,
+      [`Agroganadera Los Médanos — Movimientos de Cría (crudo) — ${tituloCamp}`], ['Fecha de corte', fd(corte)], [], headers5,
     ];
     movsCria.forEach(m => aoa5.push([
       fd(m.fecha), m.tipo,
@@ -17418,9 +17378,10 @@ async function exportarAuditoriaCriaExcel_() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Los_Medanos_Auditoria_Cria_${corte}.xlsx`;
+    a.download = `Los_Medanos_Auditoria_Cria_${String(AU.campNombre).replace(/\//g,'-')}_${corte}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
+    S._resultCria = null; S._auditCria = null; S.margenBruto = null; // v295: que las pantallas recalculen con su propia campaña
     toast('✓ Excel de auditoría de Cría descargado', 'ok');
   } catch(err) {
     console.error(err);
