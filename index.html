@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_295';
+const APP_VERSION = 'index_consolidado_4_6_155_297';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -3540,6 +3540,14 @@ function buildDashboard() {
   // daban EXACTAMENTE el mismo total de Sueldos, porque ninguna acotaba el
   // arranque.
   const fechaDesdeSueldosCria = campSelecObj && campSelecObj.fecha_inicio ? campSelecObj.fecha_inicio : '0000-01-01';
+  // v296 -- gastos veterinarios globales de las facturas (cargados en Sueldos,
+  // sin rodeo): se suman al detalle de Veterinaria para que cierre con el total.
+  gastosVetGetAll_().filter(sv => (!campSelecField || String(sv.campo_id) === String(campSelecField)) &&
+    String(sv.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) && String(sv.periodo).slice(0,7) <= fechaValoracionCampSelec.slice(0,7)
+  ).forEach(sv => {
+    const fGv = String(sv.periodo || '').length === 7 ? sv.periodo + '-01' : String(sv.periodo || '');
+    detalleVetCria.push({ fecha: fGv, prod: 'Gasto veterinario global' + (sv.observacion ? ' — ' + fdEsc_(sv.observacion) : ''), cant: 1, rodeo: 'Cría (sin rodeo)', costo: convertirAMoneda_(Number(sv.monto) || 0, fGv, _criaMoneda) });
+  });
   const totalSueldosCria = sueldoTotalActividad_('cria', s =>
     (!campSelecField || String(s.campo_id) === String(campSelecField)) &&
     String(s.periodo).slice(0,7) >= fechaDesdeSueldosCria.slice(0,7) &&
@@ -4406,7 +4414,7 @@ function buildEstadoVientres() {
         ${(S.cache.campanas||[]).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||''))).map(c=>`<option value="${c.campana_id}" ${String(c.campana_id)===String(S._evCamp || evCampanaDefault_())?'selected':''}>${c.nombre}</option>`).join('')}
       </select>
     </div>
-    <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaCriaExcel_()" title="Descarga un Excel con el detalle de la auditoría reproductiva">📊 Exportar auditoría a Excel</button>
+    <button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaReproductivaExcel_()" title="Descarga un Excel con el estado de vientres de la campaña elegida: recuento físico (para completar a mano en el campo) y reconciliación reproductiva por rodeo">📊 Exportar Estado de Vientres a Excel</button>
   </div>`;
 
   // ── KPIs de vacas — consolidado de rodeos de vaca/vaquillona ENTORADOS
@@ -4515,7 +4523,7 @@ function buildEstadoVientres() {
         <div style="display:flex;justify-content:space-between;color:var(--text2)"><span>Muertes${f.muertasYaParieron ? ` <span style="font-size:11px;color:var(--text3)">(+${fn(f.muertasYaParieron)} que ya habían parido: no se restan, ya están en Parieron)</span>` : ''}</span><span>−${fn(f.muertas)}</span></div>
         <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;color:var(--gold-text)"><span>PARA PARIR</span><span>${fn(f.pendientesAjustado)}</span></div>
         ${(f.pendientesRaw!==null&&f.pendientesRaw!==undefined&&f.pendientesRaw<0)?`<div style="font-size:11px;color:var(--red);margin-top:6px;line-height:1.5">⚠ La cuenta da ${fn(f.pendientesRaw)} (no puede ser negativa, se muestra 0): hay al menos ${fn(-f.pendientesRaw)} vaca(s) que se restan dos veces, porque salieron del rodeo (traslado/venta) pero ya estaban contadas en "Parieron". Ponele "ternero muerto" o "parió" en la observación de ese traslado, o cargalo desde la Parición, para que no se reste de nuevo. "Para parir" real: entre 0 y ${fn(Math.max(0,(f.exportadas||0)+f.pendientesRaw))}.</div>`:''}
-        ${f.difStock===null||f.difStock===undefined?'':(f.difStock===0
+        ${(f.soloIatf && f.difStock>0)?`<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5">ℹ Hay ${fn(f.difStock)} vacas más que preñadas del tacto IATF: son las vacías del IATF que siguen en el rodeo (con el toro de repaso). Se controla con el tacto final.</div>`:f.difStock===null||f.difStock===undefined?'':(f.difStock===0
           ?`<div style="font-size:11px;color:var(--green-text);margin-top:6px">✓ Control de stock: ${fn(f.stockActual)} vacas en el rodeo, coincide con lo esperado.</div>`
           :`<div style="font-size:11px;color:var(--red);margin-top:6px;line-height:1.5">⚠ Control de stock: el panel espera ${fn(f.stockEsperado)} vacas en el rodeo y hay ${fn(f.stockActual)} (${f.difStock>0?'+':''}${fn(f.difStock)}). ${f.difStock<0?'Faltan vacas que salieron o se contaron de más en el tacto — "Para parir" puede estar sobrestimado en ese número.':'Sobran vacas en el rodeo (ej. vacías que no se sacaron) — no afecta "Para parir".'}</div>`)}
       </div>`;
@@ -5850,7 +5858,7 @@ function buildCurvaNacimientos() {
   const rodeoFiltro = S._curvaNacRodeo || '';
   const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
 
-  h += `<div style="margin-bottom:14px"><button class="btn btn-secondary btn-sm" onclick="exportarAuditoriaReproductivaExcel_()" title="Descarga un Excel con una hoja de recuento físico (para completar a mano en el campo) y una hoja de reconciliación reproductiva completa por rodeo de vacas">📊 Exportar auditoría reproductiva a Excel</button></div>`;
+  // v296 -- el Excel de auditoría reproductiva se pasó a Estado de Vientres (era el mismo tema)
   h += `<div class="panel">
     <div class="panel-title">🐣 Curva de nacimientos y mortandad, por semana</div>
     <p class="helper-text" style="margin-bottom:14px">Nacidos vivos, nacidos muertos (Pariciones) y mortandad — agrupados por semana, para ver de un vistazo si un pico de muertes coincide con un pico de nacimientos. La mortandad mostrada es de rodeos de categoría vaca, ternero o ternera — no de otras categorías (novillos, vaquillonas, etc.) que puedan estar en el mismo campo.</p>
@@ -17405,7 +17413,9 @@ async function exportarAuditoriaReproductivaExcel_() {
     for (const ent of ['movimientos','ventas','mortandad','abortos','tactos','pariciones']) {
       if (!S.cache[ent]) { try { await loadEntity(ent); } catch(e) {} }
     }
-    const corte = today();
+    const corte = S._corteCria || today(); // v296: la fecha de corte de Estado de Vientres
+    const evCampXls = S._evCamp || evCampanaDefault_();
+    const evCampNomXls = ((S.cache.campanas || []).find(c => String(c.campana_id) === String(evCampXls)) || {}).nombre || '';
     const rodeosAll = (S.catalogs && S.catalogs.rodeos) || [];
     const rodeosCria = rodeosAll.filter(r => normAct_(r.actividad)==='cria');
     const stockACorte = stockPorRodeoACorte_(corte);
@@ -17437,7 +17447,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       stock: Math.max(0, stockACorte[String(r.rodeo_id)]||0),
     })).filter(f => f.stock > 0).sort((a,b)=>a.categoria.localeCompare(b.categoria)||b.stock-a.stock);
     const aoa1 = [
-      [`Agroganadera Los Médanos — Recuento físico (Cría)`],
+      [`Agroganadera Los Médanos — Recuento físico (Cría) — Campaña ${evCampNomXls}`],
       ['Fecha', fd(corte)],
       ['Nota', 'Completar "Conteo físico" recorriendo cada rodeo en el campo, y "Diferencia" = Conteo físico − Stock sistema. Una diferencia negativa sugiere animales faltantes (venta o muerte sin cargar); una diferencia positiva sugiere un nacimiento, compra o cesión sin cargar.'],
       [],
@@ -17471,7 +17481,7 @@ async function exportarAuditoriaReproductivaExcel_() {
     // patrón de nombre que usa el backend al crearlo ("Terneros (" + nombre
     // de la madre + ")"), para poder cruzar Paridas contra Terneros vivos
     // actuales + muertos (stock real).
-    const { filas: filasVacaRepro, totales: totVacaRepro } = calcularVacasReproductivas_(null, corte, S._evCamp || evCampanaDefault_());
+    const { filas: filasVacaRepro, totales: totVacaRepro } = calcularVacasReproductivas_(S._dashCampo || null, corte, evCampXls);
     const filas2 = filasVacaRepro.map(rv => {
       const nombreTerneros = `Terneros (${rv.nombre})`;
       const rodeoTerneros = rodeosCria.find(r => r.nombre === nombreTerneros && String(r.campo_id)===String(rv.campoId));
@@ -17500,7 +17510,7 @@ async function exportarAuditoriaReproductivaExcel_() {
       'Vendidas','Trasl. fuera (no vaca)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
       'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
     const aoa2 = [
-      [`Agroganadera Los Médanos — Auditoría reproductiva`],
+      [`Agroganadera Los Médanos — Estado de Vientres — Campaña ${evCampNomXls}`],
       ['Fecha', fd(corte)],
       ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" resta SIEMPRE del rodeo de origen toda vaca que sale (vacía, abortada, enferma, sanidad, venta), sin importar destino, y solo la vuelve a sumar como pendiente si el destino también es un rodeo de vacas/vaquillonas — se toma el 100% exacto de la cantidad, nunca una tasa. Pendientes = Preñadas (ajustado) − Abortadas − Muertas − Parieron. Vendidas/Trasladadas a un rodeo que no es de vacas restan igual del origen, pero se muestran aparte como cabezas en "Descartadas" (informativo). "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
       [],
@@ -17561,7 +17571,7 @@ async function exportarAuditoriaReproductivaExcel_() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Los_Medanos_Auditoria_Reproductiva_${corte}.xlsx`;
+    a.download = `Los_Medanos_Estado_de_Vientres_${String(evCampNomXls).replace(/\//g,'-')}_${corte}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
     toast('✓ Excel de auditoría reproductiva descargado', 'ok');
