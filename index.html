@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_289';
+const APP_VERSION = 'index_consolidado_4_6_155_290';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -21969,7 +21969,8 @@ function fdAnalizar_() {
   const camposCargados = new Set();
   st.archivos.forEach(a => {
     if (!a.campo_id) return;
-    camposCargados.add(String(a.campo_id));
+    // v290 -- el campo cuenta como cargado solo si ESTE archivo trae insumos
+    if (a.filas.some(f => fdNorm_(f.area) === 'insumos')) camposCargados.add(String(a.campo_id));
     const ocurr = {};
     a.filas.forEach(f => {
       if (fdNorm_(f.area) !== 'insumos' || !rubro.esDelRubro(fdNorm_(f.insumo))) return;
@@ -24542,7 +24543,7 @@ function buildImportarFielddata() {
   const cuenta = (a, fn2) => a.filas.filter(fn2).length;
   let h = `<div class="panel">
     <div class="panel-title">1. Archivos de Fielddata</div>
-    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí un archivo por campo (los tres juntos), bajado de Fielddata con las hojas <b>Insumos</b>, <b>Movimientos Ganaderos</b> y <b>Tratamientos</b> (la de Cambios de Potrero se ignora por ahora). El campo se reconoce por el nombre del archivo. Después de <b>Analizar</b> ves el resumen de todo lo que falta resolver y cada sección abajo. Cada sección tiene su fecha de corte (antes, el sistema ya tiene su historia) y su control para no duplicar lo ya cargado. No se graba nada hasta que apretás <b>Grabar</b>.</p>
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.55">Subí los archivos de los tres campos juntos, bajados de Fielddata con las hojas <b>Insumos</b>, <b>Movimientos Ganaderos</b> y <b>Tratamientos</b> (la de Cambios de Potrero se ignora por ahora). Puede ser un archivo por campo con todas las hojas, o varios por campo (ej. uno de insumos y otro de ganaderos). El campo se reconoce por el nombre del archivo. Después de <b>Analizar</b> ves el resumen de todo lo que falta resolver y cada sección abajo. Cada sección tiene su fecha de corte (antes, el sistema ya tiene su historia) y su control para no duplicar lo ya cargado. No se graba nada hasta que apretás <b>Grabar</b>.</p>
     <div class="fgrid"><div class="fg"><label>Archivos (.xlsx)</label><input type="file" id="fd-files" accept=".xlsx,.xls" multiple></div></div>`;
   if (st.archivos.length) {
     h += `<table class="dt" style="margin-top:10px"><thead><tr><th>Archivo</th><th>Campo</th><th class="tc">Insumos</th><th class="tc">Hacienda</th><th class="tc">Tratamientos</th><th></th></tr></thead><tbody>` +
@@ -24813,8 +24814,25 @@ function attachImportarFielddataEvents() {
   if (an) an.onclick = async () => {
     const sinCampo = st.archivos.filter(a => !a.campo_id);
     if (sinCampo.length) { toast('Elegí el campo de: ' + sinCampo.map(a => a.nombre).join(', '), 'err'); return; }
-    const camposRep = st.archivos.map(a => a.campo_id).filter((c, i, arr) => arr.indexOf(c) !== i);
-    if (camposRep.length) { toast('Hay dos archivos del mismo campo (' + fdCampoNombre_(camposRep[0]) + '). Dejá uno solo por campo.', 'err'); return; }
+    // v290 -- un campo puede venir en varios archivos (ej. uno de Insumos y otro
+    // de Movimientos Ganaderos). Solo es duplicado si la MISMA hoja del mismo
+    // campo viene en dos archivos.
+    const tiposArch = a => {
+      const t = new Set();
+      a.filas.forEach(f => {
+        if (f.formato === 'tratamientos') t.add('Tratamientos');
+        else if (fdNorm_(f.area) === 'movimientos de hacienda') t.add('Movimientos Ganaderos');
+        else if (fdNorm_(f.area) === 'insumos') t.add('Insumos');
+      });
+      return [...t];
+    };
+    const vistos = {}, repetidos = [];
+    st.archivos.forEach(a => tiposArch(a).forEach(t => {
+      const k = String(a.campo_id) + '|' + t;
+      if (vistos[k]) repetidos.push(fdCampoNombre_(a.campo_id) + ': ' + t + ' está en "' + vistos[k] + '" y en "' + a.nombre + '"');
+      else vistos[k] = a.nombre;
+    }));
+    if (repetidos.length) { toast('Archivos repetidos — ' + repetidos.join(' · ') + '. Dejá uno solo de cada hoja por campo.', 'err'); return; }
     an.disabled = true; an.textContent = 'Analizando…';
     try {
       await fdRecargarDatos_();
