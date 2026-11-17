@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_298';
+const APP_VERSION = 'index_consolidado_4_6_155_299';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -17560,27 +17560,55 @@ async function exportarAuditoriaReproductivaExcel_() {
 
     const headers2 = ['Rodeo madre','Campo','Preñadas (tacteadas)','Movidas a otro rodeo','Recibidas de otro rodeo','Preñadas (ajustado)',
       'Vendidas','Trasl. fuera (no vaca)','Abortadas','Muertas (vacas)','Parieron (vacas)','Pendientes de parir',
-      'Rodeo de terneros','Nacidos vivos (histórico)','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (histórico − stock+salidas)'];
+      'Rodeo de terneros','Nacidos vivos','Terneros vivos (stock hoy)','Terneros muertos','Terneros vendidos','Terneros cedidos','Diferencia (nacidos − stock+salidas)','Aviso'];
     const aoa2 = [
       [`Agroganadera Los Médanos — Estado de Vientres — Campaña ${evCampNomXls}`],
       ['Fecha', fd(corte)],
       ['Nota', 'Esta hoja usa la MISMA cuenta que el Dashboard de Cría (panel "Vacas — resumen de la campaña") — tiene que dar exactamente igual. "Preñadas (ajustado)" resta SIEMPRE del rodeo de origen toda vaca que sale (vacía, abortada, enferma, sanidad, venta), sin importar destino, y solo la vuelve a sumar como pendiente si el destino también es un rodeo de vacas/vaquillonas — se toma el 100% exacto de la cantidad, nunca una tasa. Pendientes = Preñadas (ajustado) − Abortadas − Muertas − Parieron. Vendidas/Trasladadas a un rodeo que no es de vacas restan igual del origen, pero se muestran aparte como cabezas en "Descartadas" (informativo). "Diferencia" en las últimas columnas compara el histórico de nacidos vivos contra lo que hoy se puede verificar en el rodeo de terneros (stock + muertos + vendidos + cedidos) — si no da 0, hay algo sin cargar bien en algún punto de la cadena.'],
       [],
-      ['RESUMEN CONSOLIDADO', ''],
+      ['DE LAS PREÑADAS A LOS TERNEROS AL PIE', ''],
     ];
-    if (totVacaRepro) {
-      aoa2.push(['Preñadas (tacto, ajustado por movimientos entre rodeos)', totVacaRepro.prenadas + (totVacaRepro.descartadas || 0)]);
-      aoa2.push(['Trasladadas / vendidas (sanidad, venta; sin las madres de guacho)', (totVacaRepro.descartadas || 0) - Math.min(totVacaRepro.madresGuacho || 0, totVacaRepro.descartadas || 0)]);
-      if (totVacaRepro.madresGuacho) aoa2.push(['Madres de guacho (parieron y se vendieron: SÍ son vacas paridas, su parto no está en Pariciones)', totVacaRepro.madresGuacho]);
-      aoa2.push(['Paridas (vacas)', totVacaRepro.paridas]);
-      if (totVacaRepro.mellizos) aoa2.push(['Vacas con mellizos (incluidas en Paridas; aportan 2 terneros)', totVacaRepro.mellizos]);
-      aoa2.push(['Abortadas', totVacaRepro.abortadas]);
-      aoa2.push(['Muertas', totVacaRepro.muertas]);
-      aoa2.push(['Pendientes de parir', totVacaRepro.pendientes]);
-      aoa2.push(['Nacidos vivos (histórico total)', totVacaRepro.nacidosVivos]);
-      aoa2.push(['Proyección terneros vivos al cierre', totVacaRepro.terneroProyectado]);
-      if (totVacaRepro.rodeosSinTactoFinal>0) aoa2.push(['Rodeos sin Tacto final (excluidos)', totVacaRepro.rodeosSinTactoFinal]);
-    }
+    // v298 -- Escalera: misma cuenta que "Las cuentas detrás de los índices"
+    // (Índices de Reproducción), para que se pueda partir de las preñadas y
+    // llegar a los terneros al pie.
+    const FE = filasVacaRepro.filter(x => !x.sinTactoFinal);
+    const sE = fn_ => FE.reduce((acc, x) => acc + (Number(fn_(x)) || 0), 0);
+    const eDesc = sE(x => (x.salidasExternas && x.salidasExternas.cabezas) || 0);
+    const eMg = sE(x => Math.min(x.madresGuacho || 0, (x.salidasExternas && x.salidasExternas.cabezas) || 0));
+    const eBase = sE(x => x.prenadasAjustadas) + eDesc;
+    const eParidas = sE(x => x.yaParieron) + eMg;
+    const eAbortos = sE(x => x.abortos), eFaltan = sE(x => x.pendientesAjustado), eMuertas = sE(x => x.muertas);
+    const eSinTernero = eDesc - eMg;
+    const eCtl1 = eBase - eParidas - eAbortos - eFaltan - eMuertas - eSinTernero;
+    const eMell = sE(x => x.mellizos), eNacTot = eParidas + eMell, eNacMuertos = sE(x => x.nacidosMuertos), eNacVivos = eNacTot - eNacMuertos;
+    const eMuertosPost = sE(x => x.ternerosMuertosPostParto), eVend = sE(x => x.ternerosVendidos), eCed = sE(x => x.ternerosCedidos);
+    const eAlPie = eNacVivos - eMuertosPost - eVend - eCed;
+    const eAlPieStock = sE(x => x.ternerosAlPie) + eMg;
+    const eCtl2 = eAlPie - eAlPieStock;
+    aoa2.push(['', '1) ¿Qué pasó con las vacas preñadas?']);
+    aoa2.push(['', 'Vacas preñadas (tacto, ajustadas por movimientos entre rodeos)', eBase]);
+    aoa2.push(['−', 'Salieron sin ternero (venta / descarte / sanidad / posible aborto)', eSinTernero]);
+    aoa2.push(['−', 'Abortaron', eAbortos]);
+    aoa2.push(['−', 'Murieron', eMuertas]);
+    aoa2.push(['−', 'Faltan parir', eFaltan]);
+    aoa2.push(['=', 'Vacas paridas' + (eMg ? ' (incluye ' + eMg + ' madres de guacho: parieron y se vendieron)' : ''), eParidas]);
+    aoa2.push(['', eCtl1 === 0 ? 'Control: la cuenta cierra ✓' : 'Control: diferencia sin explicar ' + eCtl1 + ' ⚠ (ver "Aviso" en la tabla de abajo)', eCtl1]);
+    aoa2.push([]);
+    aoa2.push(['', '2) De las vacas paridas a los terneros al pie']);
+    aoa2.push(['', 'Vacas paridas', eParidas]);
+    aoa2.push(['+', 'Mellizos (cada vaca con mellizos tuvo un ternero más)', eMell]);
+    aoa2.push(['=', 'Terneros nacidos', eNacTot]);
+    aoa2.push(['−', 'Nacidos muertos', eNacMuertos]);
+    aoa2.push(['=', 'Nacidos vivos (incluye guachos)', eNacVivos]);
+    aoa2.push(['−', 'Murieron después de nacer', eMuertosPost]);
+    if (eVend) aoa2.push(['−', 'Terneros vendidos', eVend]);
+    if (eCed) aoa2.push(['−', 'Terneros trasladados (destetes / cesiones)', eCed]);
+    aoa2.push(['=', 'Terneros al pie (según la cuenta)', eAlPie]);
+    aoa2.push(['', 'Terneros al pie según stock (incluye guachos)', eAlPieStock]);
+    aoa2.push(['', eCtl2 === 0 ? 'Control: cuenta − stock = 0 ✓' : 'Control: cuenta − stock = ' + eCtl2 + ' ⚠ revisar', eCtl2]);
+    aoa2.push([]);
+    aoa2.push(['', 'Proyección de terneros vivos al cierre (nacidos vivos + faltan parir)', (totVacaRepro ? totVacaRepro.terneroProyectado : 0)]);
+    if (totVacaRepro && totVacaRepro.rodeosSinTactoFinal > 0) aoa2.push(['', 'Rodeos sin tacto en la campaña (excluidos)', totVacaRepro.rodeosSinTactoFinal]);
     aoa2.push([]);
     const filaHeaderIdx2 = aoa2.length;
     aoa2.push(headers2);
@@ -17597,9 +17625,20 @@ async function exportarAuditoriaReproductivaExcel_() {
       f.ternerosVendidos===null?'—':f.ternerosVendidos,
       f.ternerosCedidos===null?'—':f.ternerosCedidos,
       f.diferenciaReconcil===null?'—':f.diferenciaReconcil,
+      (f.pendientesRaw!==null && f.pendientesRaw!==undefined && f.pendientesRaw<0) ? ('La cuenta da ' + f.pendientesRaw + ': hay vacas que salieron del rodeo y ya estaban contadas en Parieron (ponerles "parió" o "ternero muerto" en el traslado)') : (f.soloIatf ? 'Solo tacto IATF: preñadas como mínimo' : ''),
     ]));
+    // v298 -- totales por columna
+    const filaTotal2 = ['TOTAL', ''];
+    for (let c = 2; c < headers2.length - 1; c++) {
+      if (c === 3 || c === 4 || c === 12) { filaTotal2.push(''); continue; }
+      let tot = 0, hay = false;
+      filas2.forEach((_, i2) => { const v = aoa2[filaHeaderIdx2 + 1 + i2][c]; if (typeof v === 'number') { tot += v; hay = true; } });
+      filaTotal2.push(hay ? tot : '');
+    }
+    filaTotal2.push('');
+    aoa2.push(filaTotal2);
     const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-    ws2['!cols'] = [{wch:20},{wch:13},{wch:14},{wch:14},{wch:20},{wch:14},{wch:10},{wch:14},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:16},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20}];
+    ws2['!cols'] = [{wch:20},{wch:62},{wch:14},{wch:14},{wch:20},{wch:14},{wch:10},{wch:14},{wch:11},{wch:12},{wch:14},{wch:15},{wch:22},{wch:14},{wch:16},{wch:14},{wch:14},{wch:13},{wch:20},{wch:60}];
     ws2['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:headers2.length-1} }, { s:{r:2,c:0}, e:{r:2,c:headers2.length-1} }, { s:{r:4,c:0}, e:{r:4,c:1} }];
     estilarFila_(ws2, 0, headers2.length, ST_TITULO);
     estilarFila_(ws2, 4, headers2.length, ST_TOTAL);
@@ -17616,6 +17655,7 @@ async function exportarAuditoriaReproductivaExcel_() {
         ws2[addr].s = style;
       }
     });
+    estilarFila_(ws2, filaHeaderIdx2 + 1 + filas2.length, headers2.length, ST_TOTAL);
     XLSX.utils.book_append_sheet(wb, ws2, 'Reproducción por rodeo');
 
     const buf = XLSX.write(wb, {bookType:'xlsx', type:'array'});
@@ -17626,7 +17666,7 @@ async function exportarAuditoriaReproductivaExcel_() {
     a.download = `Los_Medanos_Estado_de_Vientres_${String(evCampNomXls).replace(/\//g,'-')}_${corte}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
-    toast('✓ Excel de auditoría reproductiva descargado', 'ok');
+    toast('✓ Excel de Estado de Vientres descargado', 'ok');
   } catch(err) {
     console.error(err);
     toast('Error al generar el Excel: ' + err.message, 'err');
