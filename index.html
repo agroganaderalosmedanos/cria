@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_292';
+const APP_VERSION = 'index_consolidado_4_6_155_293';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -23377,6 +23377,20 @@ async function fdTratGuardarEquiv_() {
   }
 }
 
+// v293 -- Tratamientos de una fila de "Rodeo del sistema según Fielddata"
+// (fecha, tratamiento, cabezas de esa categoría y nota), para saber qué
+// rodeo elegir sin buscar en la lista completa.
+function fdTratVerRodeo_(k, lista) {
+  const evs = [], vistos = new Set();
+  (lista || []).forEach(it => { if (vistos.has(it.ev.huella)) return; vistos.add(it.ev.huella); evs.push(it); });
+  evs.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  return `<tr><td colspan="6" style="background:var(--bg2,#faf8f3);padding:8px 14px"><table class="dt" style="margin:0"><thead><tr><th>Fecha</th><th>Tratamiento</th><th>Productos</th><th class="tc">Cabezas</th><th>Nota en Fielddata</th></tr></thead><tbody>` +
+    evs.map(it => {
+      const cab = it.ev.partes.filter(p => p.equivKey === k).reduce((s, p) => s + (p.cab || 0), 0);
+      const prods = [...new Set((lista || []).filter(x => x.ev.huella === it.ev.huella).map(x => { const pr = x.prodId ? fdTratProducto_(x.prodId) : null; return pr ? pr.nombre : fdTratClaveTexto_(x.prodKey || ''); }))].join(', ');
+      return `<tr><td style="white-space:nowrap">${fd(it.fecha)}</td><td style="white-space:normal;max-width:200px">${fdEsc_(it.ev.tratamiento || '—')}</td><td style="white-space:normal;max-width:200px">${fdEsc_(prods)}</td><td class="tc">${fn(cab)}</td><td style="white-space:normal;min-width:280px;max-width:520px;font-size:12px">${fdEsc_(it.nota || it.ev.nota || '—')}</td></tr>`;
+    }).join('') + `</tbody></table></td></tr>`;
+}
 function fdBuildTrat_(st) {
   let h = '';
   { const pend = fdTratEquivPendientes_().length;
@@ -23433,7 +23447,8 @@ function fdBuildTrat_(st) {
       const estado = e.confirmado ? `<span class="pill pill-green">${e.origen === 'guardado' ? 'Guardado' : 'Confirmado'}</span>` : (e.rodeo_id ? '<span class="pill pill-gold">Sugerido</span>' : '<span class="pill pill-red">Sin asignar</span>');
       return `<tr><td>${fdEsc_(fdCampoNombre_(e.campo_id))}</td><td style="white-space:normal">${fdEsc_(e.notaOriginal)}</td><td class="tc">${usos[k].length}</td>
         <td><select class="fd-equiv-sel" data-k="${fdEsc_(k)}"><option value="">— Elegí —</option>${opts}</select></td><td>${estado}</td>
-        <td>${!e.confirmado && e.rodeo_id ? `<button class="btn btn-secondary btn-sm fd-equiv-ok" data-k="${fdEsc_(k)}">Confirmar</button>` : ''}</td></tr>`;
+        <td style="white-space:nowrap">${!e.confirmado && e.rodeo_id ? `<button class="btn btn-secondary btn-sm fd-equiv-ok" data-k="${fdEsc_(k)}">Confirmar</button> ` : ''}<button class="btn btn-secondary btn-sm fd-trat-ver-rod" data-k="${fdEsc_(k)}">${st.tratVerRod === k ? 'Ocultar' : 'Ver tratamientos'}</button></td></tr>`
+        + (st.tratVerRod === k ? fdTratVerRodeo_(k, usos[k]) : '');
     }).join('') + `</tbody></table></div></div>`;
   // Líneas
   const cuenta = {};
@@ -24949,6 +24964,7 @@ function attachImportarFielddataEvents() {
     fdAnalizarTodo_(); render();
   });
   document.querySelectorAll('.fd-trat-prod-ok').forEach(b => b.onclick = () => { const e = st.tratProd[b.dataset.k]; if (!e || !e.producto_id) return; e.confirmado = true; e.origen = 'manual'; fdAnalizarTodo_(); render(); });
+  document.querySelectorAll('.fd-trat-ver-rod').forEach(b => b.onclick = () => { st.tratVerRod = st.tratVerRod === b.dataset.k ? '' : b.dataset.k; render(); });
   const tge = document.getElementById('fd-trat-guardar-eq');
   if (tge) tge.onclick = () => fdTratGuardarEquiv_();
   const tcs = document.getElementById('fd-trat-conf-sug');
