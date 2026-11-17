@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_290';
+const APP_VERSION = 'index_consolidado_4_6_155_291';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -1607,7 +1607,7 @@ function buildShell() {
           </div>
         </div>
       </div>
-      <div class="content" id="content">${buildPage(S.page)}</div>
+      <div class="content" id="content"${S.page === 'importar_fielddata' ? ' style="max-width:none"' : ''}>${buildPage(S.page)}</div>
     </div>
   </div>
   `;
@@ -23447,7 +23447,7 @@ function fdBuildTrat_(st) {
       return `<tr><td class="tc">${sel ? `<input type="checkbox" class="fd-sel" data-id="${fdEsc_(it.id)}" ${st.sel[it.id] ? 'checked' : ''}>` : ''}</td>
         <td>${pill(it.estado)}</td><td>${fd(it.fecha)}</td><td>${fdEsc_(fdCampoNombre_(it.campo_id))}</td><td style="white-space:normal;max-width:150px">${fdEsc_(it.ev.tratamiento || '—')}${agregar}</td>
         <td style="white-space:normal;max-width:170px">${prodTxt}</td><td style="white-space:nowrap">${cantTxt}</td><td style="white-space:normal;min-width:190px;max-width:260px;font-size:12px">${rodTxt}</td>
-        <td style="white-space:normal;max-width:260px;font-size:12px">${fdEsc_(it.nota || '—')}</td>
+        <td style="white-space:normal;min-width:280px;max-width:420px;font-size:12px">${fdEsc_(it.nota || '—')}</td>
         <td style="white-space:normal;min-width:220px;max-width:320px;font-size:12px;color:var(--text2)">${fdEsc_(it.motivo || '')}</td></tr>`;
     }).join('') : `<tr><td colspan="10" style="color:var(--text3)">No hay filas con este filtro.</td></tr>`) + `</tbody></table></div></div>`;
   return h;
