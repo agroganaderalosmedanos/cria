@@ -258,7 +258,7 @@ table.dt tbody tr:last-child td { border-bottom: none; }
 // Directorio para poder identificar, al comparar dos informes viejos, con qué
 // versión del sistema se generó cada uno (la lógica de cálculo puede cambiar
 // entre versiones aunque los datos de Sheets sean los mismos).
-const APP_VERSION = 'index_consolidado_4_6_155_297';
+const APP_VERSION = 'index_consolidado_4_6_155_298';
 
 window.S = {
   apiUrl: localStorage.getItem('cria_api_url') || 'https://script.google.com/macros/s/AKfycbz-ahGdifI9FykD0r6hz47fjPZ6H5TwKWMOsCfW5f_M41oXneTffMk7CKz0svOgezSD_w/exec',
@@ -527,6 +527,45 @@ function esCategoriaReproductora_(categoria) {
 // como el Excel de auditoría reproductiva — antes cada uno tenía su propia
 // copia de esta cuenta, y como una se actualizaba y la otra no, terminaban
 // dando números distintos sin que hubiera forma simple de saber cuál mirar.
+// v298 -- SELECTOR DE CAMPAÑA POR PANTALLA (historiales de Cría). Filtra solo
+// lo que se muestra; no cambia ninguna cuenta. La elección vale solo para esa
+// pantalla. Si se llega desde el Dashboard, propone la campaña del Dashboard;
+// si no, por datos: Servicios/Tactos → la más nueva con servicios;
+// Abortos/Pariciones/Destetes/Curva → la más nueva con pariciones.
+function histCampanasOrden_() {
+  return (S.cache.campanas || []).slice().sort((a, b) => String(b.fecha_inicio || '').localeCompare(String(a.fecha_inicio || '')));
+}
+function histCampanaDefault_(p) {
+  const ids = (p === 'servicios' || p === 'tactos')
+    ? new Set((S.cache.servicios || []).map(x => campanaEfectiva_(x.fecha_inicio, x.campana_id)))
+    : new Set((S.cache.pariciones || []).map(x => campanaEfectiva_(x.fecha, x.campana_id)));
+  const c = histCampanasOrden_().find(x => ids.has(String(x.campana_id)));
+  return c ? String(c.campana_id) : '';
+}
+function histCampanaSel_(p) {
+  S._campHist = S._campHist || {};
+  if (S._campHist[p] !== undefined) return S._campHist[p];
+  if (S._campHistDesdeDash) return String(S._campHistDesdeDash);
+  return histCampanaDefault_(p);
+}
+function histCampanaDe_(p, x) {
+  if (p === 'servicios') return campanaEfectiva_(x.fecha_inicio, x.campana_id);
+  if (p === 'tactos') return tactoCampanaId_(x);
+  return campanaEfectiva_(x.fecha, x.campana_id);
+}
+function histEnCampana_(p, x) { const c = histCampanaSel_(p); return !c || histCampanaDe_(p, x) === String(c); }
+function histCampanaBarHtml_(p, texto) {
+  const sel = histCampanaSel_(p);
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 12px">
+    <label style="font-size:13px;font-weight:600;white-space:nowrap">Campaña:</label>
+    <select style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:130px"
+      onchange="S._campHist=S._campHist||{};S._campHist['${p}']=this.value;render()">
+      <option value="" ${sel === '' ? 'selected' : ''}>Todas</option>
+      ${histCampanasOrden_().map(c => `<option value="${c.campana_id}" ${String(c.campana_id) === String(sel) ? 'selected' : ''}>${c.nombre}</option>`).join('')}
+    </select>
+    <span style="font-size:11.5px;color:var(--text3)">${texto || 'Filtra el historial de esta pantalla.'}</span>
+  </div>`;
+}
 // v294 -- ESTADO DE VIENTRES POR CAMPAÑA. Antes la cuenta tomaba el último
 // Tacto final del rodeo y TODAS sus pariciones, sin mirar la campaña: cuando
 // entraran los tactos finales 2027/2028 (antes de terminar el destete
@@ -1290,6 +1329,12 @@ const NAV = [
 ];
 
 async function goto(page) {
+  // v298 -- si se sale del Dashboard de Cría, las pantallas proponen su campaña
+  if (S.page === 'dashboard' || S.page === 'dashboard_costos') {
+    const cA = (S.cache.campanas || []).find(c => c.activa === true || String(c.activa).toUpperCase() === 'TRUE');
+    S._campHistDesdeDash = S._dashCampana || (cA ? cA.campana_id : '');
+    S._campHist = {};
+  }
   S.page = page;
   S.sidebarOpen = false;
   render(); // render inmediato para que el ítem del menú se ponga activo
@@ -1302,6 +1347,10 @@ async function goto(page) {
   // Tactos, Abortos y Pariciones necesitan la caché de Servicios para filtrar rodeos con servicio registrado
   if ((page === 'tactos' || page === 'abortos' || page === 'pariciones') && !S.cache.servicios) {
     try { await loadEntity('servicios'); } catch (err) { /* silencioso */ }
+  }
+  // v298 -- el selector de campaña propone la más nueva con pariciones
+  if (['abortos','destetes','curva_nacimientos'].includes(page) && !S.cache.pariciones) {
+    try { await loadEntity('pariciones'); render(); } catch (err) { /* silencioso */ }
   }
   // Estas pantallas necesitan el catálogo de Campañas para el selector de
   // "Campaña" en sus formularios de carga (propuesta por fecha, editable).
@@ -4616,7 +4665,8 @@ function buildServicios() {  const _criaTabs = [
   // registros separados. Ahora cada fila se muestra tal cual está guardada,
   // con Cantidad y Toro como columnas propias (así estaba en los datos desde
   // siempre, el problema era solo de visualización).
-  const itemsConCampana = items.map(it => {
+  h += histCampanaBarHtml_('servicios');
+  const itemsConCampana = items.filter(it => histEnCampana_('servicios', it)).map(it => {
     let nombreCampana;
     if (it.campana_id) {
       const c = (S.cache.campanas || []).find(x => String(x.campana_id) === String(it.campana_id));
@@ -4801,6 +4851,7 @@ function buildTactos() {  const _criaTabs = [
     <button class="btn btn-primary" id="tc-save" style="margin-top:6px">Registrar tacto</button>
   </div>`;
 
+  h += histCampanaBarHtml_('tactos', 'Filtra el historial (los tactos sin campaña se ubican por la del Servicio).');
   // Historial con filtros de campo y rodeo — usa rodeosConServicioPorCampo,
   // igual que el formulario de arriba, para no listar Toros/Novillos/etc. en
   // el filtro (a diferencia del bug ya detectado en Abortos/Pariciones).
@@ -4817,14 +4868,8 @@ function buildTactos() {  const _criaTabs = [
         ${rodeosConServ.map(r=>`<option value="${r.rodeo_id}">${r.nombre}</option>`).join('')}
       </select>
     </div>
-    <div class="fg"><label>Filtrar por campaña <span class="opt">(la que se cargó en cada Tacto; los viejos sin ese dato se ubican por la campaña del Servicio)</span></label>
-      <select id="tc-hist-campana" onchange="tcFiltrarHistorial_()">
-        <option value="">Todas las campañas</option>
-        ${(S.cache.campanas||[]).slice().sort((a,b)=>String(b.fecha_inicio||'').localeCompare(String(a.fecha_inicio||''))).map(c=>`<option value="${c.campana_id}">${c.nombre}</option>`).join('')}
-      </select>
-    </div>
   </div>
-  <div id="tc-hist-tabla">` + buildTactosTabla_(items) + `</div>`;
+  <div id="tc-hist-tabla">` + buildTactosTabla_(items.filter(t => histEnCampana_('tactos', t))) + `</div>`;
 
   return h;
 }
@@ -4879,7 +4924,7 @@ function attachTactosEvents() {
   window.tcFiltrarHistorial_ = function() {
     const campoId = document.getElementById('tc-hist-campo')?.value || '';
     const rodeoId = document.getElementById('tc-hist-rodeo')?.value || '';
-    const campanaId = document.getElementById('tc-hist-campana')?.value || '';
+    const campanaId = histCampanaSel_('tactos'); // v298: selector de arriba
     // Los Tactos cargados desde que existe este campo ya tienen su
     // campana_id real guardado — se filtra por ese directo. Los viejos (sin
     // campana_id) se ubican por la campaña del Servicio vinculado a ese
@@ -4985,6 +5030,7 @@ function buildAbortos() {  const _criaTabs = [
     </div>
     <button class="btn btn-primary" id="ab-save" style="margin-top:10px">Registrar aborto(s)</button>
   </div>`;
+  h += histCampanaBarHtml_('abortos');
   // Historial con filtros de campo y rodeo — usa rodeosConServicio/PorCampo
   // (mismo criterio que el formulario de arriba) en vez de TODOS los rodeos
   // del catálogo, que traía Toros/Novillos/etc. sin sentido para Abortos.
@@ -5004,7 +5050,7 @@ function buildAbortos() {  const _criaTabs = [
   </div>
   <button class="btn btn-secondary btn-sm" id="ab-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('abortos', 'Abortos', 'ab-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
   <div id="ab-hist-tabla">`;
-  const itemsFilt = items.slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const itemsFilt = items.filter(a => histEnCampana_('abortos', a)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
   h += buildEntityTable(itemsFilt.map(conCampanaNombreAborto_), ABORTOS_COLS_, 'abortos', 'aborto_id');
   h += `</div>`;
   return h;
@@ -5048,6 +5094,7 @@ function attachAbortosEvents() {
     const campoId = document.getElementById('ab-hist-campo')?.value || '';
     const rodeoId = document.getElementById('ab-hist-rodeo')?.value || '';
     const items = (S.cache.abortos || []).filter(a => {
+      if (!histEnCampana_('abortos', a)) return false;
       if (rodeoId && String(a.rodeo_id) !== rodeoId) return false;
       if (campoId && !rodeoId) {
         const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(a.rodeo_id));
@@ -5180,6 +5227,7 @@ function buildPariciones() {  const _criaTabs = [
     <button class="btn btn-secondary btn-sm" onclick="window.paBuscarHuerfanos_()">🔍 Buscar huérfanos</button>
     <div id="pa-huerfanos-resultado" style="margin-top:12px"></div>
   </div>`;
+  h += histCampanaBarHtml_('pariciones');
   h += `<div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por campo</label>
       <select id="pa-hist-campo" onchange="paCampoHistorialCambio_(this.value)">
@@ -5196,7 +5244,7 @@ function buildPariciones() {  const _criaTabs = [
   </div>
   <button class="btn btn-secondary btn-sm" id="pa-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('pariciones', 'Pariciones', 'pa-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
   <div id="pa-hist-tabla">`;
-  h += buildEntityTable(items.map(conCampanaNombreParicion_), PARICIONES_COLS_, 'pariciones', 'paricion_id');
+  h += buildEntityTable(items.filter(x => histEnCampana_('pariciones', x)).map(conCampanaNombreParicion_), PARICIONES_COLS_, 'pariciones', 'paricion_id');
   h += `</div>`;
   return h;
 }
@@ -5232,6 +5280,7 @@ window.paFiltrarHistorial_ = function() {
   const campoId = document.getElementById('pa-hist-campo')?.value || '';
   const rodeoId = document.getElementById('pa-hist-rodeo')?.value || '';
   const items = (S.cache.pariciones || []).filter(p => {
+    if (!histEnCampana_('pariciones', p)) return false;
     if (rodeoId && String(p.rodeo_id) !== rodeoId) return false;
     if (campoId && !rodeoId) {
       const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(p.rodeo_id));
@@ -5859,6 +5908,7 @@ function buildCurvaNacimientos() {
   const rodeosDisponibles = rodeosAll.filter(r => !campFiltro || String(r.campo_id) === String(campFiltro));
 
   // v296 -- el Excel de auditoría reproductiva se pasó a Estado de Vientres (era el mismo tema)
+  h += histCampanaBarHtml_('curva', 'Pariciones y mortandad de esa campaña.');
   h += `<div class="panel">
     <div class="panel-title">🐣 Curva de nacimientos y mortandad, por semana</div>
     <p class="helper-text" style="margin-bottom:14px">Nacidos vivos, nacidos muertos (Pariciones) y mortandad — agrupados por semana, para ver de un vistazo si un pico de muertes coincide con un pico de nacimientos. La mortandad mostrada es de rodeos de categoría vaca, ternero o ternera — no de otras categorías (novillos, vaquillonas, etc.) que puedan estar en el mismo campo.</p>
@@ -5886,7 +5936,7 @@ function buildCurvaNacimientos() {
     }
     return true;
   };
-  const pariciones = (S.cache.pariciones || []).filter(p => rodeoMatch_(p.rodeo_id));
+  const pariciones = (S.cache.pariciones || []).filter(p => rodeoMatch_(p.rodeo_id) && histEnCampana_('curva', p));
   // Mortandad: NO cualquier rodeo del campo (eso traía Novillos, Vaquillonas,
   // etc. que no tienen nada que ver con la parición) — se limita a rodeos de
   // categoría vaca/ternero/ternera. OJO: antes esto dependía de que el rodeo
@@ -5901,7 +5951,7 @@ function buildCurvaNacimientos() {
       return (cat==='vaca'||cat==='ternero'||cat==='ternera') && rodeoMatch_(r.rodeo_id);
     }).map(r => String(r.rodeo_id))
   );
-  const mortandad = (S.cache.mortandad || []).filter(m => rodeosRelevantesMort.has(String(m.rodeo_id)));
+  const mortandad = (S.cache.mortandad || []).filter(m => rodeosRelevantesMort.has(String(m.rodeo_id)) && histEnCampana_('curva', m));
 
   if (!pariciones.length && !mortandad.length) {
     h += `<div class="empty-state"><span class="ico">◌</span><div class="msg">No hay pariciones ni mortandad registradas para este filtro todavía.</div></div></div>`;
@@ -7196,9 +7246,9 @@ function buildDestetes() {  const _criaTabs = [
   // puede haber tenido la cría muerta, así que "Paridas" no dice cuántos
   // terneros hay realmente; lo que importa acá es la cría, no el evento de
   // parto de la madre.
-  const { filas: filasRepro } = calcularVacasReproductivas_(null, today(), evCampanaConPariciones_());
+  const { filas: filasRepro } = calcularVacasReproductivas_(null, today(), histCampanaSel_('destetes') || evCampanaConPariciones_()); // v298
   const destetadosPorRodeo = {};
-  items.forEach(d => { destetadosPorRodeo[String(d.rodeo_id)] = (destetadosPorRodeo[String(d.rodeo_id)]||0) + (Number(d.total)||0); });
+  items.filter(d => { const c = histCampanaSel_('destetes') || evCampanaConPariciones_(); return campanaEfectiva_(d.fecha, d.campana_id) === String(c); }).forEach(d => { destetadosPorRodeo[String(d.rodeo_id)] = (destetadosPorRodeo[String(d.rodeo_id)]||0) + (Number(d.total)||0); });
   const rodeosCatDestetes = (S.catalogs && S.catalogs.rodeos) || [];
   // Los totales SIEMPRE se calculan sobre TODOS los rodeos (incluidos los que
   // ya redistribuyeron todo y quedaron sin stock propio) — igual que hace
@@ -7247,6 +7297,7 @@ function buildDestetes() {  const _criaTabs = [
   }
   h += '</div>';
 
+  h += histCampanaBarHtml_('destetes');
   // ── Historial con filtros de campo y rodeo ──
   h += `<div class="fgrid" style="margin-bottom:10px">
     <div class="fg"><label>Filtrar por campo</label>
@@ -7263,7 +7314,7 @@ function buildDestetes() {  const _criaTabs = [
     </div>
   </div>
   <button class="btn btn-secondary btn-sm" id="de-confirmar-campanas-btn" onclick="confirmarCampanasBloque_('destetes', 'Destetes', 'de-confirmar-campanas-btn')" style="margin-bottom:10px;font-size:12px">🔄 Confirmar campañas por fecha (masivo)</button>
-  <div id="de-hist-tabla">` + buildDestetesTabla_(items) + `</div>`;
+  <div id="de-hist-tabla">` + buildDestetesTabla_(items.filter(d => histEnCampana_('destetes', d))) + `</div>`;
   return h;
 }
 // Columnas + armado de la tabla de historial de Destetes — separado para
@@ -7331,6 +7382,7 @@ function attachDestetesEvents() {
     const campoId = document.getElementById('de-hist-campo')?.value || '';
     const rodeoId = document.getElementById('de-hist-rodeo')?.value || '';
     const items = (S.cache.destetes || []).filter(d => {
+      if (!histEnCampana_('destetes', d)) return false;
       if (rodeoId && String(d.rodeo_id) !== rodeoId) return false;
       if (campoId && !rodeoId) {
         const r = (S.catalogs?.rodeos||[]).find(x=>String(x.rodeo_id)===String(d.rodeo_id));
@@ -24562,7 +24614,9 @@ function buildCostoIatf() {
   const serv = (S.cache.servicios || []).filter(x => x.tipo === 'IATF' && campanaEfectiva_(x.fecha_inicio, x.campana_id) === cid);
   const insem = serv.reduce((a, x) => a + (Number(x.cantidad) || 0), 0);
   const servSinCant = serv.filter(x => !(Number(x.cantidad) > 0)).length;
-  const tac = (S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto IATF' && campanaEfectiva_(t.fecha, t.campana_id) === cid);
+  // v298 -- los tactos se ubican en la campaña igual que en Índices (tactoCampanaId_), no por fecha
+  const tac = (S.cache.tactos || []).filter(t => t.tipo_tacto === 'Tacto IATF' && tactoCampanaId_(t) === cid);
+  const nRodeosIatf = new Set(serv.map(x => String(x.rodeo_id))).size;
   const pren = tac.reduce((a, t) => a + (Number(t.prenadas) || 0), 0);
   // v288 -- % de preñez sobre las TACTADAS (igual que Índices de reproducción); el
   // costo por preñada = costo por inseminada ÷ % de preñez, así no sale inflado
@@ -24584,11 +24638,43 @@ function buildCostoIatf() {
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       ${kpi('Costo total IATF', fm(total), 'productos ' + fm(totGas) + ' · honorarios ' + fm(totHon))}
-      ${kpi('Inseminadas', insem ? fn(insem) : '—', (serv.length ? serv.length + ' servicio' + (serv.length > 1 ? 's' : '') + ' IATF' + (servSinCant ? ' · ⚠ ' + servSinCant + ' sin cantidad' : '') : 'sin Servicios IATF en la campaña') + ' · se suman a medida que los cargás')}
+      ${kpi('Inseminadas', insem ? fn(insem) : '—', (serv.length ? nRodeosIatf + ' rodeo' + (nRodeosIatf > 1 ? 's' : '') + ' con IATF' + (servSinCant ? ' · ⚠ ' + servSinCant + ' sin cantidad' : '') : 'sin Servicios IATF en la campaña') + ' · se suman a medida que los cargás')}
       ${kpi('Preñadas IATF', pren ? fn(pren) : '—', tac.length ? fn(pren) + ' de ' + fn(tacteadas) + ' tactadas · <b>' + fn(pctPren * 100, 1) + '% de preñez</b>' + (faltanTactar ? ' · faltan tactar ' + fn(faltanTactar) : '') : 'sin Tacto IATF en la campaña')}
       ${kpi('Costo por inseminada', insem ? fm(total / insem) : '—', '')}
       ${kpi('Costo por preñada', insem && pctPren > 0 ? fm(total / insem / pctPren) : '—', insem && pctPren > 0 ? 'costo por inseminada ÷ ' + fn(pctPren * 100, 1) + '% de preñez' + (faltanTactar ? ' · estimado: faltan tactos' : '') : '')}
     </div></div>`;
+  // v298 -- PREÑEZ POR TORO: la observación del Tacto IATF empieza con el
+  // nombre del toro, igual que en el Servicio (sin la palabra "Toro").
+  {
+    const nTor = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/^\s*toro\s+/, '').trim();
+    const filasToro = [];
+    const porRodeo = {};
+    serv.forEach(x => { const k = String(x.rodeo_id); (porRodeo[k] = porRodeo[k] || []).push(x); });
+    const usados = new Set();
+    tac.forEach(t => {
+      const obs = nTor(t.observacion);
+      const svs = porRodeo[String(t.rodeo_id)] || [];
+      const sv = svs.filter(x => nTor(x.identificacion_toro) && obs.indexOf(nTor(x.identificacion_toro)) === 0)
+        .sort((a, b) => nTor(b.identificacion_toro).length - nTor(a.identificacion_toro).length)[0];
+      if (sv) usados.add(sv);
+      filasToro.push({ rodeo: rodeoNombre(t.rodeo_id), toro: sv ? String(sv.identificacion_toro).replace(/^\s*toro\s+/i, '') : '', insem: sv ? Number(sv.cantidad) || 0 : 0,
+        tact: Number(t.total_tacteadas) || 0, pren: Number(t.prenadas) || 0, obs: t.observacion || '' });
+    });
+    serv.filter(x => !usados.has(x)).forEach(x => filasToro.push({ rodeo: rodeoNombre(x.rodeo_id), toro: String(x.identificacion_toro || '').replace(/^\s*toro\s+/i, ''), insem: Number(x.cantidad) || 0, tact: 0, pren: 0, sinTacto: true }));
+    filasToro.sort((a, b) => a.rodeo.localeCompare(b.rodeo) || a.toro.localeCompare(b.toro));
+    if (filasToro.length) {
+      h += `<div class="panel"><div class="panel-title">🐂 Preñez por toro</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">El tacto IATF se asocia al toro cuando su observación empieza con el nombre del toro del Servicio (sin "Toro"). En rojo, los que quedan por debajo del promedio de la campaña (${fn(pctPren * 100, 1)}%).</div>
+        <div class="tw"><table class="dt"><thead><tr><th>Rodeo</th><th>Toro</th><th class="tc">Inseminadas</th><th class="tc">Tactadas</th><th class="tc">Preñadas</th><th class="tc">% preñez</th></tr></thead><tbody>` +
+        filasToro.map(f => {
+          const pc = f.tact > 0 ? f.pren / f.tact : null;
+          const rojo = pc !== null && pctPren > 0 && pc < pctPren;
+          return `<tr><td>${fdEsc_(f.rodeo)}</td><td>${f.toro ? fdEsc_(f.toro) : `<span style="color:var(--clay-text)">⚠ sin toro identificado</span> <span style="font-size:11px;color:var(--text3)">${fdEsc_(f.obs)}</span>`}</td>
+            <td class="tc">${f.insem ? fn(f.insem) : '—'}</td><td class="tc">${f.sinTacto ? '<span style="color:var(--text3)">sin tacto</span>' : fn(f.tact)}</td><td class="tc">${f.sinTacto ? '—' : fn(f.pren)}</td>
+            <td class="tc" style="${rojo ? 'color:var(--red);font-weight:700' : 'font-weight:600'}">${pc === null ? '—' : fn(pc * 100, 1) + '%'}</td></tr>`;
+        }).join('') + `</tbody></table></div></div>`;
+    }
+  }
   h += `<div class="panel"><div class="panel-title">✅ Gastos de IATF <span class="pill pill-gold">${iatf.length}</span></div>` +
     (iatf.length ? `<div class="tw"><table class="dt"><thead><tr><th>Período</th><th>Tipo</th><th>Detalle</th><th class="tr">Importe</th><th class="tc">IATF</th><th>Campaña nacimientos</th></tr></thead><tbody>${iatf.map(fila).join('')}</tbody>
       <tfoot><tr><td colspan="3" class="tr"><b>Total</b></td><td class="tr"><b>${fm(total)}</b></td><td colspan="2"></td></tr></tfoot></table></div>` : '<div style="font-size:12.5px;color:var(--text3)">No hay nada marcado como IATF en esta campaña.</div>') + `</div>`;
